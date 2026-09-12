@@ -2,7 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CrashDiagnosticsRecorder, RendererRecoveryPolicy, createCrashEventRecord } from '../src/main/crash-recovery.js';
+import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPolicy, createCrashEventRecord } from '../src/main/crash-recovery.js';
 
 const temporaryRoots: string[] = [];
 afterEach(async () => Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -40,5 +40,20 @@ describe('crash recovery diagnostics', () => {
     expect(policy.shouldRecover('oom', 3_000)).toBe(true);
     expect(policy.shouldRecover('crashed', 4_000)).toBe(false);
     expect(policy.shouldRecover('crashed', 5 * 60_000 + 5_000)).toBe(true);
+  });
+
+  it('keeps the desktop alive while a crashed renderer replacement is pending', () => {
+    const barrier = new RendererRecoveryBarrier();
+    expect(barrier.shouldQuitWhenWindowsClosed('win32')).toBe(true);
+    expect(barrier.shouldQuitWhenWindowsClosed('darwin')).toBe(false);
+
+    const complete = barrier.begin();
+    expect(barrier.isPending()).toBe(true);
+    expect(barrier.shouldQuitWhenWindowsClosed('win32')).toBe(false);
+    complete();
+    complete();
+
+    expect(barrier.isPending()).toBe(false);
+    expect(barrier.shouldQuitWhenWindowsClosed('win32')).toBe(true);
   });
 });

@@ -96,7 +96,7 @@ import { platformCompatibilityProfile, supportedHostPlatform } from './platform-
 import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
-import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
+import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPolicy } from './crash-recovery.js';
 import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
@@ -1248,6 +1248,7 @@ const platformCompatibility = platformCompatibilityProfile(process.platform, os.
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
+const rendererRecoveryBarrier = new RendererRecoveryBarrier();
 let crashRecoveryConfigured = false;
 let currentUpdateStatus: UpdateStatus = {
   phase: app.isPackaged ? 'idle' : 'unavailable',
@@ -1968,6 +1969,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     });
     createDesktopWindow();
     createDesktopTray();
+    crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'desktop-started' });
     void runtime.autoStartMcp().catch((error: unknown) => {
       console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
@@ -1984,7 +1986,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
   }).catch((error: unknown) => handleDesktopStartupFailure('desktop', error));
   app.on('before-quit', handleDesktopBeforeQuit);
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    handleDesktopWindowsClosed('desktop');
   });
 }
 
@@ -2010,7 +2012,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
     }
   }).catch((error: unknown) => handleDesktopStartupFailure('log viewer', error));
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    handleDesktopWindowsClosed('log-viewer');
   });
   app.on('before-quit', handleDesktopBeforeQuit);
 }
@@ -2061,7 +2063,18 @@ function configureDesktopShutdown(runtime: DesktopRuntime): void {
   });
 }
 
+function handleDesktopWindowsClosed(scope: 'desktop' | 'log-viewer'): void {
+  const recoveryPending = rendererRecoveryBarrier.isPending();
+  crashDiagnostics?.record({
+    type: 'desktop-lifecycle',
+    processType: 'main',
+    reason: `${scope}:window-all-closed${recoveryPending ? ':renderer-recovery-pending' : ''}`,
+  });
+  if (rendererRecoveryBarrier.shouldQuitWhenWindowsClosed(process.platform)) app.quit();
+}
+
 function handleDesktopBeforeQuit(event: Electron.Event): void {
+  crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'before-quit' });
   const coordinator = desktopShutdownCoordinator;
   if (coordinator === null || coordinator.canQuit()) {
     quitRequested = true;
@@ -2109,19 +2122,29 @@ function configureCrashRecovery(dataPath: string): void {
     if (!mainCrashed && !logViewerCrashed) return;
 
     if (mainCrashed) {
+      const completeRecovery = rendererRecoveryBarrier.begin();
       const crashedWindow = mainWindow;
       mainWindow = null;
       if (crashedWindow !== null && !crashedWindow.isDestroyed()) crashedWindow.destroy();
       setTimeout(() => {
-        if (!quitRequested && (mainWindow === null || mainWindow.isDestroyed())) createDesktopWindow();
+        try {
+          if (!quitRequested && (mainWindow === null || mainWindow.isDestroyed())) createDesktopWindow();
+        } finally {
+          completeRecovery();
+        }
       }, 250);
     }
     if (logViewerCrashed) {
+      const completeRecovery = rendererRecoveryBarrier.begin();
       const crashedViewer = logViewerWindow;
       logViewerWindow = null;
       if (crashedViewer !== null && !crashedViewer.isDestroyed()) crashedViewer.destroy();
       setTimeout(() => {
-        if (!quitRequested && (logViewerWindow === null || logViewerWindow.isDestroyed())) openLogViewerWindow();
+        try {
+          if (!quitRequested && (logViewerWindow === null || logViewerWindow.isDestroyed())) openLogViewerWindow();
+        } finally {
+          completeRecovery();
+        }
       }, 250);
     }
   });
