@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -419,7 +419,7 @@ export class DurableShellTaskStore {
   }
 
   private async writeMetadata(metadata: DurableTaskMetadata): Promise<void> {
-    await writeFile(path.join(this.taskDirectory(metadata.task_id), METADATA_FILENAME), JSON.stringify(metadata), 'utf8');
+    await writeMetadataAtomically(path.join(this.taskDirectory(metadata.task_id), METADATA_FILENAME), metadata);
   }
 
   private taskDirectory(taskId: string): string {
@@ -460,6 +460,16 @@ export class DurableShellTaskStore {
       await delay(Math.min(50, remainingMs));
     }
     return metadata;
+  }
+}
+
+async function writeMetadataAtomically(filename: string, metadata: DurableTaskMetadata): Promise<void> {
+  const temporaryPath = `${filename}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  try {
+    await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
+    await rename(temporaryPath, filename);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
 }
 
@@ -742,7 +752,7 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 const DURABLE_WORKER_SOURCE = String.raw`import { execFile, spawn } from 'node:child_process';
-import { readFile, writeFile, open, unlink } from 'node:fs/promises';
+import { readFile, writeFile, open, rename, unlink } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -782,7 +792,13 @@ function appendBounded(handle, chunk, stream) {
 }
 
 async function persist() {
-  await writeFile(spec.metadataPath, JSON.stringify(metadata), 'utf8');
+  const temporaryPath = spec.metadataPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(16).slice(2);
+  try {
+    await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
+    await rename(temporaryPath, spec.metadataPath);
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined);
+  }
 }
 
 function processRunning(pid) {

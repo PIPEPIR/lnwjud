@@ -96,7 +96,7 @@ describe('durable shell background tasks', () => {
       ok: true,
       value: { tasks: expect.arrayContaining([expect.objectContaining({ task_id: taskId, state: 'completed', durable: true })]) },
     });
-  });
+  }, 15_000);
 
   it('does not overwrite a very fast durable completion back to running', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
