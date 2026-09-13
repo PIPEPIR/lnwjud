@@ -149,6 +149,7 @@ describe('MVP release verification gate', () => {
     expect(workflow).toContain('max-parallel: 6');
     expect(workflow).toContain('--shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}');
     expect(workflow).toContain("--filter '!@lnwjud/desktop' --if-present test");
+    expect(workflow).toContain("--filter '@lnwjud/mcp-server...' build");
   });
 
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {

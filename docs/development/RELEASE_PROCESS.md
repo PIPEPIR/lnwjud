@@ -52,9 +52,10 @@ skipped with `-SkipWindowsPackaging`. Direct pushes to `dev` and other
 non-main branches run the native platform contract without repeating that
 portable gate, so feedback arrives sooner. The native platform contract runs
 on Windows, macOS, and Linux. Its non-desktop workspace tests run in the
-normal bounded pnpm pool, while the desktop suite is split into two isolated
-shards per operating system so the slowest files run concurrently. A protected
-push to `main` additionally runs Windows packaging and
+normal bounded pnpm pool, while each desktop shard first builds the workspace
+packages used by acceptance fixtures and then runs an isolated half of the
+desktop suite per operating system so the slowest files run concurrently. A
+protected push to `main` additionally runs Windows packaging and
 the target-native macOS/Linux package matrix, including macOS arm64/x64 and
 Linux x64/arm64. The macOS packages are built on `macos-15` / `macos-15-intel`,
 then those exact SHA-scoped DMG/ZIP artifacts are downloaded and verified on
