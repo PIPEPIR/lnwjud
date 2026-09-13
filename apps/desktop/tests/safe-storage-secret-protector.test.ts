@@ -8,9 +8,6 @@ function fakeApi(options: {
   decrypt?: (value: Buffer) => string;
 } = {}): SafeStorageApi {
   return {
-    isEncryptionAvailable: vi.fn(() => options.available ?? true),
-    encryptString: vi.fn((value) => Buffer.from(`cipher:${value}`, 'utf8')),
-    decryptString: vi.fn((value) => options.decrypt?.(value) ?? value.toString('utf8').replace(/^cipher:/, '')),
     isAsyncEncryptionAvailable: vi.fn(async () => options.available ?? true),
     encryptStringAsync: vi.fn(async (value) => Buffer.from(`cipher:${value}`, 'utf8')),
     decryptStringAsync: vi.fn(async (value) => ({
@@ -56,22 +53,6 @@ describe('SafeStorageSecretProtector', () => {
     const protector = new SafeStorageSecretProtector({ api: fakeApi({ rotate: true }), platform: 'darwin' });
     const envelope = await protector.encrypt('checkpoint_master_key', 'key-material');
     await expect(protector.decrypt('checkpoint_master_key', envelope)).resolves.toEqual({ plainText: 'key-material', shouldReEncrypt: true });
-  });
-
-  it('uses only the synchronous Electron API when the macOS compatibility path is selected', async () => {
-    const api = fakeApi();
-    const protector = new SafeStorageSecretProtector({ api, platform: 'darwin', useSynchronousApi: true });
-    const envelope = await protector.encrypt('checkpoint_master_key', 'key-material');
-    await expect(protector.decrypt('checkpoint_master_key', envelope)).resolves.toEqual({
-      plainText: 'key-material',
-      shouldReEncrypt: false,
-    });
-    expect(api.isEncryptionAvailable).toHaveBeenCalled();
-    expect(api.encryptString).toHaveBeenCalledWith('key-material');
-    expect(api.decryptString).toHaveBeenCalled();
-    expect(api.isAsyncEncryptionAvailable).not.toHaveBeenCalled();
-    expect(api.encryptStringAsync).not.toHaveBeenCalled();
-    expect(api.decryptStringAsync).not.toHaveBeenCalled();
   });
 
   it('rejects wrong purpose and unsupported hosts before touching the backend', async () => {

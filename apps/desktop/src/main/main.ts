@@ -102,7 +102,7 @@ import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mut
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
-import { shouldUseSynchronousMacosSafeStorage } from './safe-storage-startup.js';
+import { waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
 
@@ -1817,17 +1817,18 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   readonly checkpointEncryptionKey: Buffer;
   readonly secretProtector: SafeStorageSecretProtector;
 }> {
-  const useSynchronousApi = shouldUseSynchronousMacosSafeStorage({
+  recordDesktopStartup('safe-storage:settle:begin');
+  await waitForMacosAsyncSafeStorageStartup({
     platform: process.platform,
     arch: process.arch,
     release: os.release(),
     isPackaged: app.isPackaged,
   });
-  recordDesktopStartup(`safe-storage:${useSynchronousApi ? 'sync' : 'async'}:selected`);
+  recordDesktopStartup('safe-storage:settle:end');
+  recordDesktopStartup('safe-storage:async:selected');
   const secretProtector = new SafeStorageSecretProtector({
     api: safeStorage,
     platform: process.platform,
-    useSynchronousApi,
   });
   recordDesktopStartup('safe-storage:status:begin');
   const status = await secretProtector.status();

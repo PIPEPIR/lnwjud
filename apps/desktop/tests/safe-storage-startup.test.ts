@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
-import { shouldUseSynchronousMacosSafeStorage } from '../src/main/safe-storage-startup.js';
+import { describe, expect, it, vi } from 'vitest';
+import { waitForMacosAsyncSafeStorageStartup } from '../src/main/safe-storage-startup.js';
 
-describe('shouldUseSynchronousMacosSafeStorage', () => {
-  it('avoids Electron async keychain initialization on packaged macOS 26+ arm64', () => {
-    expect(shouldUseSynchronousMacosSafeStorage({
+describe('waitForMacosAsyncSafeStorageStartup', () => {
+  it('lets Electron finish async keychain initialization on packaged macOS 26+ arm64', async () => {
+    const sleep = vi.fn(async () => undefined);
+    await waitForMacosAsyncSafeStorageStartup({
       platform: 'darwin',
       arch: 'arm64',
       release: '25.6.0',
       isPackaged: true,
-    })).toBe(true);
+      sleep,
+    });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(2_000);
   });
 
   it.each([
@@ -17,7 +21,9 @@ describe('shouldUseSynchronousMacosSafeStorage', () => {
     { platform: 'darwin', arch: 'arm64', release: '25.6.0', isPackaged: false },
     { platform: 'win32', arch: 'arm64', release: '10.0.26100', isPackaged: true },
     { platform: 'linux', arch: 'arm64', release: '6.8.0', isPackaged: true },
-  ] as const)('keeps async safeStorage on unaffected startup %#', (host) => {
-    expect(shouldUseSynchronousMacosSafeStorage(host)).toBe(false);
+  ] as const)('does not delay unaffected startup %#', async (host) => {
+    const sleep = vi.fn(async () => undefined);
+    await waitForMacosAsyncSafeStorageStartup({ ...host, sleep });
+    expect(sleep).not.toHaveBeenCalled();
   });
 });
