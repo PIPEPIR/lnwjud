@@ -139,6 +139,36 @@ describe('Ponytail ToolRegistry enforcement', () => {
     }
   });
 
+  it('accepts canonical skills_read as exact bundled activation evidence for a durable goal', async () => {
+    const base = createServices();
+    const services = {
+      ...base.services,
+      goals: {
+        async getGoal() { return ok({ workspaceId: 'workspace-1', ponytailMode: 'full' }); },
+      },
+    } as unknown as McpApplicationServices;
+    const registry = fullRegistry(services);
+    const goalLease = { goalId: 'goal-full', leaseToken: 'lease-token', leaseGeneration: 1 };
+
+    const loaded = await registry.invoke('skills_read', {
+      skillId: BUNDLED_PONYTAIL_SKILL_ID,
+      workspaceId: 'workspace-1',
+      goalId: 'goal-full',
+    });
+    expect(loaded).toMatchObject({
+      structuredContent: { id: BUNDLED_PONYTAIL_SKILL_ID, trustTier: 'bundled' },
+    });
+
+    const allowed = await registry.invoke('write_file', {
+      workspaceId: 'workspace-1',
+      path: 'src/canonical-skill-read.ts',
+      content: 'export const canonicalSkillRead = true;\n',
+      goalLease,
+    });
+    expect(allowed.isError).not.toBe(true);
+    expect(base.writes).toEqual(['src/canonical-skill-read.ts']);
+  });
+
   it('keeps recovery operations above Ponytail activation policy', async () => {
     const { services } = createServices();
     const registry = fullRegistry(services);

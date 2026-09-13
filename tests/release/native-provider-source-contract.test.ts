@@ -42,8 +42,13 @@ describe('native provider source contract', () => {
     expect(source).toMatch(/"input_event": status\(/);
     expect(source).toMatch(/"window": status\(/);
     expect(source).toContain('"annotate"');
-    expect(source).toMatch(/value\(input, "window_index"\) != nil[\s\S]*guard let index = number\(input, "window_index"\)/);
-    expect(source).toContain('let key = value(input, "window_id") != nil ? "window_id" : "hwnd"');
+    expect(source).toMatch(/value\(selectorInput, "window_index"\) != nil[\s\S]*guard let index = number\(selectorInput, "window_index"\)/);
+    expect(source).toContain('CGDisplayCreateImage');
+    expect(source).toContain('CoreGraphics window capture');
+    expect(source).toContain('"origin_x": AnyEncodable(originX)');
+    expect(source).toContain('"scale_x": AnyEncodable(scaleX)');
+    expect(source).toContain('value(input, "app") as? [String: Any]');
+    expect(source).toContain('let key = value(selectorInput, "window_id") != nil ? "window_id" : "hwnd"');
     expect(source).toContain('boundedInteger(input, "process_id"');
     // Foundation bridges JSON numeric 0/1 to NSNumber values that can also
     // satisfy `is Bool`. Reject the CFBoolean runtime type instead, preserving
@@ -72,9 +77,17 @@ describe('native provider source contract', () => {
     expect(source).toContain('permission_required');
     expect(source).toContain('portal_session_required');
     const x11 = await readFile(path.join(root, 'native', 'linux-host', 'src', 'x11.rs'), 'utf8');
-    expect(x11).toContain('input.contains_key("hwnd")');
+    expect(x11).toContain('selector_value(input, "hwnd")');
     expect(x11).toContain('process_name_for_pid');
+    expect(x11).toContain('translate_coordinates(window, root, 0, 0)');
+    expect(x11).toContain('"origin_x":{}');
+    expect(x11).toContain('"scale_x":1.0');
     expect(x11).toContain('X11 window activation could not be flushed');
+    const desktopMain = await readFile(path.join(root, 'apps', 'desktop', 'src', 'main', 'main.ts'), 'utf8');
+    const platformSet = await readFile(path.join(root, 'packages', 'capabilities', 'src', 'platform-capability-set.ts'), 'utf8');
+    expect(desktopMain).toContain('desktopCapturer.getSources');
+    expect(desktopMain).toContain("'electron-desktop-capturer-window'");
+    expect(platformSet).toContain('withCaptureFallback(nativeVision, options.shared.vision)');
   });
 
   it('Linux AT-SPI observation is bounded and uses argv-only gdbus calls', async () => {

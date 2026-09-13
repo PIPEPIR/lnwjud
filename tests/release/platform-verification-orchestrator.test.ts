@@ -23,6 +23,12 @@ describe('platform verification orchestrator', () => {
     expect(workflow).toContain('native-package-verification:');
     expect(workflow).toContain('macos-15');
     expect(workflow).toContain('macos-15-intel');
+    expect(workflow).toContain('macos-26-package-compatibility:');
+    expect(workflow).toContain('macos-26');
+    expect(workflow).toContain('macos-26-intel');
+    expect(workflow).toContain('needs: native-package-verification');
+    expect(workflow).toContain('actions/download-artifact@v4');
+    expect(workflow).toContain('native-darwin-${{ matrix.arch }}-${{ github.sha }}');
     expect(workflow).toContain('ubuntu-24.04-arm');
     expect(workflow).toContain('sigstore/cosign-installer@v4.1.2');
     expect(workflow).toContain("cosign-release: 'v3.1.3'");
@@ -34,10 +40,12 @@ describe('platform verification orchestrator', () => {
 
   it('rejects mixed signing identities that newer macOS dyld refuses to map', async (): Promise<void> => {
     const script = await readFile(path.join(repositoryRoot, 'scripts', 'verify-macos-release.sh'), 'utf8');
-    expect(script).toContain('codesign --verify --strict "$candidate"');
-    expect(script).toContain('macOS nested signature integrity failed for ad-hoc package');
-    expect(script).toContain('macOS nested signature mode mismatch: app=ad-hoc');
-    expect(script).toContain('macOS TeamIdentifier mismatch');
-    expect(script).toContain('details="$(codesign_details "$target")"');
+    const inspector = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'inspect-macos-signing-policy.mjs'), 'utf8');
+    expect(script).toContain('inspect-macos-signing-policy.mjs');
+    expect(script).toContain('--provenance "$provenance_path"');
+    expect(inspector).toContain("['--verify', '--strict', '--all-architectures']");
+    expect(inspector).toContain('macOS nested signature mode mismatch');
+    expect(inspector).toContain('macOS TeamIdentifier mismatch');
+    expect(inspector).toContain('candidate.teamId !== root.teamId');
   });
 });

@@ -70,6 +70,8 @@ mac:
   sign: scripts/sign-macos-runtime.mjs
   icon: build/icon-1024.png
   hardenedRuntime: true
+  # Certificate-safe defaults. The custom signer selects dedicated ad-hoc
+  # variants only when the resolved identity is exactly '-'.
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extendInfo:

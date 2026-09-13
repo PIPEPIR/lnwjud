@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
+import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -25,14 +26,15 @@ const sums = parseSums(sumsText);
 if (provenance?.schemaVersion !== 1 || provenance.product !== 'lnwjud') throw new Error('PROVENANCE.json schema/product is invalid');
 if (provenance.version !== packageJson.version) throw new Error(`Provenance version mismatch: ${String(provenance.version)} != ${String(packageJson.version)}`);
 if (!isPlatform(provenance.platform)) throw new Error('Provenance platform is invalid');
+let macSigning = null;
 if (provenance.platform === 'darwin') {
   const signing = provenance.build?.macSigning ?? { mode: 'unsigned' };
-  if (!['unsigned', 'ad-hoc', 'certificate'].includes(signing.mode)
+  if (!['ad-hoc', 'certificate'].includes(signing.mode)
     || signing.mode === 'certificate' && !/^[0-9a-f]{40}$/i.test(signing.certificateSha1 ?? '')
     || signing.mode !== 'certificate' && signing.certificateSha1 !== undefined) throw new Error('macOS signing evidence is invalid');
   if ((process.env.LNWJUD_REQUIRE_CODESIGN === '1' || process.env.LNWJUD_REQUIRE_NOTARIZATION === '1')
     && signing.mode !== 'certificate') throw new Error('Certificate-signed macOS release evidence is required');
-  process.stdout.write(`macOS signing evidence: ${signing.mode} (artifact signature verification is a separate native gate)\n`);
+  macSigning = signing;
 }
 if (typeof provenance.source?.commit !== 'string' || !/^[0-9a-f]{40}$/i.test(provenance.source.commit)) throw new Error('Provenance commit SHA is invalid');
 
@@ -101,6 +103,15 @@ for (const runtime of provenance.runtime) {
   }
 }
 if (requiredRuntime.size > 0) throw new Error(`Runtime provenance is incomplete: ${[...requiredRuntime].join(', ')}`);
+if (macSigning) {
+  const rootExecutable = provenance.runtime.find((entry) => entry.relativePath === 'Contents/MacOS/lnwjud');
+  validateMacosSigningPolicyEvidence(macSigning.policy, {
+    mode: macSigning.mode,
+    arch: provenance.arch,
+    rootExecutableSha256: rootExecutable?.sha256,
+  });
+  process.stdout.write(`macOS effective signing evidence verified: ${macSigning.mode}, ${macSigning.policy.inspectedNestedCodeCount} nested targets\n`);
+}
 
 process.stdout.write(`Release evidence verified for lnwjud ${provenance.version} ${provenance.platform}/${String(provenance.arch)} commit ${provenance.source.commit}\n`);
 

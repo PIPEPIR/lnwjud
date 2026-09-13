@@ -5,7 +5,7 @@ import { appError, err, isApplicationAuthorized, isFullBypassAuthorization, ok, 
 import type { CapabilityBackend } from '@lnwjud/capabilities';
 import { readCapabilityActiveWorkspaceRoot } from '@lnwjud/capabilities';
 
-export type ElectronNativeCapabilityName = 'system_info' | 'notification' | 'file_dialog' | 'clipboard';
+export type ElectronNativeCapabilityName = 'system_info' | 'notification' | 'file_dialog' | 'clipboard' | 'vision';
 
 export interface NativeDisplayMetadata {
   readonly id?: number | string;
@@ -14,6 +14,27 @@ export interface NativeDisplayMetadata {
   readonly scaleFactor?: number;
   readonly rotation?: number;
   readonly label?: string;
+}
+
+export interface NativeDesktopCaptureRequest {
+  readonly action: 'capture_display' | 'capture_region' | 'capture_window';
+  readonly displayId?: string;
+  readonly windowIndex?: number;
+  readonly app?: Readonly<Record<string, unknown>>;
+  readonly region?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+}
+
+export interface NativeDesktopCaptureResult {
+  readonly format: 'png';
+  readonly mime_type: 'image/png';
+  readonly data_base64: string;
+  readonly width: number;
+  readonly height: number;
+  readonly origin_x: number;
+  readonly origin_y: number;
+  readonly scale_x: number;
+  readonly scale_y: number;
+  readonly backend: string;
 }
 
 export interface NativeDialogOptions {
@@ -44,6 +65,7 @@ export interface ElectronNativeCapabilityApi {
   readonly readClipboardImageBase64?: () => string | null;
   readonly writeClipboardImageBase64?: (value: string) => void;
   readonly hasWindow?: () => boolean;
+  readonly captureDesktop?: (request: NativeDesktopCaptureRequest) => Promise<NativeDesktopCaptureResult>;
 }
 
 export interface ElectronNativeCapabilityBackendOptions {
@@ -62,6 +84,7 @@ export function createElectronNativeCapabilityBackends(options: ElectronNativeCa
     notification: new ElectronNativeCapabilityBackend('notification', options),
     file_dialog: new ElectronNativeCapabilityBackend('file_dialog', options),
     clipboard: new ElectronNativeCapabilityBackend('clipboard', options),
+    vision: new ElectronNativeCapabilityBackend('vision', options),
   };
 }
 
@@ -95,6 +118,7 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
         case 'notification': return await this.notification(input, signal);
         case 'file_dialog': return await this.fileDialog(action, input, signal, authorization);
         case 'clipboard': return this.clipboard(action, input);
+        case 'vision': return await this.vision(action, input, signal);
       }
     } catch (error: unknown) {
       if (isAborted(signal)) return cancelled(this.capability);
@@ -109,8 +133,10 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
         ? this.api.showNotification !== undefined
         : this.capability === 'file_dialog'
           ? this.api.showOpenDialog !== undefined && this.api.showSaveDialog !== undefined
-          : this.api.readClipboardText !== undefined && this.api.writeClipboardText !== undefined;
-    const headless = this.capability !== 'system_info' && this.api.hasWindow !== undefined && !this.api.hasWindow();
+          : this.capability === 'vision'
+            ? this.api.captureDesktop !== undefined
+            : this.api.readClipboardText !== undefined && this.api.writeClipboardText !== undefined;
+    const headless = this.capability !== 'system_info' && this.capability !== 'vision' && this.api.hasWindow !== undefined && !this.api.hasWindow();
     return ok({
       available,
       ready: available && !headless,
@@ -136,6 +162,24 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
       displays: this.api.getDisplays?.() ?? [],
       backend: 'electron-native',
     });
+  }
+
+  private async vision(action: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+    const capture = this.api.captureDesktop;
+    if (capture === undefined) return unavailable('vision', 'Electron desktop capture is unavailable in this session');
+    const request = parseDesktopCaptureRequest(action, input);
+    if (!request.ok) return request;
+    if (isAborted(signal)) return cancelled('vision');
+    const result = await capture(request.value);
+    if (isAborted(signal)) return cancelled('vision');
+    if (result.format !== 'png' || result.mime_type !== 'image/png' || typeof result.data_base64 !== 'string' || result.data_base64.length === 0) {
+      return err(appError('INTERNAL_ERROR', 'Electron desktop capture returned an invalid PNG payload', true));
+    }
+    const bytes = Buffer.from(result.data_base64, 'base64');
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES || result.width < 1 || result.height < 1 || result.width > 16_384 || result.height > 16_384) {
+      return err(appError('FILE_TOO_LARGE', 'Electron desktop capture exceeded the bounded image limits', true));
+    }
+    return ok({ ...result, byte_length: bytes.byteLength });
   }
 
   private async notification(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
@@ -214,14 +258,34 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
 }
 
 function readAction(input: Record<string, unknown>, capability: ElectronNativeCapabilityName): string | null {
-  const value = input.action === undefined ? capability === 'system_info' ? 'summary' : capability === 'file_dialog' ? 'open' : capability === 'notification' ? 'show' : 'get_text' : input.action;
+  const value = input.action === undefined ? capability === 'system_info' ? 'summary' : capability === 'file_dialog' ? 'open' : capability === 'notification' ? 'show' : capability === 'vision' ? 'status' : 'get_text' : input.action;
   if (typeof value !== 'string') return null;
-  const valid = capability === 'system_info' ? ['status', 'summary', 'get'] : capability === 'notification' ? ['status', 'show'] : capability === 'file_dialog' ? ['status', 'open', 'save'] : ['status', 'get_text', 'set_text', 'get_image', 'set_image'];
+  const valid = capability === 'system_info' ? ['status', 'summary', 'get'] : capability === 'notification' ? ['status', 'show'] : capability === 'file_dialog' ? ['status', 'open', 'save'] : capability === 'vision' ? ['status', 'capture_display', 'capture_region', 'capture_window'] : ['status', 'get_text', 'set_text', 'get_image', 'set_image'];
   return valid.includes(value) ? value : null;
 }
 
 function requiresConfirmation(capability: ElectronNativeCapabilityName, action: string): boolean {
   return capability === 'notification' ? action === 'show' : capability === 'file_dialog' ? action === 'save' : capability === 'clipboard' ? action === 'set_text' || action === 'set_image' : false;
+}
+
+function parseDesktopCaptureRequest(action: string, input: Record<string, unknown>): Result<NativeDesktopCaptureRequest> {
+  if (action !== 'capture_display' && action !== 'capture_region' && action !== 'capture_window') return err(appError('INVALID_INPUT', 'vision capture action is invalid'));
+  const displayId = input.display_id === undefined ? undefined : boundedString(input.display_id, '', 256);
+  if (input.display_id !== undefined && (typeof input.display_id !== 'string' || displayId === undefined || displayId.length === 0)) return err(appError('INVALID_INPUT', 'vision display_id is invalid'));
+  const windowIndex = input.window_index;
+  if (windowIndex !== undefined && (typeof windowIndex !== 'number' || !Number.isInteger(windowIndex) || windowIndex < 0 || windowIndex > 10_000)) return err(appError('INVALID_INPUT', 'vision window_index is invalid'));
+  const app = input.app === undefined ? undefined : input.app;
+  if (app !== undefined && !isRecord(app)) return err(appError('INVALID_INPUT', 'vision app selector is invalid'));
+  let region: NativeDesktopCaptureRequest['region'];
+  if (action === 'capture_region') {
+    if (!isRecord(input.region)) return err(appError('INVALID_INPUT', 'vision region is required'));
+    const { x, y, width, height } = input.region;
+    if (![x, y, width, height].every((value) => typeof value === 'number' && Number.isFinite(value)) || (width as number) <= 0 || (height as number) <= 0 || (width as number) > 16_384 || (height as number) > 16_384) {
+      return err(appError('INVALID_INPUT', 'vision region is invalid'));
+    }
+    region = { x: x as number, y: y as number, width: width as number, height: height as number };
+  }
+  return ok({ action, ...(displayId === undefined ? {} : { displayId }), ...(windowIndex === undefined ? {} : { windowIndex }), ...(app === undefined ? {} : { app }), ...(region === undefined ? {} : { region }) });
 }
 
 function parseDialogOptions(input: Record<string, unknown>): Result<NativeDialogOptions> {

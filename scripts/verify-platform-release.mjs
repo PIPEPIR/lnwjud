@@ -19,8 +19,8 @@ if (!['x64', 'arm64'].includes(architecture)) throw new Error(`Unsupported verif
 const checks = [
   ['typecheck', 'corepack', ['pnpm@10.15.0', 'typecheck']],
   ['lint', 'corepack', ['pnpm@10.15.0', 'lint']],
-  ['platform-contract', 'corepack', ['pnpm@10.15.0', 'exec', 'vitest', 'run', 'tests/integration/platform-composition.test.ts', 'tests/release/platform-support-contract.test.ts', 'tests/release/platform-docs-contract.test.ts']],
-  ['release-scenarios', 'corepack', ['pnpm@10.15.0', 'exec', 'vitest', 'run', 'tests/integration/cross-platform-release-scenarios.test.ts']],
+  ['platform-contract', 'corepack', ['pnpm@10.15.0', 'exec', 'vitest', 'run', 'tests/integration/platform-composition.test.ts', 'tests/release/platform-support-contract.test.ts', 'tests/release/platform-docs-contract.test.ts', '--exclude=.worktrees/**', '--exclude=.superpowers/**']],
+  ['release-scenarios', 'corepack', ['pnpm@10.15.0', 'exec', 'vitest', 'run', 'tests/integration/cross-platform-release-scenarios.test.ts', '--exclude=.worktrees/**', '--exclude=.superpowers/**']],
   ['full-workspace-suite', 'corepack', ['pnpm@10.15.0', 'test']],
   ['build', 'corepack', ['pnpm@10.15.0', 'build']],
   ['packaging-contract', 'corepack', ['pnpm@10.15.0', 'test:packaging']],

@@ -290,6 +290,140 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+
+  macos-26-package-compatibility:
+    name: macOS 26 Package Compatibility (${{ matrix.arch }})
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: native-package-verification
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            arch: arm64
+          - os: macos-26-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Download exact macOS 15 package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-${{ matrix.arch }}-${{ github.sha }}
+          path: macos26-artifact
+
+      - name: Record exact v4.62.1 macOS 26 arm64 baseline failure
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p macos26-diagnostics "$RUNNER_TEMP/lnwjud-v4.62.1-baseline"
+          baseline_directory="$RUNNER_TEMP/lnwjud-v4.62.1-baseline"
+          baseline_dmg="$baseline_directory/lnwjud-4.62.1-arm64.dmg"
+          baseline_zip="$baseline_directory/lnwjud-4.62.1-arm64.zip"
+          curl --fail --location --retry 3 \
+            --output "$baseline_dmg" \
+            https://github.com/engasnm111/lnwjud/releases/download/v4.62.1/lnwjud-4.62.1-arm64.dmg
+          curl --fail --location --retry 3 \
+            --output "$baseline_zip" \
+            https://github.com/engasnm111/lnwjud/releases/download/v4.62.1/lnwjud-4.62.1-arm64.zip
+          printf '%s  %s\n%s  %s\n' \
+            d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c "$baseline_dmg" \
+            cf982b59a42c0ee6f91186212a03a683634e6c14675a718ddbdbf6fe1ba00db8 "$baseline_zip" \
+            | shasum -a 256 -c -
+          for format in dmg zip; do
+            baseline_variable="baseline_${format}"
+            baseline="${!baseline_variable}"
+            set +e
+            bash scripts/stage-macos-smoke-app.sh \
+              "$baseline" "$RUNNER_TEMP/lnwjud-v4.62.1-${format}-app/lnwjud.app" \
+              2>&1 | tee "macos26-diagnostics/v4.62.1-${format}-baseline-red.log"
+            baseline_status="${PIPESTATUS[0]}"
+            set -e
+            if [[ "$baseline_status" -eq 0 ]]; then
+              echo "v4.62.1 $format unexpectedly launched on macOS 26; stop and re-evaluate Issue #59" >&2
+              exit 1
+            fi
+            echo "Recorded expected v4.62.1 $format macOS 26 launch failure (exit $baseline_status)"
+          done
+
+      - name: Verify exact artifact provenance and macOS 26 signing policy
+        shell: bash
+        env:
+          LNWJUD_RELEASE_PLATFORM: darwin
+          LNWJUD_EXPECTED_COMMIT_SHA: ${{ github.sha }}
+          LNWJUD_REQUIRE_CLEAN_PROVENANCE: '1'
+          LNWJUD_RELEASE_ARTIFACT_ONLY: '1'
+        run: |
+          set -euo pipefail
+          provenance_list="$RUNNER_TEMP/lnwjud-macos26-provenance.txt"
+          find "$GITHUB_WORKSPACE/macos26-artifact" -type f -name PROVENANCE.json -print > "$provenance_list"
+          provenance_count="$(wc -l < "$provenance_list" | tr -d '[:space:]')"
+          if [[ "$provenance_count" -ne 1 ]]; then
+            echo "Expected one PROVENANCE.json, found $provenance_count" >&2
+            exit 1
+          fi
+          IFS= read -r provenance_path < "$provenance_list"
+          installer_directory="$(dirname "$provenance_path")"
+          export LNWJUD_RELEASE_INSTALLER_DIRECTORY="$installer_directory"
+          node apps/desktop/scripts/verify-release-evidence.mjs
+          version="$(node -p "require('./package.json').version")"
+          dmg="$installer_directory/lnwjud-${version}-${{ matrix.arch }}.dmg"
+          zip="$installer_directory/lnwjud-${version}-${{ matrix.arch }}.zip"
+          mkdir -p macos26-diagnostics
+          sw_vers > macos26-diagnostics/os.txt
+          uname -a >> macos26-diagnostics/os.txt
+          shasum -a 256 "$dmg" "$zip" > macos26-diagnostics/artifact-sha256.txt
+          bash scripts/verify-macos-release.sh "$dmg" 2>&1 | tee macos26-diagnostics/verify-dmg.log
+          bash scripts/verify-macos-release.sh "$zip" 2>&1 | tee macos26-diagnostics/verify-zip.log
+          echo "LNWJUD_MACOS26_DMG=$dmg" >> "$GITHUB_ENV"
+          echo "LNWJUD_MACOS26_ZIP=$zip" >> "$GITHUB_ENV"
+
+      - name: Launch exact DMG and ZIP apps through LaunchServices
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_app="$RUNNER_TEMP/lnwjud-macos26-dmg/lnwjud.app"
+          zip_app="$RUNNER_TEMP/lnwjud-macos26-zip/lnwjud.app"
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_DMG" "$dmg_app" 2>&1 | tee macos26-diagnostics/launch-dmg.log
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_ZIP" "$zip_app" 2>&1 | tee macos26-diagnostics/launch-zip.log
+          echo "LNWJUD_PACKAGED_EXECUTABLE=$dmg_app/Contents/MacOS/lnwjud" >> "$GITHUB_ENV"
+
+      - name: Run packaged Electron smoke on macOS 26
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          cd apps/desktop
+          node node_modules/@playwright/test/cli.js test --config playwright.config.ts desktop-dashboard.e2e.ts electron-security.e2e.ts --trace=retain-on-failure --reporter=list,html
+
+      - name: Upload macOS 26 compatibility diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos26-compat-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            macos26-diagnostics/
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
+
   verify:
     # Keep this check name stable because main branch protection requires it.
     name: Authoritative Release Verification (Windows)

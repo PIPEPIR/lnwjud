@@ -30,9 +30,11 @@ system is never evidence for another.
    those files in artifact-only mode and does not rebuild or publish a
    replacement artifact.
 7. Signing is truthful. Windows Authenticode is required when both Windows
-   signing secrets are configured; macOS Developer ID/notarization is required
-   when the protected macOS signing configuration is enabled; unsigned
-   community artifacts are explicitly reported rather than mislabelled.
+   signing secrets are configured. Community macOS artifacts are ad-hoc signed
+   with hardened runtime and a scoped Electron library-validation exception;
+   Developer ID builds require one Team ID, keep Library Validation enabled,
+   and require notarization/stapling when configured. Wholly unsigned macOS
+   distributables are rejected.
 8. A failed gate is a stop condition. Fix the problem on `dev`, rerun the
    relevant checks, and repeat the merge/release sequence. Do not weaken tests,
    security settings, provenance checks, or branch protection.
@@ -49,7 +51,13 @@ expensive Windows installer packaging to be skipped with
 `-SkipWindowsPackaging`. The native platform contract runs on Windows, macOS,
 and Linux. A protected push to `main` additionally runs Windows packaging and
 the target-native macOS/Linux package matrix, including macOS arm64/x64 and
-Linux x64/arm64. If the protected merge is performed by an automation credential
+Linux x64/arm64. The macOS packages are built on `macos-15` / `macos-15-intel`,
+then those exact SHA-scoped DMG/ZIP artifacts are downloaded and verified on
+`macos-26` / `macos-26-intel`; the macOS 26 compatibility job is a publication
+gate and must not rebuild the app. macOS provenance embeds the post-seal
+signature-policy snapshot (mode, architecture, Team ID, CDHashes, nested-code
+inventory, root executable hash, and main/helper entitlements), and each DMG/ZIP
+must match a fresh target-native inspection. If the protected merge is performed by an automation credential
 that does not emit a downstream Actions `push` event, explicitly dispatch
 `ci.yml` on `main`; that exact-main `workflow_dispatch` must run the same full
 Windows and target-native package gates before tagging.

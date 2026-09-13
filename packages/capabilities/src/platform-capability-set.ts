@@ -137,7 +137,10 @@ export function createPlatformCapabilitySet(options: PlatformCapabilitySetOption
       : new LinuxNativeCapabilityBackend(capability, { ...(options.nativeHost === undefined ? {} : { bridge: options.nativeHost }), allowedRootsProvider: capabilityRootsProvider });
     accessibility = nativeBackend('accessibility');
     inputEvent = nativeBackend('input_event');
-    vision = nativeBackend('vision');
+    const nativeVision = nativeBackend('vision');
+    vision = platform === 'linux' && options.shared?.vision !== undefined
+      ? withCaptureFallback(nativeVision, options.shared.vision)
+      : nativeVision;
     window = nativeBackend('window');
     systemInfo = options.shared?.system_info ?? new SystemInfoCapabilityBackend(platform);
     notification = options.shared?.notification ?? unavailable('notification');
@@ -207,6 +210,29 @@ export function createPlatformCapabilitySet(options: PlatformCapabilitySetOption
     health,
     shell,
     backends: { accessibility, inputEvent, vision, window, systemInfo, notification, fileDialog, clipboard, audio, screenRecord, office, scheduler, wslExec, wslFs },
+  };
+}
+
+function withCaptureFallback(primary: CapabilityBackend, fallback: CapabilityBackend): CapabilityBackend {
+  return {
+    execute: async (input, signal, authorization): Promise<import('@lnwjud/domain').Result<unknown>> => {
+      const action = isRecord(input) && typeof input.action === 'string' ? input.action : 'status';
+      const result = await primary.execute(input, signal, authorization);
+      if (action === 'status') {
+        if (result.ok && isRecord(result.value) && result.value.ready === true) return result;
+        const alternate = await fallback.execute(input, signal, authorization);
+        return alternate.ok && isRecord(alternate.value) && alternate.value.available === true
+          ? { ok: true, value: { ...alternate.value, backend: 'linux-native-or-electron-capture' } }
+          : result;
+      }
+      if (!['capture_display', 'capture_region', 'capture_window'].includes(action)) return result;
+      if (result.ok) {
+        if (!isRecord(result.value) || result.value.available !== false) return result;
+        return fallback.execute(input, signal, authorization);
+      }
+      if (!['UNSUPPORTED_PLATFORM', 'PERMISSION_REQUIRED', 'EXECUTABLE_NOT_FOUND'].includes(result.error.code)) return result;
+      return fallback.execute(input, signal, authorization);
+    },
   };
 }
 

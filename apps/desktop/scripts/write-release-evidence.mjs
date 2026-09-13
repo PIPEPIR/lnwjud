@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
@@ -31,6 +32,7 @@ if (runtimeEvidence?.schemaVersion !== 1 || !Array.isArray(runtimeEvidence.files
 const platform = normalizePlatform(process.env.LNWJUD_RELEASE_PLATFORM ?? runtimeEvidence.platform);
 if (runtimeEvidence.platform !== platform) throw new Error(`Runtime evidence platform mismatch: ${String(runtimeEvidence.platform)} != ${platform}`);
 const capabilityBridge = platform === 'win32' ? validateCapabilityBridge(runtimeEvidence) : null;
+const macSigning = platform === 'darwin' ? validateMacSigning(runtimeEvidence) : null;
 
 const artifactNames = expectedArtifactNames(platform, version, runtimeEvidence.arch);
 const artifacts = [];
@@ -58,7 +60,7 @@ const provenance = {
     runAttempt: optionalEnv('GITHUB_RUN_ATTEMPT'),
     ref: optionalEnv('GITHUB_REF'),
     signingCredentialConfigured: signingConfigured(platform),
-    ...(platform === 'darwin' ? { macSigning: runtimeEvidence.signing ?? { mode: 'unsigned' } } : {}),
+    ...(macSigning ? { macSigning } : {}),
     workingTreeDirtyAtEvidence,
   },
   capabilityBridge,
@@ -122,6 +124,22 @@ function validateCapabilityBridge(evidence) {
     throw new Error('Packaged capability bridge runtime evidence does not match the verified bridge identity');
   }
   return evidence.capabilityBridge;
+}
+
+function validateMacSigning(evidence) {
+  const signing = evidence.signing;
+  if (!signing || !['ad-hoc', 'certificate'].includes(signing.mode)
+    || signing.mode === 'certificate' && !/^[0-9a-f]{40}$/i.test(signing.certificateSha1 ?? '')
+    || signing.mode !== 'certificate' && signing.certificateSha1 !== undefined) {
+    throw new Error('Packaged macOS signing evidence is missing or invalid');
+  }
+  const rootExecutable = evidence.files.find((entry) => entry?.relativePath === 'Contents/MacOS/lnwjud');
+  validateMacosSigningPolicyEvidence(signing.policy, {
+    mode: signing.mode,
+    arch: evidence.arch,
+    rootExecutableSha256: rootExecutable?.sha256,
+  });
+  return signing;
 }
 
 function isCapabilityBridgeIdentity(value) {

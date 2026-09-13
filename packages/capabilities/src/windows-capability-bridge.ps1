@@ -52,6 +52,16 @@ public static class LnwjudNative
     [DllImport("user32.dll")] private static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
+
+    public static bool EnsurePhysicalPixelCoordinates()
+    {
+        try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return true; } catch { }
+        try { return SetProcessDPIAware(); } catch { return false; }
+    }
 
     public static List<Dictionary<string, object>> Windows()
     {
@@ -118,45 +128,56 @@ public static class LnwjudNative
 '@
 
 try { Add-Type -TypeDefinition $nativeSource -ErrorAction Stop | Out-Null } catch { }
+$physicalPixelCoordinates = [LnwjudNative]::EnsurePhysicalPixelCoordinates()
 
 function Resolve-Window {
-  param([object]$Parameters, [switch]$PreferCapturable)
-  if ($null -eq $Parameters) { return $null }
+  param([object]$Parameters, [switch]$PreferCapturable, [object]$WindowIndexOverride = $null)
 
   $windows = @([LnwjudNative]::Windows())
-  $windowIndex = Get-Field $Parameters 'window_index'
-  if ($windowIndex -is [int] -or $windowIndex -is [long]) {
-    $index = [int]$windowIndex
-    if ($index -lt 0 -or $index -ge $windows.Count) { return $null }
-    return $windows[$index]
+  $windowIndex = if ($null -ne $WindowIndexOverride) { $WindowIndexOverride } elseif ($null -ne $Parameters) { Get-Field $Parameters 'window_index' } else { $null }
+  $hasWindowIndex = $windowIndex -is [int] -or $windowIndex -is [long]
+
+  if ($null -ne $Parameters) {
+    $handle = Get-Field $Parameters 'hwnd'
+    if ($null -ne $handle) {
+      return $windows | Where-Object { [int64]$_.hwnd -eq [int64]$handle } | Select-Object -First 1
+    }
   }
 
-  $handle = Get-Field $Parameters 'hwnd'
-  if ($null -ne $handle) {
-    return $windows | Where-Object { [int64]$_.hwnd -eq [int64]$handle } | Select-Object -First 1
-  }
-
-  $title = Get-Field $Parameters 'title'
-  $name = Get-Field $Parameters 'name'
-  if ((-not ($title -is [string]) -or [string]::IsNullOrWhiteSpace($title)) -and $name -is [string] -and -not [string]::IsNullOrWhiteSpace($name)) {
-    $title = $name
-  }
-  $processName = Get-Field $Parameters 'process_name'
+  $title = if ($null -ne $Parameters) { Get-Field $Parameters 'title' } else { $null }
+  $name = if ($null -ne $Parameters) { Get-Field $Parameters 'name' } else { $null }
+  $processName = if ($null -ne $Parameters) { Get-Field $Parameters 'process_name' } else { $null }
 
   $hasTitle = $title -is [string] -and -not [string]::IsNullOrWhiteSpace($title)
+  $hasName = $name -is [string] -and -not [string]::IsNullOrWhiteSpace($name)
   $hasProcessName = $processName -is [string] -and -not [string]::IsNullOrWhiteSpace($processName)
-  if (-not $hasTitle -and -not $hasProcessName) { return $null }
+  if (-not $hasTitle -and -not $hasName -and -not $hasProcessName -and -not $hasWindowIndex) { return $null }
 
   $matches = @($windows)
   if ($hasTitle) { $matches = @($matches | Where-Object { $_.title -like "*$title*" }) }
   if ($hasProcessName) { $matches = @($matches | Where-Object { $_.process_name -ieq $processName }) }
+  if ($hasName) {
+    $matches = @($matches | Where-Object { $_.process_name -ieq $name -or $_.title -like "*$name*" })
+  }
   if ($matches.Count -eq 0) { return $null }
 
-  if ($PreferCapturable) {
+  if ($PreferCapturable -and (-not $hasWindowIndex -or $hasTitle -or $hasName -or $hasProcessName)) {
     $capturable = @($matches | Where-Object {
       [bool]$_.visible -and -not [bool]$_.minimized -and [int]$_.bounds.width -gt 0 -and [int]$_.bounds.height -gt 0
-    } | Sort-Object @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true })
-    if ($capturable.Count -gt 0) { return $capturable[0] }
+    })
+    if ($capturable.Count -gt 0) { $matches = $capturable }
+  }
+
+  if ($hasName) {
+    $matches = @($matches | Sort-Object @{ Expression = { if ($_.process_name -ieq $name) { 0 } else { 1 } }; Ascending = $true }, @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true })
+  } elseif ($PreferCapturable) {
+    $matches = @($matches | Sort-Object @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true })
+  }
+
+  if ($hasWindowIndex) {
+    $index = [int]$windowIndex
+    if ($index -lt 0 -or $index -ge $matches.Count) { return $null }
+    return $matches[$index]
   }
 
   return $matches | Select-Object -First 1
@@ -264,7 +285,7 @@ function Get-UiRoot {
   if (-not (Test-UiWindowSelector $Parameters)) {
     return [System.Windows.Automation.AutomationElement]::RootElement
   }
-  $window = Resolve-Window $Parameters
+  $window = Resolve-Window $Parameters -PreferCapturable
   if ($null -eq $window) { throw 'Window not found' }
   return [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]$window.hwnd))
 }
@@ -468,7 +489,7 @@ function Invoke-VisionAction {
     if ($outputBytes.Length -gt 16MB) { throw 'Annotated image is too large' }
     return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($outputBytes); width = $outputWidth; height = $outputHeight; annotated = $true; backend = 'Win32/System.Drawing Set-of-Marks overlay' }
   }
-  $x = 0; $y = 0; $width = 0; $height = 0; $source = $Action
+  $x = 0; $y = 0; $width = 0; $height = 0; $source = $Action; $scaleX = 1.0; $scaleY = 1.0
   if ($Action -eq 'capture_display') {
     $screens = [System.Windows.Forms.Screen]::AllScreens
     $displayId = Get-Field $Parameters 'display_id'
@@ -480,22 +501,28 @@ function Invoke-VisionAction {
     $x = [int](Get-Field $region 'x'); $y = [int](Get-Field $region 'y'); $width = [int](Get-Field $region 'width'); $height = [int](Get-Field $region 'height')
   } elseif ($Action -eq 'capture_window') {
     $windowIndex = Get-Field $Parameters 'window_index'
-    if ($windowIndex -is [int] -or $windowIndex -is [long]) {
-      $windows = @([LnwjudNative]::Windows())
-      if ([int]$windowIndex -lt 0 -or [int]$windowIndex -ge $windows.Count) { throw 'Window index is out of range' }
-      $window = $windows[[int]$windowIndex]
-    } else {
-      $window = Resolve-Window (Get-Field $Parameters 'app') -PreferCapturable
-    }
+    $window = Resolve-Window (Get-Field $Parameters 'app') -PreferCapturable -WindowIndexOverride $windowIndex
     if ($null -eq $window) { throw 'Window not found' }
-    if ([bool]$window.minimized) { throw 'Window is minimized; restore it before capture' }
-    if (-not [bool]$window.visible) { throw 'Window is not visible; activate or restore it before capture' }
-    $x = [int]$window.bounds.x; $y = [int]$window.bounds.y; $width = [int]$window.bounds.width; $height = [int]$window.bounds.height
+    $captureHwnd = [IntPtr]([int64]$window.hwnd)
+    if ([bool]$window.minimized) { [void][LnwjudNative]::ShowWindow($captureHwnd, 9); Start-Sleep -Milliseconds 80 }
+    if (-not [bool]$window.visible) { [void][LnwjudNative]::ShowWindow($captureHwnd, 5); Start-Sleep -Milliseconds 80 }
+    $rect = New-Object LnwjudNative+Rect
+    if (-not [LnwjudNative]::GetWindowRect($captureHwnd, [ref]$rect)) { throw 'Window bounds could not be read' }
+    $x = [int]$rect.Left; $y = [int]$rect.Top; $width = [int]($rect.Right - $rect.Left); $height = [int]($rect.Bottom - $rect.Top)
+    $dpi = [LnwjudNative]::GetDpiForWindow($captureHwnd)
+    $dpiScale = if ($dpi -gt 0) { [double]$dpi / 96.0 } else { 1.0 }
+    if (-not $physicalPixelCoordinates) { $scaleX = $dpiScale; $scaleY = $dpiScale }
   } else { throw "Unsupported vision action: $Action" }
   if ($width -lt 1 -or $height -lt 1 -or $width -gt 10000 -or $height -gt 10000) { throw 'Capture bounds are invalid' }
   $bitmap = New-Object System.Drawing.Bitmap($width, $height)
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-  $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
+  $usedPrintWindow = $false
+  if ($Action -eq 'capture_window') {
+    $hdc = $graphics.GetHdc()
+    try { $usedPrintWindow = [LnwjudNative]::PrintWindow($captureHwnd, $hdc, 2) }
+    finally { $graphics.ReleaseHdc($hdc) }
+  }
+  if (-not $usedPrintWindow) { $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size) }
   $stream = New-Object System.IO.MemoryStream
   $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
   $bytes = $stream.ToArray()
@@ -515,7 +542,9 @@ function Invoke-VisionAction {
   $sha.Dispose()
   $sha256 = -join ($shaBytes | ForEach-Object { $_.ToString('x2') })
 
-  return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($bytes); byte_length = [int]$bytes.Length; sha256 = $sha256; width = $width; height = $height; origin_x = $x; origin_y = $y; source = $source; backend = 'Win32/System.Drawing screen capture' }
+  $backend = if ($usedPrintWindow) { 'Win32 PrintWindow/System.Drawing' } else { 'Win32/System.Drawing screen capture' }
+  $captureSpace = if ($physicalPixelCoordinates) { 'physical_pixels' } else { 'dpi_virtualized_pixels' }
+  return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($bytes); byte_length = [int]$bytes.Length; sha256 = $sha256; width = $width; height = $height; origin_x = $x; origin_y = $y; scale_x = $scaleX; scale_y = $scaleY; source = $source; backend = $backend; capture_space = $captureSpace }
 }
 
 function Invoke-SystemInfoAction {

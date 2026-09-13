@@ -67,6 +67,18 @@ describe('persistent tunnel doctor diagnostics', () => {
     expect(messages).not.toContain('secret-value');
   });
 
+  it('suppresses tunnel-only diagnostics when OAuth-protected Remote MCP is the active remote connection', () => {
+    const checks = buildPersistentTunnelDoctorChecks({
+      tunnel: tunnel({ state: 'error' }),
+      mcp,
+      tunnelHealth: { state: 'unhealthy', message: 'tunnel is intentionally unused' },
+      persistentEnabled: true,
+      remoteMcpActive: true,
+    });
+
+    expect(checks).toEqual([]);
+  });
+
   it('accepts a live runtime alias observed read-only even when Desktop does not own the process', () => {
     const external = tunnel({
       source: 'external',

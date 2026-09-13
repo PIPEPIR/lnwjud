@@ -12,6 +12,7 @@ describe('MCP Ponytail instructions', () => {
     const instructions = buildMcpInstructions(mode);
     expect(instructions).toContain(MCP_OUTCOME_DRIVEN_INSTRUCTIONS);
     expect(instructions).toContain(`Ponytail policy is ${mode.toUpperCase()}`);
+    expect(instructions).toContain('call skills_read');
     expect(instructions).toContain(BUNDLED_PONYTAIL_SKILL_ID);
     expect(instructions).toContain('Do not substitute workspace/user copies');
     expect(instructions).toContain('required tests');

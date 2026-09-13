@@ -6,7 +6,11 @@ import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ modes: new Map<string, number>(), outputs: [] as string[] }));
+const state = vi.hoisted(() => ({
+  modes: new Map<string, number>(),
+  outputs: [] as string[],
+  policyText: undefined as string | undefined,
+}));
 // Real fixture files, canonicalization and streamed hashes; simulate POSIX modes
 // on Windows and intercept only the hook's shared build output.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -19,6 +23,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (mode !== undefined) metadata.mode = (metadata.mode & ~0o777) | (mode & 0o777);
       return metadata;
     },
+    readFile: async (file: string, options?: Parameters<typeof actual.readFile>[1]): Promise<unknown> => {
+      if (file === path.resolve('apps/desktop/build/macos-signing-policy.json')) {
+        if (state.policyText === undefined) throw Object.assign(new Error('missing policy'), { code: 'ENOENT' });
+        return state.policyText;
+      }
+      return actual.readFile(file, options as never);
+    },
     mkdir: async (directory: string, options: Parameters<typeof actual.mkdir>[1]): Promise<string | undefined> => {
       if (directory === path.resolve('apps/desktop/build')) return;
       return actual.mkdir(directory, options);
@@ -26,6 +37,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     writeFile: async (file: string, data: string, options: Parameters<typeof actual.writeFile>[2]): Promise<void> => {
       if (file === path.resolve('apps/desktop/build/packaged-runtime-evidence.json')) {
         state.outputs.push(data);
+        return;
+      }
+      if (file === path.resolve('apps/desktop/build/macos-signing-policy.json')) {
+        state.policyText = data;
         return;
       }
       return actual.writeFile(file, data, options);
@@ -45,6 +60,7 @@ afterEach(async () => {
   for (const root of temporaryRoots.splice(0)) await fs.rm(root, { recursive: true, force: true });
   state.modes.clear();
   state.outputs.length = 0;
+  state.policyText = undefined;
 });
 
 async function fixture(platform: 'linux' | 'darwin', arch = 'x64'): Promise<{
@@ -177,13 +193,29 @@ it('fails afterSign when signing changes bytes recorded in the source manifest',
 const identity = 'a'.repeat(40);
 type SignConfiguration = {
   app: string; identity: string; platform: string; keychain: string;
-  optionsForFile: () => { hardenedRuntime: boolean; entitlements: string };
+  optionsForFile: (file?: string) => { hardenedRuntime: boolean; entitlements: string; timestamp?: string };
   ignore: Array<(file: string) => boolean>;
 };
 function signingConfiguration(app: string): SignConfiguration {
   return { app, identity, platform: 'darwin', keychain: '/private/build.keychain',
     optionsForFile: () => ({ hardenedRuntime: true, entitlements: '/build/inherit.plist' }),
     ignore: [(file: string): boolean => file.endsWith('.kext')] };
+}
+
+function observedPolicy(mode: 'ad-hoc' | 'certificate', arch: string): Record<string, unknown> {
+  const teamId = mode === 'certificate' ? 'ABCDE12345' : null;
+  const rootExecutableSha256 = digest('binary fixture\n');
+  return {
+    schemaVersion: 1, mode, arch, rootIdentifier: 'com.lnwjud.desktop', teamId,
+    rootCdHash: 'a'.repeat(40), rootExecutableSha256, inspectedNestedCodeCount: 1,
+    code: [
+      { relativePath: '.', kind: 'app', mode, teamId, identifier: 'com.lnwjud.desktop', cdHash: 'a'.repeat(40) },
+      { relativePath: 'Contents/MacOS/lnwjud', kind: 'executable', mode, teamId,
+        identifier: 'com.lnwjud.desktop', cdHash: 'b'.repeat(40) },
+    ],
+    electronProcesses: [{ relativePath: 'Contents/MacOS/lnwjud', hardenedRuntime: true,
+      libraryValidationDisabled: mode === 'ad-hoc', secureTimestamp: mode === 'certificate', cdHash: 'b'.repeat(40) }],
+  };
 }
 async function fakeCodesign(args: string[]): Promise<{ stdout: string; stderr: string }> {
   const file = args.at(-1)!;
@@ -205,6 +237,7 @@ describe('macOS signing transaction', () => {
     const f = await fixture('darwin', arch);
     const run = vi.fn(fakeCodesign);
     const signApp = vi.fn(async (options: Omit<SignConfiguration, 'ignore'> & { ignore: (file: string) => boolean }): Promise<void> => {
+      expect(options.optionsForFile(f.bundle).entitlements).toBe('/build/inherit.plist');
       const ignored = await installedIgnorePredicate(options);
       for (const binary of f.binaries.slice(2)) expect(ignored(path.join(f.bundle, binary))).toBe(true);
       expect(ignored(path.join(f.bundle, f.binaries[0]))).toBe(false);
@@ -218,13 +251,21 @@ describe('macOS signing transaction', () => {
       expect(native.sizeBytes).toBe(Buffer.byteLength('binary fixture\nsigned bytes'));
     });
     await capture(f.context);
-    await signPackagedMacosRuntime(signingConfiguration(f.bundle), { run, signApp });
+    const inspectSigningPolicy = vi.fn(async () => observedPolicy('certificate', arch));
+    await signPackagedMacosRuntime(signingConfiguration(f.bundle), { run, signApp, inspectSigningPolicy });
     expect(signApp).toHaveBeenCalledTimes(1);
     expect(run.mock.calls.filter(([args]) => args.includes('--force'))).toHaveLength(3);
     // Until notarization finishes and afterSign runs, evidence remains invalid.
     expect(JSON.parse(state.outputs.at(-1)!)).toEqual({ schemaVersion: 0, signing: 'incomplete' });
     await capture(f.context);
-    expect(JSON.parse(state.outputs.at(-1)!).schemaVersion).toBe(1);
+    expect(JSON.parse(state.outputs.at(-1)!)).toMatchObject({
+      schemaVersion: 1,
+      signing: { mode: 'certificate', certificateSha1: identity,
+        policy: { schemaVersion: 1, mode: 'certificate', arch } },
+    });
+    expect(inspectSigningPolicy).toHaveBeenCalledWith(f.bundle, expect.objectContaining({
+      arch, expectedMode: 'certificate', certificateSha1: identity, run,
+    }));
     for (const relative of [`${f.resources}/runtime-tools/ripgrep/BUNDLED_RIPGREP.json`,
       `${f.resources}/tunnel-client/BUNDLED_TUNNEL_CLIENT.json`, f.nativeManifest]) {
       const manifest = JSON.parse(await fs.readFile(path.join(f.bundle, relative), 'utf8'));
@@ -261,15 +302,25 @@ describe('macOS signing transaction', () => {
       expect(options.identity).toBe('-');
       expect(options.identityValidation).toBe(false);
       expect(options.preAutoEntitlements).toBe(false);
-      expect(options.optionsForFile()).toMatchObject({ timestamp: 'none' });
+      expect(options.optionsForFile(f.bundle)).toMatchObject({
+        entitlements: path.resolve('apps/desktop/build/entitlements.mac.adhoc.plist'),
+        timestamp: 'none',
+      });
+      expect(options.optionsForFile(path.join(f.bundle, 'Contents', 'Frameworks', 'lnwjud Helper.app'))).toMatchObject({
+        entitlements: path.resolve('apps/desktop/build/entitlements.mac.adhoc.inherit.plist'),
+        timestamp: 'none',
+      });
     });
-    await signPackagedMacosRuntime({ ...signingConfiguration(f.bundle), identity: value }, { run, signApp });
+    const inspectSigningPolicy = vi.fn(async () => observedPolicy('ad-hoc', 'arm64'));
+    await signPackagedMacosRuntime({ ...signingConfiguration(f.bundle), identity: value }, { run, signApp, inspectSigningPolicy });
     expect(signApp).toHaveBeenCalledTimes(2);
     const normalized = signApp.mock.calls[0]![0] as unknown as { ignore: (file: string) => boolean };
     expect(normalized.ignore(path.join(f.bundle, 'Contents', 'Frameworks', 'Electron Framework.framework'))).toBe(false);
     for (const runtime of f.binaries.slice(2)) expect(normalized.ignore(path.join(f.bundle, runtime))).toBe(true);
     await capture(f.context);
-    expect(JSON.parse(state.outputs.at(-1)!).signing).toEqual({ mode: 'ad-hoc' });
+    expect(JSON.parse(state.outputs.at(-1)!).signing).toEqual({
+      mode: 'ad-hoc', policy: expect.objectContaining({ schemaVersion: 1, mode: 'ad-hoc', arch: 'arm64' }),
+    });
     const native = JSON.parse(await fs.readFile(path.join(f.bundle, f.nativeManifest), 'utf8'));
     expect(native.sha256).toBe(digest('binary fixture\nad-hoc bytes'));
     expect(native.packagedSigning.mode).toBe('ad-hoc');

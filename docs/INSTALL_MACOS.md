@@ -1,6 +1,6 @@
 # Install lnwjud on macOS
 
-This guide covers the v4.60.0 native macOS target. macOS 13 or newer is
+This guide covers the v4.62.2 native macOS target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.
@@ -12,13 +12,19 @@ claim until every native helper and runtime has been verified as universal.
 2. Before opening it, verify the artifact SHA-256 against the accompanying
    `SHA256SUMS.txt` and verify the release provenance. The bundled tunnel
    client provenance is cryptographically verified with Sigstore during
-   packaging. A production release
-   must also pass Developer ID, hardened-runtime, notarization, stapling, and
-   Gatekeeper checks. An unsigned PR artifact is for development only.
+   packaging. Community macOS artifacts are ad-hoc signed with hardened runtime;
+   Electron main/helper process signatures use a scoped library-validation
+   exception so their ad-hoc Electron Framework can load on macOS 26. Protected
+   Developer ID builds instead require one Team ID across nested code, keep
+   Library Validation enabled, and require notarization/stapling when that
+   release mode is configured. Wholly unsigned distributable macOS artifacts
+   are rejected.
 3. Copy `lnwjud.app` to `Applications` and open it. macOS may ask for the
    normal first-launch confirmation.
 4. Add an explicit project in Projects. lnwjud never treats `/`, `/Volumes`,
    or a home directory as an implicit trusted project.
+
+Release CI builds the target-native DMG/ZIP on macOS 15, then verifies and launches the exact same artifact bytes on macOS 26 for arm64 and x64 before publication.
 
 The app contains Electron, the target-native ripgrep binary, and the official
 OpenAI `tunnel-client` selected for the artifact architecture. A system Node.js

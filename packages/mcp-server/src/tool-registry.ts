@@ -416,7 +416,7 @@ export class ToolRegistry {
       if (ponytailInvocation !== undefined && ponytailInvocation.policy.mode !== 'off') {
         const activation = this.ponytailActivation.state(ponytailInvocation.context, ponytailInvocation.policy);
         if (!activation.primarySkillLoaded && !activation.sessionSuppressed) {
-          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Load ${BUNDLED_PONYTAIL_SKILL_ID} for this workspace/goal, then retry this code mutation.`;
+          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Call skills_read with skillId=${BUNDLED_PONYTAIL_SKILL_ID}, this workspaceId, and the same goalId when applicable, then retry this code mutation.`;
           const response = mapError(appError('CONFLICT', message, true));
           await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
           return response;
@@ -625,11 +625,13 @@ export class ToolRegistry {
       if (!state.sessionSuppressed) this.ponytailActivation.recordCodeMutation(codingInvocation.context, codingInvocation.policy);
     }
     if (!isRecord(input)) return;
-    if (toolName === 'skill_load') {
+    if (toolName === 'skill_load' || toolName === 'skills_read') {
       if (readTrimmedString(input.relativePath) !== undefined || readTrimmedString(input.path) !== undefined) return;
       const requestedSkillId = readTrimmedString(input.skillId) ?? readTrimmedString(input.id) ?? readTrimmedString(input.name);
       if (requestedSkillId !== BUNDLED_PONYTAIL_SKILL_ID && requestedSkillId !== BUNDLED_PONYTAIL_REVIEW_SKILL_ID) return;
-      const skill = isRecord(response.structuredContent?.skill) ? response.structuredContent.skill : undefined;
+      const skill = toolName === 'skill_load'
+        ? isRecord(response.structuredContent?.skill) ? response.structuredContent.skill : undefined
+        : isRecord(response.structuredContent) ? response.structuredContent : undefined;
       if (skill === undefined || readTrimmedString(skill.id) !== requestedSkillId || readTrimmedString(skill.trustTier) !== 'bundled') return;
       const resolved = await this.resolvePonytailInvocation(
         readExplicitWorkspaceId(input) ?? activityWorkspaceId,
@@ -1166,7 +1168,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.62.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.62.2 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

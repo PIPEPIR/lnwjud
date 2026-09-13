@@ -480,6 +480,8 @@ pub(crate) fn capture(
             0,
             screen.width_in_pixels as u32,
             screen.height_in_pixels as u32,
+            0,
+            0,
         ),
         "capture_region" => {
             let x = parse_region_coordinate(input, "x")?;
@@ -499,7 +501,7 @@ pub(crate) fn capture(
                     false,
                 ));
             }
-            capture_drawable(&conn, root, x, y, width, height)
+            capture_drawable(&conn, root, x, y, width, height, i32::from(x), i32::from(y))
         }
         "capture_window" => {
             let window = selected_window(&conn, root, input)?;
@@ -520,6 +522,11 @@ pub(crate) fn capture(
                         true,
                     )
                 })?;
+            let translated = conn
+                .translate_coordinates(window, root, 0, 0)
+                .map_err(|_| ("INTERNAL_ERROR", "X11 window origin could not be resolved", true))?
+                .reply()
+                .map_err(|_| ("INTERNAL_ERROR", "X11 window origin could not be resolved", true))?;
             capture_drawable(
                 &conn,
                 window,
@@ -527,6 +534,8 @@ pub(crate) fn capture(
                 0,
                 u32::from(geometry.width),
                 u32::from(geometry.height),
+                i32::from(translated.dst_x),
+                i32::from(translated.dst_y),
             )
         }
         "ocr" | "annotate" => Err((
@@ -605,6 +614,8 @@ fn capture_drawable(
     y: i16,
     width: u32,
     height: u32,
+    origin_x: i32,
+    origin_y: i32,
 ) -> Result<String, (&'static str, &'static str, bool)> {
     let (width, height) = capture_dimensions(width, height).map_err(|_| {
         (
@@ -696,8 +707,8 @@ fn capture_drawable(
     })?;
     let data_base64 = base64::engine::general_purpose::STANDARD.encode(encoded);
     Ok(format!(
-        r#"{{"available":true,"ready":true,"format":"png","mime_type":"image/png","data_base64":"{}","width":{},"height":{}}}"#,
-        data_base64, width, height
+        r#"{{"available":true,"ready":true,"format":"png","mime_type":"image/png","data_base64":"{}","width":{},"height":{},"origin_x":{},"origin_y":{},"scale_x":1.0,"scale_y":1.0,"backend":"x11-drawable"}}"#,
+        data_base64, width, height, origin_x, origin_y
     ))
 }
 
@@ -1329,13 +1340,17 @@ fn mutate_window(
     ))
 }
 
+fn selector_value<'a>(input: &'a BTreeMap<String, String>, name: &str) -> Option<&'a String> {
+    input.get(name).or_else(|| input.get(&format!("app.{name}")))
+}
+
 fn selected_window(
     conn: &RustConnection,
     root: Window,
     input: &BTreeMap<String, String>,
 ) -> Result<Window, (&'static str, &'static str, bool)> {
     let list = get_window_list(conn, root, intern_atom(conn, b"_NET_CLIENT_LIST")?)?;
-    if let Some(value) = input.get("window_index") {
+    if let Some(value) = selector_value(input, "window_index") {
         let index = value
             .parse::<usize>()
             .map_err(|_| ("INVALID_INPUT", "window_index must be an integer", false))?;
@@ -1350,13 +1365,10 @@ fn selected_window(
     // Windows compatibility. On X11 that selector is the unsigned 32-bit
     // window ID; accept the native `window_id` spelling as well, but resolve
     // it through the client list so a guessed/root window cannot be mutated.
-    if input.contains_key("window_id") || input.contains_key("hwnd") {
-        let key = if input.contains_key("window_id") {
-            "window_id"
-        } else {
-            "hwnd"
-        };
-        let value = input.get(key).expect("selector key exists");
+    if selector_value(input, "window_id").is_some() || selector_value(input, "hwnd").is_some() {
+        let value = selector_value(input, "window_id")
+            .or_else(|| selector_value(input, "hwnd"))
+            .expect("selector key exists");
         let id = value.parse::<u64>().map_err(|_| {
             (
                 "INVALID_INPUT",
@@ -1382,33 +1394,33 @@ fn selected_window(
             ));
     }
 
-    let pid = input
-        .get("pid")
-        .or_else(|| input.get("process_id"))
+    let pid = selector_value(input, "pid")
+        .or_else(|| selector_value(input, "process_id"))
         .map(|value| {
             value
                 .parse::<u32>()
                 .map_err(|_| ("INVALID_INPUT", "pid must be an integer", false))
         })
         .transpose()?;
-    let title = input
-        .get("title")
+    let title = selector_value(input, "title")
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.trim().to_string());
-    let process_name = input
-        .get("process_name")
+    let process_name = selector_value(input, "process_name")
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.trim().to_string());
-    if pid.is_none() && title.is_none() && process_name.is_none() {
+    let natural_name = selector_value(input, "name")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string());
+    if pid.is_none() && title.is_none() && process_name.is_none() && natural_name.is_none() {
         return Err(("INVALID_INPUT", "A window selector is required", false));
     }
 
-    let pid_atom = if pid.is_some() || process_name.is_some() {
+    let pid_atom = if pid.is_some() || process_name.is_some() || natural_name.is_some() {
         Some(intern_atom(conn, b"_NET_WM_PID")?)
     } else {
         None
     };
-    let title_atoms = if title.is_some() {
+    let title_atoms = if title.is_some() || natural_name.is_some() {
         Some((
             intern_atom(conn, b"_NET_WM_NAME")?,
             intern_atom(conn, b"UTF8_STRING")?,
@@ -1422,32 +1434,32 @@ fn selected_window(
             continue;
         }
         if let Some(expected) = &process_name {
-            let Some(window_pid) = window_pid else {
-                continue;
-            };
-            let Some(actual) = process_name_for_pid(window_pid) else {
-                continue;
-            };
-            if !actual.eq_ignore_ascii_case(expected) {
-                continue;
-            }
+            let Some(window_pid) = window_pid else { continue; };
+            let Some(actual) = process_name_for_pid(window_pid) else { continue; };
+            if !actual.eq_ignore_ascii_case(expected) { continue; }
         }
-        if let Some(expected) = &title {
-            let Some((wm_name, utf8)) = title_atoms else {
-                continue;
-            };
-            let actual = property_text(conn, window, wm_name, utf8).or_else(|| {
+        let actual_title = title_atoms.and_then(|(wm_name, utf8)| {
+            property_text(conn, window, wm_name, utf8).or_else(|| {
                 property_text(
                     conn,
                     window,
                     AtomEnum::WM_NAME.into(),
                     AtomEnum::STRING.into(),
                 )
-            });
-            let Some(actual) = actual else { continue };
-            if !actual.to_lowercase().contains(&expected.to_lowercase()) {
-                continue;
-            }
+            })
+        });
+        if let Some(expected) = &title {
+            let Some(actual) = &actual_title else { continue; };
+            if !actual.to_lowercase().contains(&expected.to_lowercase()) { continue; }
+        }
+        if let Some(expected) = &natural_name {
+            let process_matches = window_pid
+                .and_then(process_name_for_pid)
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(expected));
+            let title_matches = actual_title
+                .as_ref()
+                .is_some_and(|actual| actual.to_lowercase().contains(&expected.to_lowercase()));
+            if !process_matches && !title_matches { continue; }
         }
         return Ok(window);
     }
@@ -1457,7 +1469,6 @@ fn selected_window(
         true,
     ))
 }
-
 fn get_window_list(
     conn: &RustConnection,
     root: Window,

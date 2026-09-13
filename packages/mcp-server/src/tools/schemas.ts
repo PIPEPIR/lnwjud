@@ -563,6 +563,8 @@ export const skillsListSchema = z.object({
 export const skillsReadSchema = z.object({
   skillId: z.string().trim().min(1).max(512),
   relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
+  workspaceId: z.string().trim().min(1).max(128).optional(),
+  goalId: z.string().trim().min(1).max(128).optional(),
 }).strict();
 
 export const mcpListSchema = z.object({}).strict();

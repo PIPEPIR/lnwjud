@@ -332,6 +332,55 @@ describe('LocalExtensionsService MCP bridge', () => {
     stderr.destroy();
   });
 
+  it('preserves child MCP error results without applying the declared success output schema', async () => {
+    const session: McpClientSession = {
+      listTools: async () => [{
+        name: 'validate',
+        description: 'Validate fixture',
+        outputSchema: {
+          type: 'object',
+          properties: { answer: { type: 'string' } },
+          required: ['answer'],
+          additionalProperties: false,
+        },
+      }],
+      listResources: async () => [],
+      callTool: async (_tool, args): Promise<unknown> => {
+        switch (args.mode) {
+          case 'error-no-structured': return { isError: true, content: [{ type: 'text', text: 'Demo validation failed' }] };
+          case 'error-invalid-structured': return { isError: true, structuredContent: { answer: 42 }, content: [{ type: 'text', text: 'Still the child error' }] };
+          case 'success-valid': return { structuredContent: { answer: 'ok' }, content: [] };
+          case 'malformed-error': return { isError: true, content: 'not-an-array' };
+          default: return { content: [{ type: 'text', text: 'missing structured content' }] };
+        }
+      },
+      close: async () => undefined,
+    };
+    const manager = new McpSessionManager({ clientFactory: { connect: async (): Promise<McpClientSession> => session }, callTimeoutMs: 500 });
+
+    await expect(manager.call('mock', { command: 'node' }, 'validate', { mode: 'error-no-structured' })).resolves.toMatchObject({
+      ok: true,
+      value: { isError: true, content: [{ text: 'Demo validation failed' }] },
+    });
+    await expect(manager.call('mock', { command: 'node' }, 'validate', { mode: 'error-invalid-structured' })).resolves.toMatchObject({
+      ok: true,
+      value: { isError: true, structuredContent: { answer: 42 } },
+    });
+    await expect(manager.call('mock', { command: 'node' }, 'validate', { mode: 'success-valid' })).resolves.toMatchObject({
+      ok: true,
+      value: { structuredContent: { answer: 'ok' } },
+    });
+    await expect(manager.call('mock', { command: 'node' }, 'validate', { mode: 'success-missing' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT', message: expect.stringContaining('declared outputSchema requires structuredContent') },
+    });
+    await expect(manager.call('mock', { command: 'node' }, 'validate', { mode: 'malformed-error' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT', message: expect.stringContaining('MCP tool result content must be an array') },
+    });
+    await manager.close();
+  });
+
   it('shares one child connection across concurrent calls', async () => {
     let connects = 0;
     const session: McpClientSession = {

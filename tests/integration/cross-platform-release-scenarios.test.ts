@@ -186,6 +186,23 @@ const nativeCiScenarios: readonly Scenario[] = [
   ['098 packaged Electron E2E exercises a real MCP client', () => expectWorkflowContains('desktop-mcp-client.e2e.ts')],
   ['099 native macOS host protocol runs Swift tests', () => expectWorkflowContains('swift test --package-path native/macos-host')],
   ['100 native Linux host protocol runs Cargo tests', () => expectWorkflowContains('cargo test --manifest-path native/linux-host/Cargo.toml --locked')],
+  ['101 macOS 26 arm64 reuses the macOS 15 artifact', () => expectWorkflowContains('os: macos-26')],
+  ['102 macOS 26 x64 reuses the macOS 15 Intel artifact', () => expectWorkflowContains('os: macos-26-intel')],
+  ['103 macOS 26 compatibility downloads the exact SHA-scoped Darwin artifact', () => expectWorkflowContains('native-darwin-${{ matrix.arch }}-${{ github.sha }}')],
+  ['104 macOS 26 provenance discovery remains compatible with the hosted macOS Bash baseline', async () => {
+    const workflow = await workflowSource();
+    const compatibilityJob = workflow.slice(workflow.indexOf('macos-26-package-compatibility:'), workflow.indexOf('\n  verify:', workflow.indexOf('macos-26-package-compatibility:')));
+    expect(compatibilityJob).toContain('provenance_list=');
+    expect(compatibilityJob).not.toContain('mapfile');
+  }],
+  ['105 macOS 26 records the exact public v4.62.1 arm64 failure before accepting the fix', async () => {
+    const workflow = await workflowSource();
+    expect(workflow).toContain('lnwjud-4.62.1-arm64.dmg');
+    expect(workflow).toContain('lnwjud-4.62.1-arm64.zip');
+    expect(workflow).toContain('d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c');
+    expect(workflow).toContain('cf982b59a42c0ee6f91186212a03a683634e6c14675a718ddbdbf6fe1ba00db8');
+    expect(workflow).toContain('unexpectedly launched on macOS 26; stop and re-evaluate Issue #59');
+  }],
 ];
 
 const extendedPlatformScenarios: readonly Scenario[] = [
