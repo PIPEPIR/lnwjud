@@ -8,9 +8,6 @@ import {
 } from '@lnwjud/shared';
 
 export interface SafeStorageApi {
-  isEncryptionAvailable(): boolean;
-  encryptString(plainText: string): Buffer;
-  decryptString(encrypted: Buffer): string;
   isAsyncEncryptionAvailable(): Promise<boolean>;
   encryptStringAsync(plainText: string): Promise<Buffer>;
   decryptStringAsync(encrypted: Buffer): Promise<{ readonly result: string; readonly shouldReEncrypt: boolean }>;
@@ -20,7 +17,6 @@ export interface SafeStorageApi {
 export interface SafeStorageSecretProtectorOptions {
   readonly api: SafeStorageApi;
   readonly platform?: NodeJS.Platform;
-  readonly useSynchronousApi?: boolean;
 }
 
 /** Electron safeStorage adapter. It deliberately refuses Linux basic_text/unknown backends. */
@@ -43,9 +39,7 @@ export class SafeStorageSecretProtector implements SecretProtector {
       return { available: false, secure: false, backend, reason: 'temporarily_unavailable' };
     }
     try {
-      const available = this.options.useSynchronousApi === true
-        ? this.options.api.isEncryptionAvailable()
-        : await this.options.api.isAsyncEncryptionAvailable();
+      const available = await this.options.api.isAsyncEncryptionAvailable();
       return available
         ? { available: true, secure: true, backend }
         : { available: false, secure: false, backend, reason: 'temporarily_unavailable' };
@@ -59,9 +53,7 @@ export class SafeStorageSecretProtector implements SecretProtector {
     await this.requireSecureStatus();
     let encrypted: Buffer;
     try {
-      encrypted = this.options.useSynchronousApi === true
-        ? this.options.api.encryptString(plainText)
-        : await this.options.api.encryptStringAsync(plainText);
+      encrypted = await this.options.api.encryptStringAsync(plainText);
     } catch {
       throw new Error('Secure secret storage is temporarily unavailable');
     }
@@ -73,9 +65,7 @@ export class SafeStorageSecretProtector implements SecretProtector {
     await this.requireSecureStatus();
     let result: { readonly result: string; readonly shouldReEncrypt: boolean };
     try {
-      result = this.options.useSynchronousApi === true
-        ? { result: this.options.api.decryptString(encrypted), shouldReEncrypt: false }
-        : await this.options.api.decryptStringAsync(encrypted);
+      result = await this.options.api.decryptStringAsync(encrypted);
     } catch {
       throw new Error('Secure secret storage could not decrypt the saved value');
     }

@@ -24,16 +24,15 @@ describe('desktop packaged startup regression contract', () => {
     expect(secretBootstrap).toContain('checkpointEncryptionKey');
   });
 
-  it('selects synchronous safeStorage for affected macOS startup before the first probe', () => {
+  it('keeps desktop startup on Electron safeStorage async APIs', () => {
     const secretBootstrap = section(
       'async function resolveDesktopRuntimeSecrets',
       'async function migrateV3SafeStorageSecrets',
     );
-    const strategyIndex = secretBootstrap.indexOf('shouldUseSynchronousMacosSafeStorage');
-    const protectorIndex = secretBootstrap.indexOf('new SafeStorageSecretProtector');
-    expect(strategyIndex).toBeGreaterThanOrEqual(0);
-    expect(strategyIndex).toBeLessThan(protectorIndex);
-    expect(secretBootstrap).toContain('useSynchronousApi');
+    expect(secretBootstrap).toContain("recordDesktopStartup('safe-storage:async:selected')");
+    expect(secretBootstrap).toContain('new SafeStorageSecretProtector');
+    expect(secretBootstrap).not.toContain('shouldUseSynchronousMacosSafeStorage');
+    expect(secretBootstrap).not.toContain('useSynchronousApi');
     expect(secretBootstrap).not.toContain('waitForMacosAsyncSafeStorageStartup');
   });
 

@@ -216,6 +216,21 @@ const nativeCiScenarios: readonly Scenario[] = [
     expect(stageIndex).toBeLessThan(uiSmokeIndex);
     expect(uiSmokeIndex).toBeLessThan(launchServicesIndex);
   }],
+  ['107 macOS 26 gives packaged safeStorage an unlocked disposable Keychain', async () => {
+    const workflow = await workflowSource();
+    const compatibilityStart = workflow.indexOf('macos-26-package-compatibility:');
+    const compatibilityJob = workflow.slice(compatibilityStart, workflow.indexOf('\n  verify:', compatibilityStart));
+    const keychainIndex = compatibilityJob.indexOf('security create-keychain');
+    const uiSmokeIndex = compatibilityJob.indexOf('Run packaged Electron smoke on macOS 26');
+    const playwrightIndex = compatibilityJob.indexOf('node node_modules/@playwright/test/cli.js');
+    expect(keychainIndex).toBeGreaterThanOrEqual(0);
+    expect(compatibilityJob).toContain('security unlock-keychain');
+    expect(compatibilityJob).toContain('security default-keychain -d user -s "$ci_keychain"');
+    expect(compatibilityJob).toContain('trap cleanup_ci_keychain EXIT');
+    expect(compatibilityJob).toContain('security delete-keychain "$ci_keychain"');
+    expect(keychainIndex).toBeGreaterThan(uiSmokeIndex);
+    expect(keychainIndex).toBeLessThan(playwrightIndex);
+  }],
 ];
 
 const extendedPlatformScenarios: readonly Scenario[] = [

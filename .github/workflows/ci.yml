@@ -440,6 +440,31 @@ jobs:
           ELECTRON_ENABLE_LOGGING: '1'
         run: |
           set -euo pipefail
+          mkdir -p macos26-diagnostics
+          ci_keychain="$RUNNER_TEMP/lnwjud-macos26-${{ matrix.arch }}.keychain-db"
+          ci_keychain_password="$(uuidgen)"
+          echo "::add-mask::$ci_keychain_password"
+          original_default_keychain="$(security default-keychain -d user | sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//')"
+          original_keychains=()
+          while IFS= read -r keychain_line; do
+            keychain_path="$(printf '%s' "$keychain_line" | sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//')"
+            if [[ -n "$keychain_path" ]]; then original_keychains+=("$keychain_path"); fi
+          done < <(security list-keychains -d user)
+          cleanup_ci_keychain() {
+            if [[ -n "$original_default_keychain" ]]; then
+              security default-keychain -d user -s "$original_default_keychain" || true
+            fi
+            if [[ "${#original_keychains[@]}" -gt 0 ]]; then
+              security list-keychains -d user -s "${original_keychains[@]}" || true
+            fi
+            security delete-keychain "$ci_keychain" || true
+          }
+          trap cleanup_ci_keychain EXIT
+          security create-keychain -p "$ci_keychain_password" "$ci_keychain"
+          security set-keychain-settings -lut 21600 "$ci_keychain"
+          security unlock-keychain -p "$ci_keychain_password" "$ci_keychain"
+          security list-keychains -d user -s "$ci_keychain" "${original_keychains[@]}"
+          security default-keychain -d user -s "$ci_keychain"
           {
             echo 'User keychains:'
             security list-keychains -d user
