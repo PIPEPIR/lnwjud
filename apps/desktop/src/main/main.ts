@@ -102,6 +102,7 @@ import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mut
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
+import { waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
 
@@ -1816,6 +1817,12 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   readonly checkpointEncryptionKey: Buffer;
   readonly secretProtector: SafeStorageSecretProtector;
 }> {
+  await waitForMacosAsyncSafeStorageStartup({
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+    isPackaged: app.isPackaged,
+  });
   const secretProtector = new SafeStorageSecretProtector({ api: safeStorage, platform: process.platform });
   const status = await secretProtector.status();
   if (!status.secure) {

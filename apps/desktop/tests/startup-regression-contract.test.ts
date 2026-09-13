@@ -24,6 +24,17 @@ describe('desktop packaged startup regression contract', () => {
     expect(secretBootstrap).toContain('checkpointEncryptionKey');
   });
 
+  it('settles packaged macOS 26 arm64 async keychain startup before the first safeStorage probe', () => {
+    const secretBootstrap = section(
+      'async function resolveDesktopRuntimeSecrets',
+      'async function migrateV3SafeStorageSecrets',
+    );
+    const settleIndex = secretBootstrap.indexOf('await waitForMacosAsyncSafeStorageStartup');
+    const protectorIndex = secretBootstrap.indexOf('new SafeStorageSecretProtector');
+    expect(settleIndex).toBeGreaterThanOrEqual(0);
+    expect(settleIndex).toBeLessThan(protectorIndex);
+  });
+
   it('routes migrated v3 tunnel secrets through safeStorage before legacy migration', () => {
     const resolver = section('async function resolveDesktopRuntimeSecrets', 'async function migrateV3SafeStorageSecrets');
     const migration = section('async function migrateV3SafeStorageSecrets', 'async function readTrustedSecretFile');
