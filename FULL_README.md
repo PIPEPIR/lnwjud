@@ -53,14 +53,22 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current version: v4.63.0
 
-The v4.62.2 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
+The v4.63.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
 with **226 advertised by default** and **all 233 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.62.2
+### What's new in v4.63.0
+
+- Desktop Git is reorganized into a more compact daily-review surface while preserving guarded mutation semantics.
+- Recoverable MCP/tool failures are hardened so expected errors stay actionable at the tool boundary instead of unnecessarily destabilizing the session.
+- Session recovery handoff is explicitly task state rather than persistent user/agent instruction state, preventing recovered run context from being reinterpreted as durable instructions.
+- Cross-platform CI is faster through native workspace concurrency and Desktop test sharding, while ordinary `dev` pushes skip duplicate release packaging/gates that are still mandatory on the exact `main` release SHA.
+- Repository validation ignores generated `.tmp` artifacts consistently and keeps the Windows LSP spawner fully typed, so lint/typecheck/release gates remain deterministic after local/E2E runs.
+
+### Historical: What's new in v4.62.2
 
 - Doctor treats Secure MCP Tunnel as not applicable when OAuth-protected Remote MCP is the active remote transport, so unused tunnel runtime/auth/health checks no longer appear as errors.
 - Community macOS packages use dedicated ad-hoc Electron entitlements: hardened runtime remains enabled while `disable-library-validation` is scoped to Electron main/helper process signatures. Developer ID mode retains normal Library Validation and one Team ID.

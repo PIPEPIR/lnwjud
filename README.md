@@ -25,9 +25,17 @@
 
 ## Current version: v4.63.0
 
-`v4.62.2` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.63.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.62.2
+### What's new in v4.63.0
+
+- **Compact Git workspace:** the Desktop Git page is reorganized for faster day-to-day review with denser status/diff/history presentation while preserving the existing guarded mutation boundaries.
+- **Recoverable MCP errors:** expected recoverable tool failures are normalized so clients receive actionable tool errors instead of unnecessary session-level failures.
+- **Safer recovery handoff:** session recovery state is explicitly treated as task state rather than persistent user/agent instructions, preventing recovered workflow context from leaking into instruction memory.
+- **Faster cross-platform CI:** native contract tests and Desktop test shards are distributed across runners, while duplicate release-gate/package work is skipped on ordinary `dev` pushes without weakening the exact-`main` release boundary.
+- **Validation hygiene:** generated `.tmp` Playwright/report artifacts are excluded consistently from repository linting, and the Windows LSP runtime carries an explicit typed spawner contract so lint/typecheck/release validation remain deterministic.
+
+### Historical: What's new in v4.62.2
 
 - **OAuth-aware Doctor:** when OAuth-protected Remote MCP is the active ChatGPT connection, Doctor no longer reports Secure MCP Tunnel runtime/auth/health failures for the intentionally unused transport.
 - **macOS 26 community-package launch fix:** ad-hoc Electron main/helper process signatures keep hardened runtime but add the scoped `disable-library-validation` entitlement required for ad-hoc Electron Framework loading on macOS 26. Developer ID builds keep normal Library Validation and must retain one Team ID.
