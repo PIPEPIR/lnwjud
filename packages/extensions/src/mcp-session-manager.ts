@@ -341,7 +341,10 @@ export const defaultMcpClientFactory: McpClientFactory = {
         }));
       },
       async callTool(name: string, args: Readonly<Record<string, unknown>>, callSignal?: AbortSignal): Promise<unknown> {
-        return client.callTool({ name, arguments: { ...args } }, callSignal === undefined ? undefined : { signal: callSignal });
+        return client.request(
+          { method: 'tools/call', params: { name, arguments: { ...args } } },
+          callSignal === undefined ? undefined : { signal: callSignal },
+        );
       },
       async close(): Promise<void> {
         if (closed) return;

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import { defaultMcpClientFactory } from './mcp-session-manager.js';
+import { Client } from '@modelcontextprotocol/client';
+import { describe, expect, it, vi } from 'vitest';
+import { McpSessionManager, defaultMcpClientFactory } from './mcp-session-manager.js';
 
 const fixturePath = fileURLToPath(new URL('../tests/fixtures/external-mcp-server.mjs', import.meta.url));
 
@@ -35,7 +36,10 @@ describe('default External MCP client protocol negotiation', () => {
     }
   }, 20_000);
 
-  it('preserves isError tool results before success output-schema validation in the real SDK path', async () => {
+  it('bypasses SDK callTool output validation so isError results reach the lnwjud guard', async () => {
+    const sdkCallTool = vi.spyOn(Client.prototype, 'callTool').mockRejectedValue(
+      new Error('SDK callTool output-schema validation ran before lnwjud guard'),
+    );
     const session = await connectFixture('schema-error');
     try {
       await session.listTools();
@@ -43,17 +47,46 @@ describe('default External MCP client protocol negotiation', () => {
         isError: true,
         content: [{ text: 'Demo validation failed: invalid input' }],
       });
-      await expect(session.callTool('schema_error_demo', { mode: 'error-invalid-structured' })).resolves.toMatchObject({
-        isError: true,
-        structuredContent: { value: 42 },
-      });
-      await expect(session.callTool('schema_error_demo', { mode: 'success-valid' })).resolves.toMatchObject({
-        structuredContent: { value: 'ok' },
-      });
-      await expect(session.callTool('schema_error_demo', { mode: 'success-invalid' })).rejects.toThrow(/structured content does not match.*output schema/i);
-      await expect(session.callTool('schema_error_demo', { mode: 'success-missing' })).rejects.toThrow(/output schema.*structured content/i);
+      expect(sdkCallTool).not.toHaveBeenCalled();
     } finally {
       await session.close();
+      sdkCallTool.mockRestore();
     }
   }, 20_000);
+
+  it('preserves child tool errors while lnwjud validates successful structured output', async () => {
+    const manager = new McpSessionManager({ callTimeoutMs: 20_000 });
+    const config = {
+      command: process.execPath,
+      args: [fixturePath],
+      env: { LNWJUD_EXTERNAL_MCP_FIXTURE_ERA: 'schema-error' },
+    } as const;
+    try {
+      await expect(manager.call('schema-fixture', config, 'schema_error_demo', { mode: 'error-no-structured' })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          isError: true,
+          content: [{ text: 'Demo validation failed: invalid input' }],
+        },
+      });
+      await expect(manager.call('schema-fixture', config, 'schema_error_demo', { mode: 'error-invalid-structured' })).resolves.toMatchObject({
+        ok: true,
+        value: { isError: true, structuredContent: { value: 42 } },
+      });
+      await expect(manager.call('schema-fixture', config, 'schema_error_demo', { mode: 'success-valid' })).resolves.toMatchObject({
+        ok: true,
+        value: { structuredContent: { value: 'ok' } },
+      });
+      await expect(manager.call('schema-fixture', config, 'schema_error_demo', { mode: 'success-invalid' })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'INVALID_INPUT', message: expect.stringContaining('output schema mismatch') },
+      });
+      await expect(manager.call('schema-fixture', config, 'schema_error_demo', { mode: 'success-missing' })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'INVALID_INPUT', message: expect.stringContaining('declared outputSchema requires structuredContent') },
+      });
+    } finally {
+      await manager.close();
+    }
+  }, 30_000);
 });
