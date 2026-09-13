@@ -143,9 +143,12 @@ describe('MVP release verification gate', () => {
     expect(verifyJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
   });
 
-  it('uses an expanded workspace worker pool for native contract tests', async () => {
-    const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
-    expect(workflow).toContain('corepack pnpm@10.15.0 -r --workspace-concurrency=8 --if-present test');
+  it('splits desktop tests into isolated native shards for the contract matrix', async () => {
+    const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    expect(workflow).toContain('desktop-test-shards:');
+    expect(workflow).toContain('max-parallel: 6');
+    expect(workflow).toContain('--shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}');
+    expect(workflow).toContain("--filter '!@lnwjud/desktop' --if-present test");
   });
 
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {

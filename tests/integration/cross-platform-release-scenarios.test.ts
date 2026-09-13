@@ -178,9 +178,11 @@ const nativeCiScenarios: readonly Scenario[] = [
   ['094 native CI includes Linux x64 runner', () => expectWorkflowContains('os: ubuntu-24.04')],
   ['095 native package CI includes Linux arm64 runner', () => expectWorkflowContains('os: ubuntu-24.04-arm')],
   ['096 native platform contract runs the release-scenario suite', () => expectWorkflowContains('tests/integration/cross-platform-release-scenarios.test.ts')],
-  ['097 complete workspace suite runs on every native platform without a Windows exclusion', async () => {
+  ['097 native contract keeps non-desktop packages and shards the desktop suite', async () => {
     const workflow = await workflowSource();
-    expect(workflow).toContain('run: corepack pnpm@10.15.0 -r --workspace-concurrency=8 --if-present test');
+    expect(workflow).toContain("run: corepack pnpm@10.15.0 -r --filter '!@lnwjud/desktop' --if-present test");
+    expect(workflow).toContain('desktop-test-shards:');
+    expect(workflow).toContain('--shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}');
     expect(workflow).not.toContain("if: matrix.name != 'Windows'");
   }],
   ['098 packaged Electron E2E exercises a real MCP client', () => expectWorkflowContains('desktop-mcp-client.e2e.ts')],
