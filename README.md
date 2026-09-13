@@ -23,7 +23,7 @@
 
 ---
 
-## Current version: v4.62.3
+## Current version: v4.63.0
 
 `v4.62.2` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 

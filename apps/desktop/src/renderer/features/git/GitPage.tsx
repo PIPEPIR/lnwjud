@@ -90,7 +90,7 @@ export function GitPage({
               >
                 {workspaces.map((ws) => (
                   <option key={ws.id} value={ws.id}>
-                    📁 {ws.displayName}
+                    {ws.displayName}
                   </option>
                 ))}
               </select>
@@ -98,42 +98,34 @@ export function GitPage({
           ) : null}
           {onRefresh === undefined ? null : (
             <button type="button" onClick={() => { void onRefresh(); }}>
-              🔄 {t('action.refresh')}
+              {t('action.refresh')}
             </button>
           )}
         </div>
       </div>
 
       <section className="panel git-panel">
-        <div className="section-heading">
-          <h2>{locale === 'th' ? 'ภาพรวม Repository' : 'Repository Overview'}</h2>
-          <span className={`pill-badge ${gitSummary.branch ? 'gold' : ''}`}>
-            {gitSummary.branch ? `🌿 ${gitSummary.branch}` : (isRepo ? (locale === 'th' ? 'ไม่มี Branch' : 'No Branch') : (locale === 'th' ? 'ไม่ใช่ Git Repo' : 'Not a Git Repo'))}
-          </span>
-        </div>
-
-        <div className="git-status-message">
-          <strong data-testid="git-summary">{gitSummary.message}</strong>
-        </div>
-
-        <div className="git-metrics-grid">
-          <div className="git-metric-card">
-            <span className="git-metric-label">{locale === 'th' ? 'สาขาปัจจุบัน (Branch)' : 'Current Branch'}</span>
-            <strong className="git-metric-value">{gitSummary.branch ?? '—'}</strong>
-          </div>
-          <div className="git-metric-card">
-            <span className="git-metric-label">{t('git.changed')}</span>
-            <strong className="git-metric-value">{gitSummary.changedFiles}</strong>
-          </div>
-          <div className="git-metric-card">
-            <span className="git-metric-label">{t('git.staged')}</span>
-            <strong className="git-metric-value">{gitSummary.stagedFiles}</strong>
-          </div>
-          <div className="git-metric-card">
-            <span className="git-metric-label">{locale === 'th' ? 'สถานะ Working Tree' : 'Working Tree'}</span>
-            <strong className={`git-metric-value ${!isRepo ? '' : isClean ? 'status-clean' : 'status-dirty'}`}>
-              {!isRepo ? '—' : isClean ? (locale === 'th' ? 'สะอาด (Clean)' : 'Clean') : (locale === 'th' ? 'มีการแก้ไข (Modified)' : 'Modified')}
-            </strong>
+        <div className="git-summary-strip">
+          <strong className="git-summary-message" data-testid="git-summary">{gitSummary.message}</strong>
+          <div className="git-summary-stats" aria-label={locale === 'th' ? 'สรุปสถานะ Git' : 'Git status summary'}>
+            <span>
+              <span className="git-summary-label">{locale === 'th' ? 'สาขา' : 'Branch'}</span>
+              <strong>{gitSummary.branch ?? '—'}</strong>
+            </span>
+            <span>
+              <span className="git-summary-label">{t('git.changed')}</span>
+              <strong>{gitSummary.changedFiles}</strong>
+            </span>
+            <span>
+              <span className="git-summary-label">{t('git.staged')}</span>
+              <strong>{gitSummary.stagedFiles}</strong>
+            </span>
+            <span>
+              <span className="git-summary-label">Working Tree</span>
+              <strong className={!isRepo ? '' : isClean ? 'status-clean' : 'status-dirty'}>
+                {!isRepo ? '—' : isClean ? (locale === 'th' ? 'สะอาด' : 'Clean') : (locale === 'th' ? 'มีการแก้ไข' : 'Modified')}
+              </strong>
+            </span>
           </div>
         </div>
 
@@ -141,7 +133,6 @@ export function GitPage({
           <div className="git-diff-container-section">
             {diffData?.loading ? (
               <div className="diff-loading-box">
-                <span className="spinner-icon">⏳</span>
                 <span>{locale === 'th' ? 'กำลังโหลดความแตกต่างของโค้ด...' : 'Loading code diff...'}</span>
               </div>
             ) : diffData?.error ? (
@@ -191,7 +182,6 @@ export function GitPage({
         {!isRepo ? (
           <div className="git-not-repo-notice">
             <div className="git-notice-header">
-              <span className="git-notice-icon">💡</span>
               <div>
                 <strong>{locale === 'th' ? 'โฟลเดอร์นี้ยังไม่ได้เชื่อมต่อเป็น Git Repository' : 'Current directory is not a Git repository'}</strong>
                 <p className="hint">
@@ -206,7 +196,7 @@ export function GitPage({
                 {workspaces.filter((ws) => ws.id !== selectedWorkspace?.id).map((ws) => (
                   <div key={ws.id} className="git-switch-item">
                     <div>
-                      <strong>📁 {ws.displayName}</strong>
+                      <strong>{ws.displayName}</strong>
                       <p className="hint">{ws.realRootPath}</p>
                     </div>
                     <button type="button" onClick={() => { void onSelectWorkspace(ws.id); }}>
@@ -217,16 +207,16 @@ export function GitPage({
               </div>
             ) : null}
           </div>
-        ) : gitSummary.entries !== undefined && gitSummary.entries.length > 0 ? (
+        ) : (
           <div className="git-files-section">
             <div className="git-files-header">
-              <h3>{locale === 'th' ? 'รายการไฟล์ที่มีการเปลี่ยนแปลง (Changed Files)' : 'Changed Files'}</h3>
+              <h3>{locale === 'th' ? 'ไฟล์ที่เปลี่ยนแปลง' : 'Changed Files'}</h3>
               <span className="hint">
-                {locale === 'th' ? 'คลิกที่ไฟล์เพื่อเปิดดูแบบ 2 จอ (Old vs New)' : 'Click any file to open 2-pane split diff'}
+                {locale === 'th' ? 'คลิกไฟล์เพื่อดู Old / New' : 'Click a file to compare Old / New'}
               </span>
             </div>
-            <div className="git-file-list">
-              {gitSummary.entries.map((entry) => {
+            <div className={`git-file-list ${gitSummary.entries !== undefined && gitSummary.entries.length > 0 ? '' : 'empty'}`}>
+              {gitSummary.entries !== undefined && gitSummary.entries.length > 0 ? gitSummary.entries.map((entry) => {
                 const isSelected = selectedFile?.path === entry.path;
                 return (
                   <div
@@ -262,25 +252,18 @@ export function GitPage({
                         ? 'Staged + Unstaged'
                         : entry.indexStatus !== ' ' && entry.indexStatus !== '?' ? 'Staged' : 'Unstaged'}
                     </span>
-                    <span className="git-view-diff-arrow">👁️ {locale === 'th' ? 'ดูโค้ด' : 'Diff'}</span>
+                    <span className="git-view-diff-arrow">{locale === 'th' ? 'ดู Diff' : 'Diff'}</span>
                   </div>
                 );
-              })}
+              }) : (
+                <div className="git-file-empty">
+                  <strong>{locale === 'th' ? 'ไม่มีไฟล์ที่เปลี่ยนแปลง' : 'No changed files'}</strong>
+                  <span className="hint">{locale === 'th' ? 'Working tree สะอาด' : 'Working tree is clean'}</span>
+                </div>
+              )}
             </div>
           </div>
-        ) : isClean ? (
-          <div className="git-clean-notice">
-            <span>✨</span>
-            <div>
-              <strong>{locale === 'th' ? 'Working tree สะอาด' : 'Working Tree Clean'}</strong>
-              <p className="hint">
-                {locale === 'th'
-                  ? 'ไม่มีไฟล์ที่ถูกแก้ไขหรือรอการ commit ใน repository นี้'
-                  : 'No modified, untracked, or staged files found.'}
-              </p>
-            </div>
-          </div>
-        ) : null}
+        )}
       </section>
     </div>
   );
