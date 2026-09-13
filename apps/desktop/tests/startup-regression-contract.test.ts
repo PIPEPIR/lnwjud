@@ -67,4 +67,13 @@ describe('desktop packaged startup regression contract', () => {
     expect(stdio).toContain('lnwjud MCP stdio startup failed:');
     expect(stdio).toContain('app.quit();');
   });
+
+  it('keeps window-all-closed from quitting while renderer recovery is replacing a window', () => {
+    const desktop = section('function bootstrapDesktop', 'function bootstrapLogViewerOnly');
+    const closeHandler = section('function handleDesktopWindowsClosed', 'function handleDesktopBeforeQuit');
+    const recovery = section('function configureCrashRecovery', 'function configureUserDataPath');
+    expect(desktop).toContain("handleDesktopWindowsClosed('desktop')");
+    expect(closeHandler).toContain('rendererRecoveryBarrier.shouldQuitWhenWindowsClosed(process.platform)');
+    expect(recovery).toContain('rendererRecoveryBarrier.begin()');
+  });
 });

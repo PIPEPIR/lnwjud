@@ -9,7 +9,7 @@ const MAX_EVENT_TEXT = 1_000;
 const RECOVERY_WINDOW_MS = 5 * 60_000;
 const MAX_RECOVERIES_PER_WINDOW = 3;
 
-export type CrashEventType = 'main-uncaught-exception' | 'renderer-gone' | 'child-process-gone';
+export type CrashEventType = 'main-uncaught-exception' | 'renderer-gone' | 'child-process-gone' | 'desktop-lifecycle';
 
 export interface CrashEventInput {
   readonly type: CrashEventType;
@@ -66,6 +66,29 @@ export class RendererRecoveryPolicy {
     if (this.attempts.length >= MAX_RECOVERIES_PER_WINDOW) return false;
     this.attempts.push(now);
     return true;
+  }
+}
+
+/** Prevents window-all-closed from terminating the desktop while a crashed renderer is being replaced. */
+export class RendererRecoveryBarrier {
+  private pending = 0;
+
+  public begin(): () => void {
+    this.pending += 1;
+    let completed = false;
+    return (): void => {
+      if (completed) return;
+      completed = true;
+      this.pending = Math.max(0, this.pending - 1);
+    };
+  }
+
+  public isPending(): boolean {
+    return this.pending > 0;
+  }
+
+  public shouldQuitWhenWindowsClosed(platform: NodeJS.Platform): boolean {
+    return platform !== 'darwin' && !this.isPending();
   }
 }
 
