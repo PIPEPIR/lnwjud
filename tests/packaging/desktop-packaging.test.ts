@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('pins the product release to v4.62.2', async () => {
+  it('pins the product release to v4.62.3', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('4.62.2');
-    expect(desktopPackage.version).toBe('4.62.2');
+    expect(rootPackage.version).toBe('4.62.3');
+    expect(desktopPackage.version).toBe('4.62.3');
   });
 
   it('keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('4.62.2');
+      expect(packageJson.version, packagePath).toBe('4.62.3');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '4.62.2'");
-    expect(shared).toContain("APP_VERSION = '4.62.2'");
+    expect(ipcContracts).toContain("APP_VERSION = '4.62.3'");
+    expect(shared).toContain("APP_VERSION = '4.62.3'");
   });
 
   it('publishes complete desktop application metadata', async () => {

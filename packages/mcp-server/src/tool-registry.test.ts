@@ -920,6 +920,32 @@ describe('MCP tool registry', () => {
     await expect(pending).resolves.toMatchObject({ structuredContent: { path: 'src/file.ts' } });
   });
 
+  it('propagates task_create goalLease identity and rejects a terminal goal before shell launch', async () => {
+    let capabilityCalls = 0;
+    const registry = new ToolRegistry({
+      goals: {
+        async getGoal() {
+          return ok({ status: 'completed', workspaceId: 'workspace-1' });
+        },
+      },
+      capabilities: {
+        async execute() {
+          capabilityCalls += 1;
+          return ok({ started: true });
+        },
+      },
+    } as unknown as McpApplicationServices, actor);
+
+    const response = await registry.invoke('task_create', {
+      workspaceId: 'workspace-1',
+      executable: 'node.exe',
+      goalLease: { goalId: 'terminal-goal', leaseToken: 'lease-token', leaseGeneration: 1 },
+    });
+
+    expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'CONFLICT', recoverable: true } } });
+    expect(capabilityCalls).toBe(0);
+  });
+
   it('honors Custom ALLOW for ordinary replacement and opaque operations instead of silently converting it to ASK', async () => {
     const customAllow: PermissionProfile = {
       name: 'custom',

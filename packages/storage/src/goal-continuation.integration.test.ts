@@ -507,6 +507,77 @@ describe('durable goal continuation persistence', () => {
     runtime.database.close();
   });
 
+  it('cascades goal completion to in-flight requests and goal-owned supporting tasks', async () => {
+    const { filename, workspace } = await fixture();
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const taskCalls: Array<{ ownerClientId: string; workspaceId: string; taskIds: string[] }> = [];
+    const taskCancellation: GoalTaskCancellationPort = {
+      async cancelForGoal(ownerClientId, workspaceId, tasks) {
+        const taskIds = tasks.map((task) => typeof task === 'string' ? task : task.taskId);
+        taskCalls.push({ ownerClientId, workspaceId, taskIds });
+        return tasks.map((task) => ({
+          taskId: typeof task === 'string' ? task : task.taskId,
+          status: 'cancelled' as const,
+          providers: [],
+        }));
+      },
+    };
+    const requestCalls: string[] = [];
+    const requestCancellation: GoalRequestCancellationPort = {
+      register: () => ({ accepted: true, done: Promise.resolve(), release: () => undefined }),
+      async cancelForGoal(goalId) {
+        requestCalls.push(goalId);
+        return { goalId, requested: 1, stopped: 1, remaining: 0, timedOut: false, requestIds: ['orphan-worker-call'] };
+      },
+    };
+    const runtime = await open(filename, workspace, () => now, taskCancellation, requestCancellation);
+    try {
+      const created = await runtime.service.runGoal(actor('session-a'), createRequest);
+      if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
+      const checkpointed = await runtime.service.checkpointGoal(actor('session-a'), {
+        goalId: created.value.goalId,
+        leaseToken: created.value.leaseToken,
+        expectedRevision: created.value.revision,
+        currentPhase: 'acceptance',
+        summary: 'Acceptance complete; only a goal-owned supporting worker remains.',
+        stepUpdates: [
+          { stepId: 'implement', status: 'completed', summary: 'Implementation accepted.' },
+          { stepId: 'verify', status: 'completed', summary: 'Verification accepted.' },
+        ],
+        nextAction: '',
+        blockers: [],
+        evidence: [{ kind: 'note', value: 'ready' }],
+        trackedTasks: [{ taskId: 'support-worker', provider: 'shell', role: 'supporting_service', cancelWithGoal: true }],
+      });
+      if (!checkpointed.ok) throw new Error('acceptance checkpoint failed');
+
+      const finished = await runtime.service.finishGoal(actor('session-a'), {
+        goalId: created.value.goalId,
+        leaseToken: created.value.leaseToken,
+        expectedRevision: checkpointed.value.revision,
+        status: 'completed',
+        summary: 'All acceptance criteria passed.',
+        evidence: [{ kind: 'note', value: 'ready' }],
+      });
+
+      expect(finished).toMatchObject({
+        ok: true,
+        value: {
+          status: 'completed',
+          completionState: 'completed',
+          allTasksStopped: true,
+          allRequestsStopped: true,
+          taskCancellations: [{ taskId: 'support-worker', status: 'cancelled' }],
+          requestCancellation: { requested: 1, stopped: 1, remaining: 0, timedOut: false },
+        },
+      });
+      expect(taskCalls).toEqual([{ ownerClientId: actor('session-a').clientId, workspaceId: workspace.id, taskIds: ['support-worker'] }]);
+      expect(requestCalls).toEqual([created.value.goalId]);
+    } finally {
+      runtime.database.close();
+    }
+  });
+
   it('fails closed on corrupted authoritative state and never stores raw lease tokens or sensitive checkpoint text', async () => {
     const { filename, workspace } = await fixture();
     const runtime = await open(filename, workspace, () => new Date('2026-08-26T00:00:00.000Z'));
