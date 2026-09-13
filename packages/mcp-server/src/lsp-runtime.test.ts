@@ -42,6 +42,21 @@ describe('LspRuntimeService', () => {
     expect(spawns).toBe(0);
   });
 
+  it('fails fast when a configured language-server process exits before initialization', async () => {
+    const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-exit-test-')));
+    await writeFile(path.join(root, 'a.ts'), 'export const value = 1;\n', 'utf8');
+    const runtime = new LspRuntimeService(servicesWithRoot(root), actor, {
+      environment: { ...process.env, LNWJUD_LSP_TYPESCRIPT_COMMAND: JSON.stringify([process.execPath, '--version']) },
+      timeoutMs: 10_000,
+    });
+
+    const result = await runtime.diagnostics({ workspaceId: 'ws-1', files: ['a.ts'] });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'CONFLICT', recoverable: true, message: expect.stringContaining('exited before responding') },
+    });
+  });
+
   it('collects published diagnostics from a configured language server', async () => {
     const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');

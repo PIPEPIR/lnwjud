@@ -29,6 +29,8 @@ describe('platform verification orchestrator', () => {
   it('keeps macOS and Linux package checks in target-native CI jobs', async (): Promise<void> => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('native-package-verification:');
+    expect(workflow).toContain('desktop-test-shards:');
+    expect(workflow).toContain('needs: [native-platform-contract, desktop-test-shards]');
     expect(workflow).toContain('macos-15');
     expect(workflow).toContain('macos-15-intel');
     expect(workflow).toContain('macos-26-package-compatibility:');

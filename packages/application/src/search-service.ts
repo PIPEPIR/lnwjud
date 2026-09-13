@@ -1,6 +1,7 @@
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { realpath } from 'node:fs/promises';
+import { appError, err, isFullBypassAuthorization, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import { RipgrepAdapter, type ContextDiscoveryMode, type SearchFilesRequest as AdapterFilesRequest, type SearchFilesResult, type SearchTextRequest as AdapterTextRequest, type SearchTextResult } from '@lnwjud/search';
-import type { WorkspaceRepository } from '@lnwjud/workspace';
+import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
 import { resolveWorkspaceForPath } from './workspace-locator.js';
 
@@ -30,15 +31,17 @@ export class SearchService {
     private readonly adapter: SearchAdapter = new RipgrepAdapter(),
   ) {}
 
-  public async searchText(actor: FileActor, workspaceId: string | undefined, request: SearchTextRequest, signal?: AbortSignal): Promise<Result<SearchTextResult>> {
+  public async searchText(actor: FileActor, workspaceId: string | undefined, request: SearchTextRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<SearchTextResult>> {
     void actor;
     const validation = this.validateLimit(request.maxResults);
     if (!validation.ok) return validation;
     if (request.query.length === 0) return err(appError('INVALID_INPUT', 'Search query is required'));
-    const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path ?? '.');
+    const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path ?? '.', authorization);
     if (!workspace.ok) return workspace;
+    const searchRoot = await resolveSearchRoot(workspace.value, request.path, authorization);
+    if (!searchRoot.ok) return searchRoot;
     return this.adapter.searchText({
-      rootPath: workspace.value.realRootPath,
+      rootPath: searchRoot.value,
       query: request.query,
       ...(request.glob === undefined ? {} : { glob: request.glob }),
       ...(request.maxResults === undefined ? {} : { maxResults: request.maxResults }),
@@ -47,14 +50,16 @@ export class SearchService {
     });
   }
 
-  public async searchFiles(actor: FileActor, workspaceId: string | undefined, request: SearchFilesRequest, signal?: AbortSignal): Promise<Result<SearchFilesResult>> {
+  public async searchFiles(actor: FileActor, workspaceId: string | undefined, request: SearchFilesRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<SearchFilesResult>> {
     void actor;
     const validation = this.validateLimit(request.maxResults);
     if (!validation.ok) return validation;
-    const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path ?? '.');
+    const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path ?? '.', authorization);
     if (!workspace.ok) return workspace;
+    const searchRoot = await resolveSearchRoot(workspace.value, request.path, authorization);
+    if (!searchRoot.ok) return searchRoot;
     return this.adapter.searchFiles({
-      rootPath: workspace.value.realRootPath,
+      rootPath: searchRoot.value,
       ...(request.glob === undefined ? {} : { glob: request.glob }),
       ...(request.maxResults === undefined ? {} : { maxResults: request.maxResults }),
       ...(request.discovery === undefined ? {} : { discovery: request.discovery }),
@@ -67,4 +72,30 @@ export class SearchService {
       ? ok(undefined)
       : err(appError('INVALID_INPUT', 'Search result limit is invalid'));
   }
+}
+
+async function resolveSearchRoot(workspace: Workspace, requestedPath: string | undefined, authorization?: InvocationAuthorization): Promise<Result<string>> {
+  const requested = requestedPath?.trim();
+  if (requested === undefined || requested.length === 0 || requested === '.') return ok(workspace.realRootPath);
+  const platform = process.platform;
+  const api = hostPathApi(platform);
+  const candidate = isAbsoluteHostPath(requested, platform)
+    ? resolveHostPath(requested, platform)
+    : resolveHostPath(api.join(workspace.realRootPath, requested), platform);
+  if (candidate === null) return err(appError('INVALID_INPUT', 'Search path uses a foreign host path syntax'));
+  let canonicalCandidate: string;
+  try {
+    canonicalCandidate = await realpath(candidate);
+  } catch {
+    return err(appError('FILE_NOT_FOUND', `Search path was not found: ${requested}`));
+  }
+  if (isFullBypassAuthorization(authorization)) return ok(canonicalCandidate);
+  const roots = await Promise.all([workspace.realRootPath, workspace.rootPath].map(async (root) => {
+    const resolved = resolveHostPath(root, platform);
+    if (resolved === null) return null;
+    try { return await realpath(resolved); } catch { return resolved; }
+  }));
+  return roots.some((root) => root !== null && isHostPathWithin(root, canonicalCandidate, platform))
+    ? ok(canonicalCandidate)
+    : err(appError('PATH_OUTSIDE_WORKSPACE', 'Search path is outside the workspace'));
 }

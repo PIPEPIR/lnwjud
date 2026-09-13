@@ -249,14 +249,14 @@ export function SplitDiffViewer({
               className={`toggle-btn ${viewMode === 'split' ? 'active' : ''}`}
               onClick={() => { setViewMode('split'); }}
             >
-              ⊞ {isTh ? 'แยก 2 จอ (Split)' : 'Split View'}
+              {isTh ? 'แยก 2 จอ (Split)' : 'Split View'}
             </button>
             <button
               type="button"
               className={`toggle-btn ${viewMode === 'unified' ? 'active' : ''}`}
               onClick={() => { setViewMode('unified'); }}
             >
-              ☰ {isTh ? 'รวม (Unified)' : 'Unified View'}
+              {isTh ? 'รวม (Unified)' : 'Unified View'}
             </button>
           </div>
           <button
@@ -265,14 +265,13 @@ export function SplitDiffViewer({
             onClick={onClose}
             aria-label={isTh ? 'ปิดหน้าต่าง diff' : 'Close diff'}
           >
-            ✕
+            {isTh ? 'ปิด' : 'Close'}
           </button>
         </div>
       </div>
 
       {parsed.hunks.length === 0 ? (
         <div className="diff-empty-notice">
-          <span>✨</span>
           <p>{isTh ? 'ไม่มีความเปลี่ยนแปลงของบรรทัดโค้ดในไฟล์นี้' : 'No changes in this file.'}</p>
         </div>
       ) : viewMode === 'split' ? (

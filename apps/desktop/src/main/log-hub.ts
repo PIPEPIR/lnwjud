@@ -500,7 +500,7 @@ function matchesLogScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope
 export function classifyMcpWorkLogKind(toolName: string, phase: 'started' | 'completed', resultCode: string): 'task' | 'result' | 'error' {
   if (phase === 'started') return 'task';
   const normalized = resultCode.toUpperCase();
-  if (normalized === 'SUCCESS' || normalized === 'STARTED' || normalized === 'PERMISSION_REQUIRED') return 'result';
+  if (normalized === 'SUCCESS' || normalized === 'STARTED' || normalized === 'PERMISSION_REQUIRED' || normalized === 'CONFLICT' || normalized === 'PATH_OUTSIDE_WORKSPACE') return 'result';
   if ((toolName === 'process_status' || toolName === 'process_logs') && normalized === 'PROCESS_NOT_FOUND') return 'result';
   return 'error';
 }

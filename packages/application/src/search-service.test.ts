@@ -1,3 +1,6 @@
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SearchService, type SearchAdapter } from './search-service.js';
 import type { WorkspaceRepository, Workspace } from '@lnwjud/workspace';
@@ -69,6 +72,45 @@ describe('SearchService', () => {
       { query: 'needle' },
       controller.signal,
     )).resolves.toEqual({ ok: true, value: { matches: [], truncated: true } });
+  });
+
+  it('uses an explicit external absolute path as the ripgrep root under Full Bypass', async () => {
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-search-workspace-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-search-outside-'));
+    try {
+      const workspace: Workspace = { id: 'workspace-1', displayName: 'Fixture', rootPath: workspaceRoot, realRootPath: workspaceRoot, createdAt: new Date(0).toISOString() };
+      let receivedRoot = '';
+      const adapter: SearchAdapter = {
+        async searchText(request) { receivedRoot = request.rootPath; return { ok: true, value: { matches: [], truncated: false } }; },
+        async searchFiles() { return { ok: true, value: { paths: [], truncated: false } }; },
+      };
+      const repository: WorkspaceRepository = {
+        async list(): Promise<Workspace[]> { return [workspace]; },
+        async get(id: string): Promise<Workspace | null> { return id === workspace.id ? workspace : null; },
+        async insert(): Promise<void> {},
+        async delete(): Promise<void> {},
+      };
+      const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+      const service = new SearchService(repository, adapter);
+      await expect(service.searchText(
+        { clientId: 'test', clientName: 'test' },
+        workspace.id,
+        { query: 'needle', path: outsideRoot, discovery: 'explicit' },
+      )).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+
+      const result = await service.searchText(
+        { clientId: 'test', clientName: 'test' },
+        undefined,
+        { query: 'needle', path: outsideRoot, discovery: 'explicit' },
+        undefined,
+        authorization,
+      );
+
+      expect(result).toEqual({ ok: true, value: { matches: [], truncated: false } });
+      expect(receivedRoot).toBe(await realpath(outsideRoot));
+    } finally {
+      await Promise.all([rm(workspaceRoot, { recursive: true, force: true }), rm(outsideRoot, { recursive: true, force: true })]);
+    }
   });
 
   it('rejects an oversized result limit at the application boundary', async () => {

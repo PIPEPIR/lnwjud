@@ -101,13 +101,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 4.62.3 application version', () => {
-    expect(APP_VERSION).toBe('4.62.3');
+  it('renders the actual 4.63.0 application version', () => {
+    expect(APP_VERSION).toBe('4.63.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v4.62.3');
+    expect(markup).toContain('v4.63.0');
   });
 
   it('labels the sidebar runtime as Desktop Agent and keeps the OS suffix cross-platform', () => {

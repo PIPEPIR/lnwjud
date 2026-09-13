@@ -61,7 +61,9 @@ jobs:
 
       - name: Run complete native unit and service acceptance suites
         shell: bash
-        run: corepack pnpm@10.15.0 test
+        # The desktop suite runs in isolated shards below. Keep the remaining
+        # workspace packages on pnpm's normal bounded recursive pool.
+        run: corepack pnpm@10.15.0 -r --filter '!@lnwjud/desktop' --if-present test
 
       - name: Test macOS native host protocol
         timeout-minutes: 10
@@ -79,14 +81,75 @@ jobs:
         shell: bash
         run: bash tests/packaging/linux-release-layout.sh
 
+  desktop-test-shards:
+    name: Desktop Test Shard (${{ matrix.name }}, ${{ matrix.shard_index }}/${{ matrix.shard_total }})
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            shard_index: 1
+            shard_total: 2
+          - name: Windows
+            os: windows-latest
+            shard_index: 2
+            shard_total: 2
+          - name: macOS
+            os: macos-15
+            shard_index: 1
+            shard_total: 2
+          - name: macOS
+            os: macos-15
+            shard_index: 2
+            shard_total: 2
+          - name: Linux
+            os: ubuntu-24.04
+            shard_index: 1
+            shard_total: 2
+          - name: Linux
+            os: ubuntu-24.04
+            shard_index: 2
+            shard_total: 2
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Build workspace packages used by desktop acceptance tests
+        shell: bash
+        run: corepack pnpm@10.15.0 --filter '@lnwjud/mcp-server...' build
+
+      - name: Run isolated desktop test shard
+        shell: bash
+        run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts --passWithNoTests --shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}
+
   native-package-verification:
     name: Native Package Verification (${{ matrix.name }})
     timeout-minutes: 45
     # Packaging downloads target-native runtimes and builds unsigned local
-    # artifacts. Keep it on protected push/manual runs; pull requests still
-    # receive the fast platform-contract matrix above.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: native-platform-contract
+    # artifacts. Keep it on protected main pushes/manual runs; non-main pushes
+    # and pull requests receive the fast platform-contract matrix above.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    needs: [native-platform-contract, desktop-test-shards]
     strategy:
       fail-fast: false
       matrix:
@@ -293,7 +356,7 @@ jobs:
 
   macos-26-package-compatibility:
     name: macOS 26 Package Compatibility (${{ matrix.arch }})
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     needs: native-package-verification
     strategy:
       fail-fast: false
@@ -503,6 +566,10 @@ jobs:
 
   verify:
     # Keep this check name stable because main branch protection requires it.
+    # Direct non-main pushes already run the native platform contract matrix;
+    # skip this duplicate portable gate there while retaining it for PRs,
+    # protected main pushes, and explicit manual dispatches.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Authoritative Release Verification (Windows)
     runs-on: windows-latest
 

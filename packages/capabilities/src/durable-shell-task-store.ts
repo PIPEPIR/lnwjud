@@ -71,6 +71,7 @@ const WORKER_STARTED_FILENAME = 'worker.started';
 const METADATA_READ_RETRIES = 4;
 const PROCESS_EXIT_RECONCILE_DELAY_MS = 75;
 const PROCESS_HANDLE_RELEASE_GRACE_MS = 150;
+const PROCESS_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
 // Host process identity probes start a second PowerShell/`ps` process. Under
 // a busy desktop test run that probe can be delayed even though the durable
 // worker is healthy. Keep the startup window finite (so a genuinely
@@ -439,7 +440,11 @@ export class DurableShellTaskStore {
   private async hydrateProcessIdentities(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
     if (metadata.worker_started_at !== undefined && metadata.child_started_at !== undefined) return metadata;
     const startedAtPath = path.join(this.taskDirectory(metadata.task_id), WORKER_STARTED_FILENAME);
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    const startedAtMs = Date.parse(metadata.started_at);
+    const captureDeadline = Number.isFinite(startedAtMs)
+      ? startedAtMs + PROCESS_IDENTITY_CAPTURE_GRACE_MS
+      : Date.now() + PROCESS_IDENTITY_CAPTURE_GRACE_MS;
+    while (true) {
       if (metadata.worker_started_at === undefined) {
         const publishedWorkerStartedAt = await readPublishedStartedAt(startedAtPath);
         if (publishedWorkerStartedAt !== undefined) metadata.worker_started_at = publishedWorkerStartedAt;
@@ -450,7 +455,9 @@ export class DurableShellTaskStore {
         if (refreshed.value.child_started_at !== undefined) metadata.child_started_at = refreshed.value.child_started_at;
       }
       if (metadata.worker_started_at !== undefined && metadata.child_started_at !== undefined) break;
-      await delay(25);
+      const remainingMs = captureDeadline - Date.now();
+      if (remainingMs <= 0) break;
+      await delay(Math.min(50, remainingMs));
     }
     return metadata;
   }
@@ -559,7 +566,7 @@ async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Pro
       const { stdout } = await execFileAsync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',
         `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
-      ], { windowsHide: true, encoding: 'utf8', timeout: 3_500, maxBuffer: 16 * 1024 });
+      ], { windowsHide: true, encoding: 'utf8', timeout: PROCESS_IDENTITY_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024 });
       return parsePortableProcessProbe(stdout);
     }
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], {
@@ -789,7 +796,7 @@ async function processStartedAt(pid) {
       const result = await execFileAsync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',
         "$ErrorActionPreference='Stop'; try{$p=Get-Process -Id " + pid + " -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)",
-      ], { windowsHide: true, encoding: 'utf8', timeout: 1750, maxBuffer: 16384 });
+      ], { windowsHide: true, encoding: 'utf8', timeout: 5000, maxBuffer: 16384 });
       const output = String(result.stdout || '').trim();
       return output.startsWith('LIVE|') ? output.slice(5) : null;
     }

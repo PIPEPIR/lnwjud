@@ -117,3 +117,4 @@ lnwjud-incident.json
 apps/desktop/build/tunnel-client/
 apps/desktop/build/runtime-tools/
 apps/desktop/build/vendor/
+.tmp

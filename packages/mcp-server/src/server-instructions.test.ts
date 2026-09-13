@@ -6,13 +6,16 @@ describe('MCP Ponytail instructions', () => {
   it('keeps the OFF instruction contract identical to the existing baseline', () => {
     expect(buildMcpInstructions('off')).toBe(MCP_OUTCOME_DRIVEN_INSTRUCTIONS);
     expect(buildMcpInstructions('off')).not.toContain(BUNDLED_PONYTAIL_SKILL_ID);
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('use checkpoint_goal and session_handoff only');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('Never invoke generic handoff skills');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('USER_INSTRUCTIONS');
   });
 
   it.each(['lite', 'full', 'ultra'] as const)('adds a bounded exact-load directive for %s', (mode) => {
     const instructions = buildMcpInstructions(mode);
     expect(instructions).toContain(MCP_OUTCOME_DRIVEN_INSTRUCTIONS);
     expect(instructions).toContain(`Ponytail policy is ${mode.toUpperCase()}`);
-    expect(instructions).toContain('call skills_read');
+    expect(instructions).toContain('call skill_load');
     expect(instructions).toContain(BUNDLED_PONYTAIL_SKILL_ID);
     expect(instructions).toContain('Do not substitute workspace/user copies');
     expect(instructions).toContain('required tests');

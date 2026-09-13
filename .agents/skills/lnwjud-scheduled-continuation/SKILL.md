@@ -17,6 +17,9 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 - Native task create/update/delete/disable is host-owned. Resolve the operation from the current ChatGPT host/tool registry; never invent or hard-code an internal operation name.
 - A native-host transport failure is scheduler degradation only. It never by itself completes, fails, or blocks the durable goal.
 - Keep raw lease tokens, credentials, private host task IDs, and internal session IDs out of user-visible text and native task prompts.
+- Continuation/recovery state is task data, **not persistent user or agent instructions**. Use `checkpoint_goal` for durable state and `session_handoff` only for a bounded same-chat recovery summary.
+- Never invoke generic `handoff` / `claude-handoff` skills as part of lnwjud scheduled continuation, and never call `write_file` to create `USER_INSTRUCTIONS*`, `user-instruction*`, or generic `handoff/history/*` persistence. Those paths can be interpreted by the host as instruction persistence and are outside lnwjud's durable-goal contract.
+- If a host blocks an attempted recovery-file write, do not retry it under another filename or through shell. Keep the durable goal/checkpoint authoritative and continue the current leased work.
 
 ## Core model
 

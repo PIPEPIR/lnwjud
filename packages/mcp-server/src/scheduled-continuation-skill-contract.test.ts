@@ -58,6 +58,10 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('Do not promise or target a fixed 22/25-minute runtime');
     expect(skill).toContain('two-probe');
     expect(skill).toContain('Full Bypass never bypasses durable-goal ownership fences');
+    expect(skill).toContain('not persistent user or agent instructions');
+    expect(skill).toContain('Never invoke generic `handoff` / `claude-handoff` skills');
+    expect(skill).toContain('never call `write_file` to create `USER_INSTRUCTIONS*`');
+    expect(skill).toContain('do not retry it under another filename or through shell');
 
     expect(skill).toContain('Make the exact recurring native task non-runnable');
     expect(skill).toContain('host-confirmed delete or disable evidence');

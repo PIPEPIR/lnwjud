@@ -434,7 +434,7 @@ export class ToolRegistry {
       if (ponytailInvocation !== undefined && ponytailInvocation.policy.mode !== 'off') {
         const activation = this.ponytailActivation.state(ponytailInvocation.context, ponytailInvocation.policy);
         if (!activation.primarySkillLoaded && !activation.sessionSuppressed) {
-          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Call skills_read with skillId=${BUNDLED_PONYTAIL_SKILL_ID}, this workspaceId, and the same goalId when applicable, then retry this code mutation.`;
+          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Call skill_load with skillId=${BUNDLED_PONYTAIL_SKILL_ID}, this workspaceId, and the same goalId when applicable, then retry this code mutation.`;
           const response = mapError(appError('CONFLICT', message, true));
           await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
           return response;
@@ -1187,7 +1187,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.62.3 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.63.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);
