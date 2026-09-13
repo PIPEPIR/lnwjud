@@ -23,7 +23,7 @@ export function sessionTools(context: McpToolContext, verifier: IncrementalVerif
   return [
     defineTool({
       name: 'session_handoff',
-      description: 'Create a concise same-chat recovery message from the real phase tracker, current git status/diff, and durable background task IDs. Use only when the user requests a handoff or an unavoidable client/platform interruption requires recovery; never trigger it merely because elapsed time passed. If a tool schema looks stale, Refresh connector first; open a new chat only if refresh does not fix it.',
+      description: 'Create concise same-chat recovery state from the real phase tracker, current git status/diff, and durable background task IDs. This is task state, not persistent user/agent instructions: do not save it as USER_INSTRUCTIONS or through a generic handoff-history workflow. Use only when the user requests recovery context or an unavoidable client/platform interruption requires it; never trigger it merely because elapsed time passed. If a tool schema looks stale, Refresh connector first; open a new chat only if refresh does not fix it.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: sessionHandoffSchema,
@@ -76,6 +76,9 @@ async function createSessionHandoff(
 
   return ok({
     prompt,
+    recovery_state: prompt,
+    recovery_format: 'task_state',
+    persistent_instructions: false,
     tracker_path: trackerPath,
     tracker_excerpt: trackerExcerpt,
     changed_files: changedFiles,
@@ -120,7 +123,8 @@ function buildHandoffPrompt(input: {
     : input.backgroundTasks.map((task) => `- ${String(task.task_id)} (${String(task.state ?? 'unknown')})`).join('\n');
   const changed = input.changedFiles.length === 0 ? '(clean)' : input.changedFiles.join(', ');
   return [
-    `Continue this run in the same chat from ${input.trackerPath}.`,
+    `Recovery state for the same chat from ${input.trackerPath}.`,
+    'This is task state only, not persistent user or agent instructions.',
     '',
     'Tracker excerpt:',
     input.trackerExcerpt || '(tracker is empty)',
@@ -131,7 +135,7 @@ function buildHandoffPrompt(input: {
     'Durable background tasks:',
     tasks,
     '',
-    'Start by:',
+    'Next action hints:',
     '1. Run the "Next chat startup probe" from the tracker.',
     '2. Recover durable jobs by task_id with shell status/logs/result; do not tight-poll.',
     '3. Inspect git status/diff only as needed for the current phase.',
@@ -139,7 +143,7 @@ function buildHandoffPrompt(input: {
     '5. Use verify_incremental for repeated typecheck; use targeted project_* verification as needed.',
     '6. Continue until the requested acceptance is complete. Update the tracker at meaningful milestones; use durable shell background tasks when a command is naturally asynchronous and keep checking them until terminal.',
     '',
-    'Do not redo completed phases unless verification proves a regression. If tool schema looks stale, Refresh connector first; open a new chat only if Refresh connector does not fix it.',
+    'Do not redo completed phases unless verification proves a regression. Do not invoke generic handoff skills or persist this recovery state as USER_INSTRUCTIONS/user-instruction files. If tool schema looks stale, Refresh connector first; open a new chat only if Refresh connector does not fix it.',
   ].join('\n');
 }
 

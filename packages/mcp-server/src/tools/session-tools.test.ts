@@ -63,10 +63,15 @@ describe('session tools', () => {
     expect(value.tracker_excerpt).toContain('RUN-SMOKE-42');
     expect(value.changed_files).toContain('packages/mcp-server/src/run-budget.ts');
     expect(value.background_tasks).toEqual([expect.objectContaining({ task_id: 'durable-123', state: 'running' })]);
-    expect(value.prompt).toEqual(expect.stringContaining('Continue this run in the same chat'));
+    expect(value.prompt).toEqual(expect.stringContaining('Recovery state for the same chat'));
+    expect(value.recovery_state).toBe(value.prompt);
+    expect(value.recovery_format).toBe('task_state');
+    expect(value.persistent_instructions).toBe(false);
+    expect(value.prompt).toEqual(expect.stringContaining('not persistent user or agent instructions'));
     expect(value.prompt).toEqual(expect.stringContaining('durable-123'));
     expect(value.prompt).toEqual(expect.stringContaining('Refresh connector'));
     expect(value.prompt).toEqual(expect.stringContaining('Continue until the requested acceptance is complete'));
+    expect(value.prompt).toEqual(expect.stringContaining('Do not invoke generic handoff skills'));
     expect(value.prompt).not.toEqual(expect.stringContaining('Before ending'));
   });
 

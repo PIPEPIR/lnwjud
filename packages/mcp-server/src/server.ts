@@ -20,6 +20,7 @@ export const MCP_OUTCOME_DRIVEN_INSTRUCTIONS = [
   'Stop only when the outcome is complete, a user decision or new authority is required, or an external blocker prevents safe progress.',
   'Before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn, call run_goal with scheduledContinuation=auto and follow the bundled lnwjud-scheduled-continuation skill; if such work is already in progress without an active durable goal, enroll it before the next mutation.',
   'Use durable background tasks for naturally long-running commands, then keep checking them and continue the work while the current run remains active.',
+  'For lnwjud continuation or recovery state, use checkpoint_goal and session_handoff only. Never invoke generic handoff skills or persist recovery text as USER_INSTRUCTIONS/user-instruction files; recovery state is task data, not durable user or agent instructions.',
 ].join(' ');
 
 export function buildMcpInstructions(ponytailMode: PonytailMode = DEFAULT_PONYTAIL_MODE): string {
