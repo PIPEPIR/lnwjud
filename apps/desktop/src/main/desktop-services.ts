@@ -2457,32 +2457,41 @@ export async function checkConfiguredMcpPort(
 }
 
 async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
+  const MCP_IDENTITY_PROBE_TIMEOUT_MS = 750;
+  const MCP_IDENTITY_PROBE_MAX_ATTEMPTS = 2;
   const started = Date.now();
-  const failed = (reason: string): false => {
-    console.warn(`[Doctor] MCP identity probe failed: ${reason} after ${Date.now() - started}ms`);
-    return false;
-  };
   const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, endpoint.origin);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 750);
-  try {
-    const response = await fetch(identityUrl, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return failed(`unexpected HTTP response (${response.status})`);
-    const body: unknown = await response.json();
-    const matches = typeof body === 'object' && body !== null
-      && 'product' in body && body.product === 'lnwjud'
-      && 'service' in body && body.service === 'desktop-mcp'
-      && 'protocol' in body && body.protocol === 1;
-    return matches || failed('identity document mismatch');
-  } catch (error: unknown) {
-    return failed(controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error');
-  } finally {
-    clearTimeout(timer);
+  let lastFailure = 'transport error';
+  for (let attempt = 0; attempt < MCP_IDENTITY_PROBE_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MCP_IDENTITY_PROBE_TIMEOUT_MS);
+    try {
+      const response = await fetch(identityUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') {
+        lastFailure = `unexpected HTTP response (${response.status})`;
+        break;
+      }
+      const body: unknown = await response.json();
+      const matches = typeof body === 'object' && body !== null
+        && 'product' in body && body.product === 'lnwjud'
+        && 'service' in body && body.service === 'desktop-mcp'
+        && 'protocol' in body && body.protocol === 1;
+      if (matches) return true;
+      lastFailure = 'identity document mismatch';
+      break;
+    } catch (error: unknown) {
+      lastFailure = controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error';
+      if (lastFailure !== 'timeout' && lastFailure !== 'transport error') break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  console.warn(`[Doctor] MCP identity probe failed: ${lastFailure} after ${Date.now() - started}ms`);
+  return false;
 }
 
 function summarizeLogs(entries: readonly string[]): string {

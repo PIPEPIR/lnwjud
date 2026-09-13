@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { access, lstat, readFile } from 'node:fs/promises';
@@ -69,7 +70,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath } from '@lnwjud/shared';
+import { createExplicitKeySecretProtector, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -102,7 +103,7 @@ import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mut
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
-import { waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
+import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
 
@@ -1815,28 +1816,42 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
 
 async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   readonly checkpointEncryptionKey: Buffer;
-  readonly secretProtector: SafeStorageSecretProtector;
+  readonly secretProtector: SecretProtector;
 }> {
-  recordDesktopStartup('safe-storage:settle:begin');
-  await waitForMacosAsyncSafeStorageStartup({
+  const useMacos26E2eSecrets = shouldUseMacos26E2eSecrets({
     platform: process.platform,
     arch: process.arch,
     release: os.release(),
     isPackaged: app.isPackaged,
+    e2eFixture: process.env.LNWJUD_E2E_FIXTURE === '1',
+    ephemeralSecrets: process.env.LNWJUD_E2E_EPHEMERAL_SECRETS === '1',
   });
-  recordDesktopStartup('safe-storage:settle:end');
-  recordDesktopStartup('safe-storage:async:selected');
-  const secretProtector = new SafeStorageSecretProtector({
-    api: safeStorage,
-    platform: process.platform,
-  });
-  recordDesktopStartup('safe-storage:status:begin');
-  const status = await secretProtector.status();
-  recordDesktopStartup(`safe-storage:status:end:${status.secure ? 'secure' : status.reason ?? 'unavailable'}`);
-  if (!status.secure) {
-    throw new Error(status.reason === 'plaintext_backend'
-      ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
-      : `Secure secret storage is unavailable (${status.backend})`);
+  let secretProtector: SecretProtector;
+  if (useMacos26E2eSecrets) {
+    recordDesktopStartup('safe-storage:e2e-ephemeral:selected');
+    secretProtector = createExplicitKeySecretProtector(randomBytes(32));
+  } else {
+    recordDesktopStartup('safe-storage:settle:begin');
+    await waitForMacosAsyncSafeStorageStartup({
+      platform: process.platform,
+      arch: process.arch,
+      release: os.release(),
+      isPackaged: app.isPackaged,
+    });
+    recordDesktopStartup('safe-storage:settle:end');
+    recordDesktopStartup('safe-storage:async:selected');
+    secretProtector = new SafeStorageSecretProtector({
+      api: safeStorage,
+      platform: process.platform,
+    });
+    recordDesktopStartup('safe-storage:status:begin');
+    const status = await secretProtector.status();
+    recordDesktopStartup(`safe-storage:status:end:${status.secure ? 'secure' : status.reason ?? 'unavailable'}`);
+    if (!status.secure) {
+      throw new Error(status.reason === 'plaintext_backend'
+        ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
+        : `Secure secret storage is unavailable (${status.backend})`);
+    }
   }
   recordDesktopStartup('safe-storage:migrations:begin');
   await migrateV3SafeStorageSecrets(dataPath, secretProtector);
@@ -1857,7 +1872,7 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }
 
-async function migrateV3SafeStorageSecrets(dataPath: string, secretProtector: SafeStorageSecretProtector): Promise<void> {
+async function migrateV3SafeStorageSecrets(dataPath: string, secretProtector: SecretProtector): Promise<void> {
   if (process.platform !== 'win32') return;
   const checkpointPath = path.join(dataPath, 'checkpoint-master.key');
   const checkpointEnvelope = await readTrustedSecretFile(checkpointPath);

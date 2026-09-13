@@ -1,5 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
-import { waitForMacosAsyncSafeStorageStartup } from '../src/main/safe-storage-startup.js';
+import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from '../src/main/safe-storage-startup.js';
+
+describe('shouldUseMacos26E2eSecrets', () => {
+  it('enables only the packaged macOS 26 arm64 fixture path when explicitly requested', () => {
+    expect(shouldUseMacos26E2eSecrets({
+      platform: 'darwin',
+      arch: 'arm64',
+      release: '25.6.0',
+      isPackaged: true,
+      e2eFixture: true,
+      ephemeralSecrets: true,
+    })).toBe(true);
+  });
+
+  it.each([
+    { platform: 'darwin', arch: 'x64', release: '25.6.0', isPackaged: true, e2eFixture: true, ephemeralSecrets: true },
+    { platform: 'darwin', arch: 'arm64', release: '24.6.0', isPackaged: true, e2eFixture: true, ephemeralSecrets: true },
+    { platform: 'darwin', arch: 'arm64', release: '25.6.0', isPackaged: false, e2eFixture: true, ephemeralSecrets: true },
+    { platform: 'darwin', arch: 'arm64', release: '25.6.0', isPackaged: true, e2eFixture: false, ephemeralSecrets: true },
+    { platform: 'darwin', arch: 'arm64', release: '25.6.0', isPackaged: true, e2eFixture: true, ephemeralSecrets: false },
+  ] as const)('keeps the fixture path disabled for an unsafe or unrelated host %#', (host) => {
+    expect(shouldUseMacos26E2eSecrets(host)).toBe(false);
+  });
+});
 
 describe('waitForMacosAsyncSafeStorageStartup', () => {
   it('lets Electron finish async keychain initialization on packaged macOS 26+ arm64', async () => {

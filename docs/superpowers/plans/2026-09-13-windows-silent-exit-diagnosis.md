@@ -2,7 +2,14 @@
 
 วันที่ตรวจสอบ: 2026-09-13 (Asia/Bangkok)
 
-สถานะเอกสาร: วิเคราะห์จากโค้ดปัจจุบัน, Git history, Windows Event Log, Reliability Monitor, process state และ crash diagnostics บนเครื่องจริง โดยยังไม่ได้แก้ source code
+สถานะเอกสาร: วิเคราะห์จากโค้ดปัจจุบัน, Git history, Windows Event Log, Reliability Monitor, process state และ crash diagnostics บนเครื่องจริง; ข้อแก้ไขในสาย v4.62.2 ถูกผูกกับแผน Issue #59 และอยู่ระหว่าง exact hosted CI/release verification
+
+## สถานะการตรวจเพิ่มเติม (2026-09-13)
+
+- exact CI run `34759240096` ไม่พบ silent native crash ของ lnwjud บน macOS 26: x64 มีหน้าต่างและ process ยังอยู่ ส่วน arm64 ค้างก่อนสร้างหน้าต่างในช่วง safeStorage/keychain bootstrap
+- x64 พบ false negative ใน startup Doctor: MCP identity probe แบบครั้งเดียว timeout ที่ 750 ms ระหว่าง loopback listener กำลังขึ้น แล้ว RequirementRegistry cache ผล fail ไว้ 30 วินาที แก้โดย retry เฉพาะ timeout/transport ภายใน probe budget; identity mismatch จริงยัง fail closed
+- arm64 finding เป็นข้อจำกัดของ hosted packaged Keychain ไม่ใช่หลักฐานว่าปัญหา Windows เดิมกลับมา และไม่ใช่ DYLD signature failure; compatibility smoke จึงใช้ explicit in-memory secret fixture ที่เปิดได้เฉพาะ macOS 26 arm64 + packaged E2E flags ขณะที่ production ยังคงบังคับ Electron safeStorage
+- ข้อสรุปของ Windows เดิมยังเหมือนเดิม: เหตุที่ยืนยันได้คือ Application Hang และ renderer-recovery race รุ่นเก่า; หากรอบใหม่ยังปิดโดยไม่มี lifecycle record ให้เก็บ `%APPDATA%\\lnwjud\\crashes\\crash-events.ndjson` คู่กับ Event Viewer/WER
 
 ## 1. บทสรุป
 

@@ -438,6 +438,10 @@ jobs:
         env:
           DEBUG: pw:browser*
           ELECTRON_ENABLE_LOGGING: '1'
+          # GitHub's macOS 26 arm64 runner has no usable login Keychain for a
+          # packaged smoke process. The app accepts this fixture-only switch
+          # only together with LNWJUD_E2E_FIXTURE and only on that host.
+          LNWJUD_E2E_EPHEMERAL_SECRETS: '1'
         run: |
           set -euo pipefail
           mkdir -p macos26-diagnostics
