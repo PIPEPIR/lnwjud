@@ -33,6 +33,8 @@ describe('LogHub', () => {
     const activityPath = path.join(root, 'mcp-activity.log');
     await writeFile(activityPath, [
       { callId: 'confirm', toolName: 'apply_patch', phase: 'completed', resultCode: 'PERMISSION_REQUIRED', resultMessage: 'explicit confirmation required' },
+      { callId: 'conflict', toolName: 'edit_file', phase: 'completed', resultCode: 'CONFLICT', resultMessage: 'exact edit did not match' },
+      { callId: 'scope', toolName: 'search_text', phase: 'completed', resultCode: 'PATH_OUTSIDE_WORKSPACE', resultMessage: 'outside workspace' },
       { callId: 'stale-status', toolName: 'process_status', phase: 'completed', resultCode: 'PROCESS_NOT_FOUND', resultMessage: 'Process was not found' },
       { callId: 'real-error', toolName: 'write_file', phase: 'completed', resultCode: 'FILE_NOT_FOUND', resultMessage: 'File was not found' },
     ].map((entry) => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
@@ -44,9 +46,13 @@ describe('LogHub', () => {
 
     const lines = hub.snapshot().lines.filter((line) => line.source === 'mcp');
     expect(lines.find((line) => line.text.includes('apply_patch'))?.level).toBe('info');
+    expect(lines.find((line) => line.text.includes('edit_file'))?.level).toBe('info');
+    expect(lines.find((line) => line.text.includes('search_text'))?.level).toBe('info');
     expect(lines.find((line) => line.text.includes('process_status'))?.level).toBe('info');
     expect(lines.find((line) => line.text.includes('write_file'))?.level).toBe('error');
     expect(lines.find((line) => line.text.includes('apply_patch'))?.text).toContain('[RESULT]');
+    expect(lines.find((line) => line.text.includes('edit_file'))?.text).toContain('[RESULT]');
+    expect(lines.find((line) => line.text.includes('search_text'))?.text).toContain('[RESULT]');
     expect(lines.find((line) => line.text.includes('process_status'))?.text).toContain('[RESULT]');
     expect(lines.find((line) => line.text.includes('write_file'))?.text).toContain('[ERROR]');
   });

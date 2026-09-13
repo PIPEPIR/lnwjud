@@ -4,6 +4,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { PathExecutableResolver, toWindowsSpawnInvocation, type ExecutableResolver } from '@lnwjud/process';
 import type { FileActor } from '@lnwjud/application';
 import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath } from '@lnwjud/workspace';
 import type { McpApplicationServices } from './tools/tool-types.js';
@@ -29,6 +30,7 @@ const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
 export interface LspRuntimeOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly timeoutMs?: number;
+  readonly executableResolver?: ExecutableResolver;
   /** Injectable for tests: creates the server process. */
   readonly spawner?: (command: readonly string[]) => Result<ChildProcess>;
   /** Test/fixture override; production uses the actual host platform. */
@@ -45,7 +47,8 @@ class LspConnection {
     server.stdout?.on('data', (chunk: Buffer) => this.receive(chunk));
     server.stdin?.on('error', () => undefined);
     server.stdout?.on('error', () => undefined);
-    server.on('error', () => undefined);
+    server.on('error', (error) => this.rejectPending(error instanceof Error ? error : new Error(String(error))));
+    server.on('exit', (code, signal) => this.rejectPending(new Error(`Language server exited before responding (code=${String(code)}, signal=${String(signal)})`)));
   }
 
   public onNotification(handler: (method: string, params: Record<string, unknown>) => void): void {
@@ -111,6 +114,13 @@ class LspConnection {
     }
   }
 
+  private rejectPending(error: Error): void {
+    for (const [id, waiter] of this.responseWaiters) {
+      this.responseWaiters.delete(id);
+      waiter.reject(error);
+    }
+  }
+
   private write(message: Record<string, unknown>): void {
     const body = JSON.stringify(message);
     this.server.stdin?.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`, 'utf8');
@@ -120,6 +130,7 @@ class LspConnection {
 export class LspRuntimeService {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly timeoutMs: number;
+  private readonly executableResolver: ExecutableResolver;
   private readonly spawner: (command: readonly string[]) => Result<ChildProcess>;
   private readonly platform: NodeJS.Platform;
   private readonly published = new Map<string, unknown[]>();
@@ -131,8 +142,9 @@ export class LspRuntimeService {
   ) {
     this.environment = options.environment ?? process.env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.spawner = options.spawner ?? defaultSpawner;
     this.platform = options.platform ?? process.platform;
+    this.executableResolver = options.executableResolver ?? new PathExecutableResolver(this.environment, this.platform);
+    this.spawner = options.spawner ?? ((command) => defaultSpawner(command, this.platform));
   }
 
   public async diagnostics(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -216,7 +228,10 @@ export class LspRuntimeService {
     const resolvedFiles = await this.resolveWorkspaceFiles(root.value, requestedFiles);
     if (!resolvedFiles.ok) return resolvedFiles;
 
-    const spawned = this.spawner(command);
+    const executable = await this.executableResolver.resolve(command[0]!);
+    if (!executable.ok) return executable;
+    const resolvedCommand = [executable.value, ...command.slice(1)];
+    const spawned = this.spawner(resolvedCommand);
     if (!spawned.ok) return spawned;
     const connection = new LspConnection(spawned.value);
     attach(connection);
@@ -228,10 +243,12 @@ export class LspRuntimeService {
       }, this.timeoutMs);
     } catch (error) {
       connection.close();
-      return err(appError('INTERNAL_ERROR', `Language server initialization failed: ${error instanceof Error ? error.message : String(error)}`, true));
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message.includes('timed out') ? 'PROCESS_TIMEOUT' : 'CONFLICT';
+      return err(appError(code, `Language server initialization failed: ${message}. Check the configured LSP command for ${language}.`, true));
     }
     connection.notify('initialized', {});
-    return ok({ root: root.value, language, command, files: resolvedFiles.value, connection });
+    return ok({ root: root.value, language, command: resolvedCommand, files: resolvedFiles.value, connection });
   }
 
   private async resolveWorkspaceFiles(root: string, files: readonly string[]): Promise<Result<readonly string[]>> {
@@ -313,9 +330,15 @@ export class LspRuntimeService {
   }
 }
 
-function defaultSpawner(command: readonly string[]): Result<ChildProcess> {
+function defaultSpawner(command: readonly string[], platform: NodeJS.Platform = process.platform): Result<ChildProcess> {
+  const invocation = toWindowsSpawnInvocation(command[0]!, command.slice(1), {}, platform);
+  if (!invocation.ok) return invocation;
   try {
-    return ok(spawn(command[0]!, [...command.slice(1)], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }));
+    return ok(spawn(invocation.value.executable, [...invocation.value.args], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
+    }));
   } catch {
     return err(appError('EXECUTABLE_NOT_FOUND', `Language server could not start: ${command[0]}`));
   }

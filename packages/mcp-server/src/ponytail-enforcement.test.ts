@@ -85,6 +85,7 @@ describe('Ponytail ToolRegistry enforcement', () => {
     const blocked = await registry.invoke('write_file', { workspaceId: 'workspace-1', path: 'src/app.ts', content: 'export const x = 1;\n' });
     expect(blocked).toMatchObject({ isError: true, structuredContent: { error: { code: 'CONFLICT', recoverable: true } } });
     expect(JSON.stringify(blocked.structuredContent)).toContain(BUNDLED_PONYTAIL_SKILL_ID);
+    expect(JSON.stringify(blocked.structuredContent)).toContain('skill_load');
     expect(writes).toEqual([]);
 
     const docs = await registry.invoke('write_file', { workspaceId: 'workspace-1', path: 'README.md', content: '# docs\n' });

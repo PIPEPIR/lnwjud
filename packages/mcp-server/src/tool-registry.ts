@@ -434,7 +434,7 @@ export class ToolRegistry {
       if (ponytailInvocation !== undefined && ponytailInvocation.policy.mode !== 'off') {
         const activation = this.ponytailActivation.state(ponytailInvocation.context, ponytailInvocation.policy);
         if (!activation.primarySkillLoaded && !activation.sessionSuppressed) {
-          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Call skills_read with skillId=${BUNDLED_PONYTAIL_SKILL_ID}, this workspaceId, and the same goalId when applicable, then retry this code mutation.`;
+          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Call skill_load with skillId=${BUNDLED_PONYTAIL_SKILL_ID}, this workspaceId, and the same goalId when applicable, then retry this code mutation.`;
           const response = mapError(appError('CONFLICT', message, true));
           await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
           return response;
