@@ -178,7 +178,7 @@ const INPUT_FIELDS: Readonly<Record<string, readonly FieldName[]>> = Object.free
   event_log_context: ['log_name', 'provider', 'max_events'],
   path_context: ['executable'],
   mcp_resources: ['server'],
-  task_create: ['workspaceId', 'executable', 'command', 'arguments', 'cwd', 'timeoutMs', 'timeout_seconds'],
+  task_create: ['workspaceId', 'goalId', 'executable', 'command', 'arguments', 'cwd', 'timeoutMs', 'timeout_seconds'],
   ...mapEntries(['task_status', 'task_cancel', 'task_result'], ['workspaceId', 'taskId', 'task_id']),
   task_list: ['workspaceId'],
   delegate: ['workspaceId', 'instruction', 'prompt', 'task', 'taskId', 'idempotencyKey'],

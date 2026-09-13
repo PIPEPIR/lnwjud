@@ -826,6 +826,28 @@ export class UpgradeRuntimeService {
     signal?: AbortSignal,
     authorization?: InvocationAuthorization,
   ): Promise<Result<unknown>> {
+    if (name === 'task_create') {
+      const goalId = readString(input, 'goalId')?.trim();
+      if (goalId !== undefined && goalId.length > 0) {
+        const goals = this.services.goals;
+        if (goals === undefined) {
+          return err(appError('CONFLICT', 'task_create could not verify its durable goal binding', true));
+        }
+        try {
+          const goal = await goals.getGoal(this.actor, { goalId });
+          if (!goal.ok) return goal;
+          if (goal.value.status !== 'active') {
+            return err(appError('CONFLICT', 'Cannot create a task for a terminal goal', true));
+          }
+          const workspaceId = readString(input, 'workspaceId');
+          if (workspaceId !== undefined && workspaceId !== goal.value.workspaceId) {
+            return err(appError('CONFLICT', 'task_create workspaceId does not match its durable goal', true));
+          }
+        } catch {
+          return err(appError('INTERNAL_ERROR', 'task_create goal binding could not be verified', true));
+        }
+      }
+    }
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['local shell task runtime']));
     const workspaceId = readString(input, 'workspaceId');

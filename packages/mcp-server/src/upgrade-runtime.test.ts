@@ -298,6 +298,35 @@ describe('upgrade runtime', () => {
     });
   });
 
+  it('rejects task_create bound to a terminal goal before starting a shell task', async () => {
+    const calls: unknown[] = [];
+    const services = {
+      capabilities: {
+        async execute(tool: string, input: unknown): Promise<ReturnType<typeof ok>> {
+          calls.push({ tool, input });
+          return ok({ started: true });
+        },
+      },
+      goals: {
+        async getGoal() {
+          return ok({ status: 'completed' });
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const runtime = new UpgradeRuntimeService(services, actor);
+    const taskTool = new ToolRegistry(services, actor).listAll().find((tool) => tool.name === 'task_create');
+    expect(taskTool).toBeDefined();
+    expect(taskTool?.parse({
+      goalId: 'terminal-goal',
+      executable: 'node.exe',
+      goalLease: { goalId: 'terminal-goal', leaseToken: 'lease-token', leaseGeneration: 1 },
+    })).toMatchObject({ ok: true });
+
+    await expect(runtime.execute('task_create', { goalId: 'terminal-goal', executable: 'node.exe' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(calls).toEqual([]);
+  });
+
   it('keeps Git worktree spawning path-scoped and dry-run first', async () => {
     const calls: unknown[] = [];
     const runtime = new UpgradeRuntimeService({

@@ -307,7 +307,25 @@ export class ToolRegistry {
       }
       const goalLease = readGoalLeaseProof(parsed.value);
       const parsedInput = stripGoalLeaseEnvelope(parsed.value);
-      const activeRoutedInput = await this.routeInputToActiveWorkspace(parsedInput);
+      if (
+        tool.name === 'task_create'
+        && goalLease !== undefined
+        && isRecord(parsedInput)
+        && parsedInput.goalId !== undefined
+        && parsedInput.goalId !== goalLease.goalId
+      ) {
+        const message = 'task_create goalId must match goalLease.goalId';
+        const response = mapError(appError('CONFLICT', message, true));
+        await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+        return response;
+      }
+      const goalBoundInput = tool.name === 'task_create'
+        && goalLease !== undefined
+        && isRecord(parsedInput)
+        && parsedInput.goalId === undefined
+        ? { ...parsedInput, goalId: goalLease.goalId }
+        : parsedInput;
+      const activeRoutedInput = await this.routeInputToActiveWorkspace(goalBoundInput);
       const prohibitedReason = fullBypass ? undefined : prohibitedInvocationReason(tool.name, activeRoutedInput);
       if (prohibitedReason !== undefined) {
         const response = mapError(appError('PERMISSION_DENIED', prohibitedReason));
@@ -983,6 +1001,7 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'computer_use', 'dom_cdp', 'accessibility', 'input_event', 'ui_target_action', 'window',
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
+  'task_create',
 ]);
 const goalLeaseProofSchema = z.object({
   goalId: z.string().min(1).max(128),
@@ -1168,7 +1187,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.62.2 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.62.3 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

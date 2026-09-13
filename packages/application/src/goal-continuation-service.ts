@@ -196,6 +196,13 @@ export interface GoalSnapshot {
 export type FinishGoalCompletionState = 'completed' | 'pending_native_cleanup';
 
 export interface FinishGoalResult extends GoalSnapshot {
+  /** Present after the terminal CAS; pending native cleanup has not cascaded yet. */
+  readonly trackedTaskIds?: readonly string[];
+  readonly trackedTasks: readonly GoalTrackedTask[];
+  readonly taskCancellations?: readonly GoalTaskCancellationResult[];
+  readonly allTasksStopped?: boolean;
+  readonly requestCancellation?: GoalRequestCancellationResult;
+  readonly allRequestsStopped?: boolean;
   readonly scheduledTaskCancellation: ScheduledTaskCancellationInstruction;
   readonly completionState: FinishGoalCompletionState;
 }
@@ -406,6 +413,7 @@ export class GoalContinuationService {
       if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
       if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
       if (!Number.isInteger(request.expectedRevision) || request.expectedRevision < 0) return err(appError('INVALID_INPUT', 'expectedRevision is invalid'));
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
       const now = this.now().toISOString();
       const finishRequest = {
         checkpointId: randomUUID(),
@@ -451,7 +459,24 @@ export class GoalContinuationService {
         }
       }
       const goal = await this.goals.finish(finishRequest);
-      return ok({ ...toSnapshot(goal), completionState: 'completed', scheduledTaskCancellation });
+      // The durable transition is the linearization point. Once it succeeds,
+      // stop every request/task still owned by the just-terminal goal so a
+      // stale worker cannot continue into a later native wake.
+      const [requestCancellation, taskCancellations] = await Promise.all([
+        this.cancelInFlightRequests(goalId),
+        this.cancelTrackedTasks(ownerClientId, goal.workspaceId, trackedTasks),
+      ]);
+      return ok({
+        ...toSnapshot(goal),
+        trackedTaskIds: trackedTasks.map((task) => task.taskId),
+        trackedTasks,
+        taskCancellations,
+        allTasksStopped: taskCancellations.every((entry) => isGoalTaskStopped(entry.status)),
+        requestCancellation,
+        allRequestsStopped: requestCancellation.remaining === 0,
+        completionState: 'completed',
+        scheduledTaskCancellation,
+      });
     } catch (error: unknown) {
       return this.mapError(error);
     }
