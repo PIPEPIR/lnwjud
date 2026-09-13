@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SafeStorageSecretProtector, type AsyncSafeStorageApi } from '../src/main/safe-storage-secret-protector.js';
+import { SafeStorageSecretProtector, type SafeStorageApi } from '../src/main/safe-storage-secret-protector.js';
 
 function fakeApi(options: {
   available?: boolean;
   backend?: string;
   rotate?: boolean;
   decrypt?: (value: Buffer) => string;
-} = {}): AsyncSafeStorageApi {
+} = {}): SafeStorageApi {
   return {
+    isEncryptionAvailable: vi.fn(() => options.available ?? true),
+    encryptString: vi.fn((value) => Buffer.from(`cipher:${value}`, 'utf8')),
+    decryptString: vi.fn((value) => options.decrypt?.(value) ?? value.toString('utf8').replace(/^cipher:/, '')),
     isAsyncEncryptionAvailable: vi.fn(async () => options.available ?? true),
     encryptStringAsync: vi.fn(async (value) => Buffer.from(`cipher:${value}`, 'utf8')),
     decryptStringAsync: vi.fn(async (value) => ({
@@ -53,6 +56,25 @@ describe('SafeStorageSecretProtector', () => {
     const protector = new SafeStorageSecretProtector({ api: fakeApi({ rotate: true }), platform: 'darwin' });
     const envelope = await protector.encrypt('checkpoint_master_key', 'key-material');
     await expect(protector.decrypt('checkpoint_master_key', envelope)).resolves.toEqual({ plainText: 'key-material', shouldReEncrypt: true });
+  });
+
+  it('uses synchronous safeStorage without starting the async macOS keychain provider when requested', async () => {
+    const api = fakeApi();
+    const protector = new SafeStorageSecretProtector({ api, platform: 'darwin', useSynchronousApi: true });
+
+    await expect(protector.status()).resolves.toMatchObject({ available: true, secure: true, backend: 'macos_keychain' });
+    const envelope = await protector.encrypt('checkpoint_master_key', 'key-material');
+    await expect(protector.decrypt('checkpoint_master_key', envelope)).resolves.toEqual({
+      plainText: 'key-material',
+      shouldReEncrypt: false,
+    });
+
+    expect(api.isEncryptionAvailable).toHaveBeenCalled();
+    expect(api.encryptString).toHaveBeenCalledWith('key-material');
+    expect(api.decryptString).toHaveBeenCalled();
+    expect(api.isAsyncEncryptionAvailable).not.toHaveBeenCalled();
+    expect(api.encryptStringAsync).not.toHaveBeenCalled();
+    expect(api.decryptStringAsync).not.toHaveBeenCalled();
   });
 
   it('rejects wrong purpose and unsupported hosts before touching the backend', async () => {
