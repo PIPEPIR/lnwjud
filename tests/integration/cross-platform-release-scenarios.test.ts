@@ -205,6 +205,17 @@ const nativeCiScenarios: readonly Scenario[] = [
     expect(workflow).toContain('lacks disable-library-validation');
     expect(workflow).toContain('baseline launch observation');
   }],
+  ['106 macOS 26 completes the packaged UI smoke before transient LaunchServices termination', async () => {
+    const workflow = await workflowSource();
+    const compatibilityStart = workflow.indexOf('macos-26-package-compatibility:');
+    const compatibilityJob = workflow.slice(compatibilityStart, workflow.indexOf('\n  verify:', compatibilityStart));
+    const stageIndex = compatibilityJob.indexOf('Stage exact DMG and ZIP apps without launching');
+    const uiSmokeIndex = compatibilityJob.indexOf('Run packaged Electron smoke on macOS 26');
+    const launchServicesIndex = compatibilityJob.indexOf('Launch exact DMG and ZIP apps through LaunchServices');
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(stageIndex).toBeLessThan(uiSmokeIndex);
+    expect(uiSmokeIndex).toBeLessThan(launchServicesIndex);
+  }],
 ];
 
 const extendedPlatformScenarios: readonly Scenario[] = [

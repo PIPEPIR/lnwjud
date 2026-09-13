@@ -419,14 +419,18 @@ jobs:
           echo "LNWJUD_MACOS26_DMG=$dmg" >> "$GITHUB_ENV"
           echo "LNWJUD_MACOS26_ZIP=$zip" >> "$GITHUB_ENV"
 
-      - name: Launch exact DMG and ZIP apps through LaunchServices
+      # Do not launch-and-terminate a fresh profile before the UI smoke. On
+      # macOS 26 arm64, startup may still be initializing Keychain-backed
+      # safeStorage after three seconds; killing it there can poison the next
+      # packaged launch before Electron creates its first BrowserWindow.
+      - name: Stage exact DMG and ZIP apps without launching
         shell: bash
         run: |
           set -euo pipefail
           dmg_app="$RUNNER_TEMP/lnwjud-macos26-dmg/lnwjud.app"
           zip_app="$RUNNER_TEMP/lnwjud-macos26-zip/lnwjud.app"
-          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_DMG" "$dmg_app" 2>&1 | tee macos26-diagnostics/launch-dmg.log
-          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_ZIP" "$zip_app" 2>&1 | tee macos26-diagnostics/launch-zip.log
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_DMG" "$dmg_app" stage-only
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_ZIP" "$zip_app" stage-only
           echo "LNWJUD_PACKAGED_EXECUTABLE=$dmg_app/Contents/MacOS/lnwjud" >> "$GITHUB_ENV"
 
       - name: Run packaged Electron smoke on macOS 26
@@ -436,6 +440,15 @@ jobs:
           set -euo pipefail
           cd apps/desktop
           node node_modules/@playwright/test/cli.js test --config playwright.config.ts desktop-dashboard.e2e.ts electron-security.e2e.ts --trace=retain-on-failure --reporter=list,html
+
+      - name: Launch exact DMG and ZIP apps through LaunchServices
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_app="$RUNNER_TEMP/lnwjud-macos26-dmg/lnwjud.app"
+          zip_app="$RUNNER_TEMP/lnwjud-macos26-zip/lnwjud.app"
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_DMG" "$dmg_app" 2>&1 | tee macos26-diagnostics/launch-dmg.log
+          bash scripts/stage-macos-smoke-app.sh "$LNWJUD_MACOS26_ZIP" "$zip_app" 2>&1 | tee macos26-diagnostics/launch-zip.log
 
       - name: Upload macOS 26 compatibility diagnostics
         if: always()
