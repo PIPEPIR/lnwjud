@@ -83,9 +83,9 @@ jobs:
     name: Native Package Verification (${{ matrix.name }})
     timeout-minutes: 45
     # Packaging downloads target-native runtimes and builds unsigned local
-    # artifacts. Keep it on protected push/manual runs; pull requests still
-    # receive the fast platform-contract matrix above.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # artifacts. Keep it on protected main pushes/manual runs; non-main pushes
+    # and pull requests receive the fast platform-contract matrix above.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     needs: native-platform-contract
     strategy:
       fail-fast: false
@@ -293,7 +293,7 @@ jobs:
 
   macos-26-package-compatibility:
     name: macOS 26 Package Compatibility (${{ matrix.arch }})
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     needs: native-package-verification
     strategy:
       fail-fast: false
