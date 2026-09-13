@@ -23,12 +23,13 @@
 
 ---
 
-## Current version: v4.62.0
+## Current version: v4.62.1
 
-`v4.62.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.62.1` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.62.0
+### What's new in v4.62.1
 
+- **External MCP error passthrough:** child `tools/call` now bypasses the SDK layer's eager output-schema validation so a real `isError: true` result reaches lnwjud unchanged; successful structured output and the MCP result envelope are still validated, with regression coverage for the exact SDK-layer failure path reported in Issue #53.
 - **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
 - **Image integrity guard:** Windows Vision validates the encoded PNG before returning it and attaches byte-length/SHA-256 metadata; the MCP result mapper rejects truncated, malformed, dimension-mismatched, or checksum-mismatched image payloads instead of silently handing a corrupted image to the model.
 - **Stable search during live refresh:** Work Log and Live Logs now freeze workspace metadata together with the visible log snapshot, so background dashboard polling cannot restart full-detail search or flash between results, loading, and empty states while a query is active. New activity resumes when search is cleared.
