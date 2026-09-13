@@ -8,6 +8,7 @@ const LOCK_FILE = 'lnwjud.tunnel.lock';
 const POSIX_MUTEX_FILE = 'lnwjud.tunnel.mutex';
 const LOCK_VERSION = 1;
 const MUTEX_WAIT_MS = 5_000;
+const MUTEX_HELPER_STARTUP_GRACE_MS = 10_000;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface TunnelLockOwner {
@@ -369,7 +370,10 @@ function waitForMutexReady(holder: ReturnType<typeof spawn>, stderr: () => strin
     if (holder.stdout === null) { reject(new Error('Tunnel lock mutex helper stdout is unavailable')); return; }
     const stdoutStream = holder.stdout;
     let stdout = '';
-    const timer = setTimeout(() => finish(new Error('Timed out waiting for the lnwjud tunnel lock critical section')), MUTEX_WAIT_MS + 2_000);
+    // The helper's own mutex contention remains bounded by MUTEX_WAIT_MS.
+    // Give PowerShell startup separate headroom because a saturated Windows
+    // runner can take several seconds before the helper executes WaitOne().
+    const timer = setTimeout(() => finish(new Error('Timed out waiting for the lnwjud tunnel lock critical section')), MUTEX_WAIT_MS + MUTEX_HELPER_STARTUP_GRACE_MS);
     const onData = (chunk: string): void => {
       stdout += chunk;
       if (/(?:^|\r?\n)READY(?:\r?\n|$)/.test(stdout)) finish();
