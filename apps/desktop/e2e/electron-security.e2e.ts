@@ -17,6 +17,7 @@ function launchElectron(dataRoot: string): Promise<ElectronApplication> {
       : [`--user-data-dir=${dataRoot}`],
     cwd: desktopRoot,
     env: { ...process.env, LNWJUD_DATA_PATH: dataRoot, LNWJUD_E2E_FIXTURE: '1', LNWJUD_E2E_NODE_PATH: process.execPath },
+    timeout: 40_000,
   });
 }
 
@@ -46,6 +47,7 @@ test('renderer cannot access Node globals', async ({ browserName }, testInfo) =>
     const browserWindow = await app.browserWindow(page);
     expect(await browserWindow.evaluate((window) => window.webContents.getLastWebPreferences().sandbox)).toBe(true);
   } catch (error: unknown) {
+    await attachStartupDiagnostics(testInfo, dataRoot);
     await testInfo.attach('electron-stderr', { body: stderr.join(''), contentType: 'text/plain' });
     if (page !== undefined && !page.isClosed()) {
       await testInfo.attach('failure-dom', { body: await page.content(), contentType: 'text/html' });
@@ -80,6 +82,7 @@ test('startup recovers an unsupported checkpoint envelope without deleting the o
     expect(quarantined).toBeDefined();
     if (quarantined !== undefined) expect(await readFile(path.join(dataRoot, quarantined), 'utf8')).toBe(legacyEnvelope);
   } catch (error: unknown) {
+    await attachStartupDiagnostics(testInfo, dataRoot);
     await testInfo.attach('electron-stderr', { body: stderr.join(''), contentType: 'text/plain' });
     if (page !== undefined && !page.isClosed()) {
       await testInfo.attach('failure-dom', { body: await page.content(), contentType: 'text/html' });
@@ -92,3 +95,12 @@ test('startup recovers an unsupported checkpoint envelope without deleting the o
     }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
   }
 });
+
+async function attachStartupDiagnostics(testInfo: { attach(name: string, options: { body: string; contentType: string }): Promise<void> }, dataRoot: string): Promise<void> {
+  try {
+    const body = await readFile(path.join(dataRoot, 'crashes', 'crash-events.ndjson'), 'utf8');
+    await testInfo.attach('startup-diagnostics', { body, contentType: 'application/x-ndjson' });
+  } catch {
+    await testInfo.attach('startup-diagnostics', { body: 'No startup diagnostics file was created.\n', contentType: 'text/plain' });
+  }
+}

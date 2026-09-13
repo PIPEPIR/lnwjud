@@ -9,7 +9,7 @@ const MAX_EVENT_TEXT = 1_000;
 const RECOVERY_WINDOW_MS = 5 * 60_000;
 const MAX_RECOVERIES_PER_WINDOW = 3;
 
-export type CrashEventType = 'main-uncaught-exception' | 'renderer-gone' | 'child-process-gone' | 'desktop-lifecycle';
+export type CrashEventType = 'main-uncaught-exception' | 'renderer-gone' | 'child-process-gone' | 'desktop-lifecycle' | 'desktop-startup';
 
 export interface CrashEventInput {
   readonly type: CrashEventType;

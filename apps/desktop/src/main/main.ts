@@ -1823,17 +1823,21 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
     release: os.release(),
     isPackaged: app.isPackaged,
   });
+  recordDesktopStartup(`safe-storage:${useSynchronousApi ? 'sync' : 'async'}:selected`);
   const secretProtector = new SafeStorageSecretProtector({
     api: safeStorage,
     platform: process.platform,
     useSynchronousApi,
   });
+  recordDesktopStartup('safe-storage:status:begin');
   const status = await secretProtector.status();
+  recordDesktopStartup(`safe-storage:status:end:${status.secure ? 'secure' : status.reason ?? 'unavailable'}`);
   if (!status.secure) {
     throw new Error(status.reason === 'plaintext_backend'
       ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
       : `Secure secret storage is unavailable (${status.backend})`);
   }
+  recordDesktopStartup('safe-storage:migrations:begin');
   await migrateV3SafeStorageSecrets(dataPath, secretProtector);
   await migrateLegacyWindowsSecrets({
     platform: process.platform,
@@ -1841,11 +1845,14 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
     tunnelSecretPath: path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
     secretProtector,
   });
+  recordDesktopStartup('safe-storage:migrations:end');
+  recordDesktopStartup('checkpoint-key:begin');
   const checkpointKey = await new CheckpointKeyStore({
     filePath: path.join(dataPath, 'checkpoint-master.key'),
     secretProtector,
     quarantineUnsupported: true,
   }).loadOrCreate();
+  recordDesktopStartup('checkpoint-key:end');
   return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }
 
@@ -1884,8 +1891,11 @@ function defaultStdioCommand(profile: PermissionProfileName): string {
 }
 
 async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
+  recordDesktopStartup('runtime-secrets:begin');
   const secrets = await resolveDesktopRuntimeSecrets(dataPath);
-  return createDesktopRuntime(dataPath, {
+  recordDesktopStartup('runtime-secrets:end');
+  recordDesktopStartup('runtime-create:begin');
+  const runtime = createDesktopRuntime(dataPath, {
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     hostMutationApprovalProvider: requestNativeMutationApproval,
@@ -1894,6 +1904,8 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     }),
     watchToolAvailability: true,
   });
+  recordDesktopStartup('runtime-create:end');
+  return runtime;
 }
 
 function createElectronNativeCapabilityApi(windowProvider: () => BrowserWindow | null): ElectronNativeCapabilityApi {
@@ -2066,7 +2078,9 @@ function toElectronSaveDialogOptions(options: NativeDialogOptions): Electron.Sav
 function bootstrapDesktop(configuredDataPath?: string): void {
   if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath(configuredDataPath);
+  recordDesktopStartup('app-ready:waiting');
   void app.whenReady().then(async () => {
+    recordDesktopStartup('app-ready:resolved');
     assertSupportedPlatform();
     app.setAppUserModelId('com.lnwjud.desktop');
     const session = platformCompatibility.linuxSession;
@@ -2075,7 +2089,9 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     );
 
     prependBundledRuntimeToolsToPath();
+    recordDesktopStartup('runtime:begin');
     const runtime = await createNativeDesktopRuntime(dataPath);
+    recordDesktopStartup('runtime:end');
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -2087,8 +2103,11 @@ function bootstrapDesktop(configuredDataPath?: string): void {
       onUserSettingsChanged: applyDesktopUserSettings,
       ipcDrainBarrier: desktopIpcDrainBarrier,
     });
+    recordDesktopStartup('window:create:begin');
     createDesktopWindow();
+    recordDesktopStartup('window:create:end');
     createDesktopTray();
+    recordDesktopStartup('desktop:started');
     crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'desktop-started' });
     void runtime.autoStartMcp().catch((error: unknown) => {
       console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -2139,6 +2158,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
 
 function handleDesktopStartupFailure(scope: string, error: unknown): void {
   const message = error instanceof Error ? error.message : 'unknown error';
+  recordDesktopStartup(`${scope}:failed`, error);
   console.error('[Startup] ' + scope + ' failed: ' + message);
   try {
     dialog.showErrorBox('lnwjud failed to start', scope + ' startup failed.\n\n' + message);
@@ -2270,6 +2290,15 @@ function configureCrashRecovery(dataPath: string): void {
   });
 }
 
+function recordDesktopStartup(reason: string, error?: unknown): void {
+  crashDiagnostics?.record({
+    type: 'desktop-startup',
+    processType: 'main',
+    reason,
+    ...(error === undefined ? {} : { error }),
+  });
+}
+
 function configureUserDataPath(): string {
   app.setName(APP_NAME);
   const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
@@ -2280,6 +2309,8 @@ function configureUserDataPath(): string {
 function configureDataPath(configuredDataPath?: string): string {
   const dataPath = configuredDataPath ?? configureUserDataPath();
   configureCrashRecovery(dataPath);
+  recordDesktopStartup('data-path:configured');
+  recordDesktopStartup('restore:begin');
   const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), {
     platform: process.platform,
     arch: process.arch,
@@ -2288,6 +2319,7 @@ function configureDataPath(configuredDataPath?: string): string {
       path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
     ],
   });
+  recordDesktopStartup('restore:end');
   if (restore.error !== undefined) console.error(`Scheduled database restore failed: ${restore.error}`);
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
   return dataPath;
@@ -2295,7 +2327,13 @@ function configureDataPath(configuredDataPath?: string): string {
 
 const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
 const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
+if (configuredUserDataPath !== undefined) {
+  configureCrashRecovery(configuredUserDataPath);
+  recordDesktopStartup('entrypoint');
+  recordDesktopStartup('instance-lock:begin');
+}
 const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
+if (configuredUserDataPath !== undefined) recordDesktopStartup(`instance-lock:end:${gotInstanceLock ? 'acquired' : 'denied'}`);
 if (!gotInstanceLock) {
   app.quit();
 } else {

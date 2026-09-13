@@ -419,10 +419,9 @@ jobs:
           echo "LNWJUD_MACOS26_DMG=$dmg" >> "$GITHUB_ENV"
           echo "LNWJUD_MACOS26_ZIP=$zip" >> "$GITHUB_ENV"
 
-      # Do not launch-and-terminate a fresh profile before the UI smoke. On
-      # macOS 26 arm64, startup may still be initializing Keychain-backed
-      # safeStorage after three seconds; killing it there can poison the next
-      # packaged launch before Electron creates its first BrowserWindow.
+      # Keep the artifacts staged-only here so the UI smoke owns the only live
+      # package instance and its startup journal identifies any pre-window block.
+      # LaunchServices verification still runs independently after UI acceptance.
       - name: Stage exact DMG and ZIP apps without launching
         shell: bash
         run: |
@@ -436,8 +435,19 @@ jobs:
       - name: Run packaged Electron smoke on macOS 26
         shell: bash
         timeout-minutes: 10
+        env:
+          DEBUG: pw:browser*
+          ELECTRON_ENABLE_LOGGING: '1'
         run: |
           set -euo pipefail
+          {
+            echo 'User keychains:'
+            security list-keychains -d user
+            echo 'Default keychain:'
+            security default-keychain -d user
+            default_keychain="$(security default-keychain -d user | tr -d ' \"')"
+            if [[ -n "$default_keychain" ]]; then security show-keychain-info "$default_keychain"; fi
+          } > macos26-diagnostics/keychain-context.log 2>&1 || true
           cd apps/desktop
           node node_modules/@playwright/test/cli.js test --config playwright.config.ts desktop-dashboard.e2e.ts electron-security.e2e.ts --trace=retain-on-failure --reporter=list,html
 
