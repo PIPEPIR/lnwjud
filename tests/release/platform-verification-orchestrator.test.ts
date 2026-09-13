@@ -40,6 +40,10 @@ describe('platform verification orchestrator', () => {
     expect(workflow).toContain('Record exact v4.62.1 macOS signing-policy regression');
     expect(workflow).toContain('inspect-macos-signing-policy.mjs');
     expect(workflow).toContain('lacks disable-library-validation');
+    expect(workflow).toContain('Build packaged-smoke workspace dependencies');
+    expect(workflow).toContain('corepack pnpm@10.15.0 --filter @lnwjud/storage... --if-present build');
+    expect(workflow.indexOf('Build packaged-smoke workspace dependencies'))
+      .toBeLessThan(workflow.indexOf('Run packaged Electron smoke on macOS 26'));
     expect(workflow).toContain('ubuntu-24.04-arm');
     expect(workflow).toContain('sigstore/cosign-installer@v4.1.2');
     expect(workflow).toContain("cosign-release: 'v3.1.3'");

@@ -327,6 +327,10 @@ jobs:
           name: native-darwin-${{ matrix.arch }}-${{ github.sha }}
           path: macos26-artifact
 
+      - name: Build packaged-smoke workspace dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 --filter @lnwjud/storage... --if-present build
+
       - name: Record exact v4.62.1 macOS signing-policy regression
         if: matrix.arch == 'arm64'
         shell: bash
