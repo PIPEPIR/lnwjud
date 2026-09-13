@@ -144,7 +144,7 @@ export class LspRuntimeService {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.platform = options.platform ?? process.platform;
     this.executableResolver = options.executableResolver ?? new PathExecutableResolver(this.environment, this.platform);
-    this.spawner = options.spawner ?? ((command) => defaultSpawner(command, this.platform));
+    this.spawner = options.spawner ?? ((command): Result<ChildProcess> => defaultSpawner(command, this.platform));
   }
 
   public async diagnostics(input: Record<string, unknown>): Promise<Result<unknown>> {
