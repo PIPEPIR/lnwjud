@@ -185,6 +185,8 @@ describe('durable shell background tasks', () => {
     }
   }, 20000);
 
+  // Replacement cancellation probes worker identity and may invoke taskkill;
+  // PowerShell startup can exceed Vitest's 5s default on a busy Windows host.
   it('cancels a durable task from a replacement backend', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);
@@ -211,7 +213,7 @@ describe('durable shell background tasks', () => {
     const cancelled = await replacementRuntime.execute({ operation: 'cancel', task_id: taskId, userConfirmed: true });
 
     expect(cancelled).toMatchObject({ ok: true, value: { task_id: taskId, state: 'cancelled', durable: true } });
-  });
+  }, 30_000);
 
   it('keeps a durable auto task running when the original MCP caller aborts after submission', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
