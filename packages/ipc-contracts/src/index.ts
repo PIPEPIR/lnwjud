@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.62.1';
+export const APP_VERSION = '4.62.2';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',

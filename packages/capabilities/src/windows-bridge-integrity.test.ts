@@ -8,6 +8,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PowerShellWindowsCapabilityBridge } from './windows-bridge.js';
+import {
+  WINDOWS_CAPABILITY_BRIDGE_SHA256,
+  WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES,
+} from './windows-capability-integrity.generated.js';
 
 const temporaryRoots: string[] = [];
 
@@ -35,6 +39,13 @@ afterEach(async () => {
 });
 
 describe('PowerShellWindowsCapabilityBridge integrity', () => {
+  it('keeps the embedded production identity synchronized with the shipped bridge bytes', async () => {
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
+    const bytes = await readFile(scriptPath);
+    expect(bytes.byteLength).toBe(WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(WINDOWS_CAPABILITY_BRIDGE_SHA256);
+  });
+
   it('executes a script only when its SHA-256 matches the embedded expectation', async () => {
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');
@@ -117,10 +128,17 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
 
     expect(script).toContain('[switch]$PreferCapturable');
     expect(script).toContain("$name = Get-Field $Parameters 'name'");
+    expect(script).toContain("$_.process_name -ieq $name -or $_.title -like \"*$name*\"");
+    expect(script).toContain("if ($_.process_name -ieq $name) { 0 } else { 1 }");
+    expect(script).toContain("$window = Resolve-Window $Parameters -PreferCapturable");
     expect(script).toContain("-PreferCapturable");
     expect(script).toContain("[bool]$_.visible -and -not [bool]$_.minimized");
     expect(script).toContain("[int]$_.bounds.width -gt 0 -and [int]$_.bounds.height -gt 0");
     expect(script).toContain("Sort-Object @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true }");
+    expect(script).toContain('[object]$WindowIndexOverride = $null');
+    expect(script).toContain('$matches = $capturable');
+    expect(script).toContain("Resolve-Window (Get-Field $Parameters 'app') -PreferCapturable -WindowIndexOverride $windowIndex");
+    expect(script).not.toContain('$window = $windows[[int]$windowIndex]');
     expect(script).toContain("$failureCode = 'INVALID_INPUT'");
     expect(script).toContain("$failureMessage = $detail");
   });
@@ -133,6 +151,13 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     expect(script).toContain('[System.Drawing.Image]::FromStream($verifyStream, $true, $true)');
     expect(script).toContain("throw 'Capture image validation failed'");
     expect(script).toContain('[System.Security.Cryptography.SHA256]::Create()');
+    expect(script).toContain('[LnwjudNative]::PrintWindow($captureHwnd, $hdc, 2)');
+    expect(script).toContain('SetProcessDpiAwarenessContext(new IntPtr(-4))');
+    expect(script).toContain('$physicalPixelCoordinates = [LnwjudNative]::EnsurePhysicalPixelCoordinates()');
+    expect(script).toContain('if (-not $usedPrintWindow) { $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size) }');
+    expect(script).toContain('if (-not $physicalPixelCoordinates) { $scaleX = $dpiScale; $scaleY = $dpiScale }');
+    expect(script).toContain('origin_x = $x; origin_y = $y; scale_x = $scaleX; scale_y = $scaleY');
+    expect(script).toContain("capture_space = $captureSpace");
     expect(script).toContain('byte_length = [int]$bytes.Length');
     expect(script).toContain('sha256 = $sha256');
   });

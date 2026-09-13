@@ -186,6 +186,51 @@ const nativeCiScenarios: readonly Scenario[] = [
   ['098 packaged Electron E2E exercises a real MCP client', () => expectWorkflowContains('desktop-mcp-client.e2e.ts')],
   ['099 native macOS host protocol runs Swift tests', () => expectWorkflowContains('swift test --package-path native/macos-host')],
   ['100 native Linux host protocol runs Cargo tests', () => expectWorkflowContains('cargo test --manifest-path native/linux-host/Cargo.toml --locked')],
+  ['101 macOS 26 arm64 reuses the macOS 15 artifact', () => expectWorkflowContains('os: macos-26')],
+  ['102 macOS 26 x64 reuses the macOS 15 Intel artifact', () => expectWorkflowContains('os: macos-26-intel')],
+  ['103 macOS 26 compatibility downloads the exact SHA-scoped Darwin artifact', () => expectWorkflowContains('native-darwin-${{ matrix.arch }}-${{ github.sha }}')],
+  ['104 macOS 26 provenance discovery remains compatible with the hosted macOS Bash baseline', async () => {
+    const workflow = await workflowSource();
+    const compatibilityJob = workflow.slice(workflow.indexOf('macos-26-package-compatibility:'), workflow.indexOf('\n  verify:', workflow.indexOf('macos-26-package-compatibility:')));
+    expect(compatibilityJob).toContain('provenance_list=');
+    expect(compatibilityJob).not.toContain('mapfile');
+  }],
+  ['105 macOS 26 records the exact public v4.62.1 arm64 signing regression before accepting the fix', async () => {
+    const workflow = await workflowSource();
+    expect(workflow).toContain('lnwjud-4.62.1-arm64.dmg');
+    expect(workflow).toContain('lnwjud-4.62.1-arm64.zip');
+    expect(workflow).toContain('d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c');
+    expect(workflow).toContain('cf982b59a42c0ee6f91186212a03a683634e6c14675a718ddbdbf6fe1ba00db8');
+    expect(workflow).toContain('v4.62.1 unexpectedly satisfies the fixed macOS signing policy');
+    expect(workflow).toContain('lacks disable-library-validation');
+    expect(workflow).toContain('baseline launch observation');
+  }],
+  ['106 macOS 26 completes the packaged UI smoke before transient LaunchServices termination', async () => {
+    const workflow = await workflowSource();
+    const compatibilityStart = workflow.indexOf('macos-26-package-compatibility:');
+    const compatibilityJob = workflow.slice(compatibilityStart, workflow.indexOf('\n  verify:', compatibilityStart));
+    const stageIndex = compatibilityJob.indexOf('Stage exact DMG and ZIP apps without launching');
+    const uiSmokeIndex = compatibilityJob.indexOf('Run packaged Electron smoke on macOS 26');
+    const launchServicesIndex = compatibilityJob.indexOf('Launch exact DMG and ZIP apps through LaunchServices');
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(stageIndex).toBeLessThan(uiSmokeIndex);
+    expect(uiSmokeIndex).toBeLessThan(launchServicesIndex);
+  }],
+  ['107 macOS 26 gives packaged safeStorage an unlocked disposable Keychain', async () => {
+    const workflow = await workflowSource();
+    const compatibilityStart = workflow.indexOf('macos-26-package-compatibility:');
+    const compatibilityJob = workflow.slice(compatibilityStart, workflow.indexOf('\n  verify:', compatibilityStart));
+    const keychainIndex = compatibilityJob.indexOf('security create-keychain');
+    const uiSmokeIndex = compatibilityJob.indexOf('Run packaged Electron smoke on macOS 26');
+    const playwrightIndex = compatibilityJob.indexOf('node node_modules/@playwright/test/cli.js');
+    expect(keychainIndex).toBeGreaterThanOrEqual(0);
+    expect(compatibilityJob).toContain('security unlock-keychain');
+    expect(compatibilityJob).toContain('security default-keychain -d user -s "$ci_keychain"');
+    expect(compatibilityJob).toContain('trap cleanup_ci_keychain EXIT');
+    expect(compatibilityJob).toContain('security delete-keychain "$ci_keychain"');
+    expect(keychainIndex).toBeGreaterThan(uiSmokeIndex);
+    expect(keychainIndex).toBeLessThan(playwrightIndex);
+  }],
 ];
 
 const extendedPlatformScenarios: readonly Scenario[] = [

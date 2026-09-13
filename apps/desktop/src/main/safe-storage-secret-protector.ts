@@ -7,7 +7,7 @@ import {
   type SecretPurpose,
 } from '@lnwjud/shared';
 
-export interface AsyncSafeStorageApi {
+export interface SafeStorageApi {
   isAsyncEncryptionAvailable(): Promise<boolean>;
   encryptStringAsync(plainText: string): Promise<Buffer>;
   decryptStringAsync(encrypted: Buffer): Promise<{ readonly result: string; readonly shouldReEncrypt: boolean }>;
@@ -15,7 +15,7 @@ export interface AsyncSafeStorageApi {
 }
 
 export interface SafeStorageSecretProtectorOptions {
-  readonly api: AsyncSafeStorageApi;
+  readonly api: SafeStorageApi;
   readonly platform?: NodeJS.Platform;
 }
 
@@ -51,13 +51,12 @@ export class SafeStorageSecretProtector implements SecretProtector {
   public async encrypt(purpose: SecretPurpose, plainText: string): Promise<string> {
     assertSecretPlaintext(plainText);
     await this.requireSecureStatus();
-    let encrypted: Buffer;
     try {
-      encrypted = await this.options.api.encryptStringAsync(plainText);
+      const encrypted = await this.options.api.encryptStringAsync(plainText);
+      return encodeSecretEnvelope(purpose, encrypted);
     } catch {
       throw new Error('Secure secret storage is temporarily unavailable');
     }
-    return encodeSecretEnvelope(purpose, encrypted);
   }
 
   public async decrypt(purpose: SecretPurpose, envelope: string): Promise<{ readonly plainText: string; readonly shouldReEncrypt: boolean }> {

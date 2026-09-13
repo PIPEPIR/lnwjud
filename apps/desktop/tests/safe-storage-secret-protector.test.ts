@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SafeStorageSecretProtector, type AsyncSafeStorageApi } from '../src/main/safe-storage-secret-protector.js';
+import { SafeStorageSecretProtector, type SafeStorageApi } from '../src/main/safe-storage-secret-protector.js';
 
 function fakeApi(options: {
   available?: boolean;
   backend?: string;
   rotate?: boolean;
   decrypt?: (value: Buffer) => string;
-} = {}): AsyncSafeStorageApi {
+} = {}): SafeStorageApi {
   return {
     isAsyncEncryptionAvailable: vi.fn(async () => options.available ?? true),
     encryptStringAsync: vi.fn(async (value) => Buffer.from(`cipher:${value}`, 'utf8')),

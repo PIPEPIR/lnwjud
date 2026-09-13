@@ -32,6 +32,17 @@ describe('crash recovery diagnostics', () => {
     expect(content).toContain('"reason":"crashed"');
   });
 
+  it('persists bounded startup stages in the same local diagnostic stream', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-startup-'));
+    temporaryRoots.push(root);
+    const recorder = new CrashDiagnosticsRecorder(root, '4.62.2');
+    recorder.record({ type: 'desktop-startup', processType: 'main', reason: 'safe-storage:status:begin' });
+
+    const content = await readFile(recorder.filePath, 'utf8');
+    expect(content).toContain('"type":"desktop-startup"');
+    expect(content).toContain('"reason":"safe-storage:status:begin"');
+  });
+
   it('rate-limits renderer recovery to avoid a crash loop', () => {
     const policy = new RendererRecoveryPolicy();
     expect(policy.shouldRecover('clean-exit', 1_000)).toBe(false);

@@ -3,12 +3,13 @@ set -euo pipefail
 
 artifact="${1:-}"
 destination="${2:-}"
+mode="${3:-launch}"
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS package launch smoke must run on macOS" >&2
   exit 2
 fi
-if [[ -z "$artifact" || ! -f "$artifact" || -L "$artifact" || -z "$destination" ]]; then
-  echo "usage: stage-macos-smoke-app.sh <dmg-or-zip> <destination-app>" >&2
+if [[ -z "$artifact" || ! -f "$artifact" || -L "$artifact" || -z "$destination" || ( "$mode" != "launch" && "$mode" != "stage-only" ) ]]; then
+  echo "usage: stage-macos-smoke-app.sh <dmg-or-zip> <destination-app> [launch|stage-only]" >&2
   exit 2
 fi
 if [[ "$destination" != *.app ]]; then
@@ -16,7 +17,35 @@ if [[ "$destination" != *.app ]]; then
   exit 2
 fi
 
-scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lnwjud-installed-smoke.XXXXXX")"
+allowed_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+mkdir -p "$allowed_root"
+allowed_root_real="$(cd "$allowed_root" && pwd -P)"
+destination_parent="$(dirname "$destination")"
+mkdir -p "$destination_parent"
+destination_parent_real="$(cd "$destination_parent" && pwd -P)"
+case "$destination_parent_real" in
+  "$allowed_root_real"|"$allowed_root_real"/*) ;;
+  *) echo "refusing destination outside the temporary root: $destination_parent_real" >&2; exit 2 ;;
+esac
+destination="$destination_parent_real/$(basename "$destination")"
+
+safe_remove_directory() {
+  local target="$1"
+  [[ ! -e "$target" && ! -L "$target" ]] && return
+  if [[ -L "$target" ]]; then
+    echo "refusing recursive removal of symlink: $target" >&2
+    exit 1
+  fi
+  local target_parent_real target_real
+  target_parent_real="$(cd "$(dirname "$target")" && pwd -P)"
+  target_real="$target_parent_real/$(basename "$target")"
+  case "$target_real" in
+    "$allowed_root_real"/*) rm -rf -- "$target_real" ;;
+    *) echo "refusing cleanup outside the temporary root: $target_real" >&2; exit 1 ;;
+  esac
+}
+
+scratch="$(mktemp -d "$allowed_root_real/lnwjud-installed-smoke.XXXXXX")"
 device=''
 cleanup() {
   if [[ -n "${destination:-}" ]]; then
@@ -25,11 +54,20 @@ cleanup() {
     done < <(pgrep -f "$destination/Contents/MacOS/lnwjud" 2>/dev/null || true)
   fi
   if [[ -n "$device" ]]; then hdiutil detach "$device" >/dev/null 2>&1 || true; fi
-  rm -rf "$scratch"
+  safe_remove_directory "$scratch"
 }
 
 dump_launch_diagnostics() {
   echo "--- macOS launch diagnostics ---" >&2
+  sw_vers >&2 || true
+  uname -a >&2 || true
+  shasum -a 256 "$artifact" >&2 || true
+  if [[ -d "${destination:-}" ]]; then
+    codesign --display --verbose=4 "$destination" >&2 || true
+    if [[ -f "$destination/Contents/MacOS/lnwjud" ]]; then
+      codesign --display --entitlements :- "$destination/Contents/MacOS/lnwjud" >&2 || true
+    fi
+  fi
   /usr/bin/log show --last 2m --style compact --predicate 'process == "lnwjud" OR eventMessage CONTAINS[c] "lnwjud"' 2>/dev/null | tail -n 120 >&2 || true
   echo "--- end macOS launch diagnostics ---" >&2
 }
@@ -58,8 +96,7 @@ if [[ -z "${source_app:-}" || ! -d "$source_app" ]]; then
   echo "lnwjud.app was not found in the packaged artifact" >&2
   exit 1
 fi
-mkdir -p "$(dirname "$destination")"
-rm -rf "$destination"
+safe_remove_directory "$destination"
 ditto "$source_app" "$destination"
 
 executable="$destination/Contents/MacOS/lnwjud"
@@ -68,6 +105,12 @@ if [[ ! -f "$executable" || -L "$executable" || ! -x "$executable" ]]; then
   exit 1
 fi
 codesign --verify --deep --strict "$destination"
+
+if [[ "$mode" == "stage-only" ]]; then
+  echo "Staged macOS package without launching: $destination" >&2
+  echo "$destination"
+  exit 0
+fi
 
 # Launch through LaunchServices, not by exec'ing the Mach-O directly. This is
 # the boundary a user hits after copying the app out of the DMG/ZIP.

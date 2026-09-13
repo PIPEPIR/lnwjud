@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { McpHttpServerHandle, McpHttpServerOptions } from '@lnwjud/mcp-server';
 import { checkConfiguredMcpPort } from '../src/main/desktop-services.js';
 import { DesktopMcpLifecycle, type McpHttpServerStarter } from '../src/main/mcp-lifecycle.js';
@@ -148,6 +148,25 @@ describe('DesktopMcpLifecycle', () => {
     const failed = await checkConfiguredMcpPort({ running: false, url: null, lastStartError: 'EADDRINUSE', workspaceId: null }, 18765);
     expect(failed.status).toBe('fail');
     expect(failed.message).toContain('EADDRINUSE');
+  });
+
+  it('Doctor retries a transient MCP identity transport failure before reporting a false negative', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ product: 'lnwjud', service: 'desktop-mcp', protocol: 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'x-lnwjud-service': 'desktop-mcp' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await expect(checkConfiguredMcpPort(
+        { running: true, url: 'http://127.0.0.1:18765/mcp', lastStartError: null, workspaceId: null },
+        18765,
+      )).resolves.toMatchObject({ status: 'pass' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('Doctor treats an identity-verified fallback port as usable but warns about the configured-port mismatch', async () => {

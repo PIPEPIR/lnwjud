@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { access, lstat, readFile } from 'node:fs/promises';
@@ -69,7 +70,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath } from '@lnwjud/shared';
+import { createExplicitKeySecretProtector, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -102,7 +103,8 @@ import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mut
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
-import type { ElectronNativeCapabilityApi, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
+import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
+import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
 
 export interface DesktopIpcServices {
@@ -1814,15 +1816,44 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
 
 async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   readonly checkpointEncryptionKey: Buffer;
-  readonly secretProtector: SafeStorageSecretProtector;
+  readonly secretProtector: SecretProtector;
 }> {
-  const secretProtector = new SafeStorageSecretProtector({ api: safeStorage, platform: process.platform });
-  const status = await secretProtector.status();
-  if (!status.secure) {
-    throw new Error(status.reason === 'plaintext_backend'
-      ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
-      : `Secure secret storage is unavailable (${status.backend})`);
+  const useMacos26E2eSecrets = shouldUseMacos26E2eSecrets({
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+    isPackaged: app.isPackaged,
+    e2eFixture: process.env.LNWJUD_E2E_FIXTURE === '1',
+    ephemeralSecrets: process.env.LNWJUD_E2E_EPHEMERAL_SECRETS === '1',
+  });
+  let secretProtector: SecretProtector;
+  if (useMacos26E2eSecrets) {
+    recordDesktopStartup('safe-storage:e2e-ephemeral:selected');
+    secretProtector = createExplicitKeySecretProtector(randomBytes(32));
+  } else {
+    recordDesktopStartup('safe-storage:settle:begin');
+    await waitForMacosAsyncSafeStorageStartup({
+      platform: process.platform,
+      arch: process.arch,
+      release: os.release(),
+      isPackaged: app.isPackaged,
+    });
+    recordDesktopStartup('safe-storage:settle:end');
+    recordDesktopStartup('safe-storage:async:selected');
+    secretProtector = new SafeStorageSecretProtector({
+      api: safeStorage,
+      platform: process.platform,
+    });
+    recordDesktopStartup('safe-storage:status:begin');
+    const status = await secretProtector.status();
+    recordDesktopStartup(`safe-storage:status:end:${status.secure ? 'secure' : status.reason ?? 'unavailable'}`);
+    if (!status.secure) {
+      throw new Error(status.reason === 'plaintext_backend'
+        ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
+        : `Secure secret storage is unavailable (${status.backend})`);
+    }
   }
+  recordDesktopStartup('safe-storage:migrations:begin');
   await migrateV3SafeStorageSecrets(dataPath, secretProtector);
   await migrateLegacyWindowsSecrets({
     platform: process.platform,
@@ -1830,15 +1861,18 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
     tunnelSecretPath: path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
     secretProtector,
   });
+  recordDesktopStartup('safe-storage:migrations:end');
+  recordDesktopStartup('checkpoint-key:begin');
   const checkpointKey = await new CheckpointKeyStore({
     filePath: path.join(dataPath, 'checkpoint-master.key'),
     secretProtector,
     quarantineUnsupported: true,
   }).loadOrCreate();
+  recordDesktopStartup('checkpoint-key:end');
   return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }
 
-async function migrateV3SafeStorageSecrets(dataPath: string, secretProtector: SafeStorageSecretProtector): Promise<void> {
+async function migrateV3SafeStorageSecrets(dataPath: string, secretProtector: SecretProtector): Promise<void> {
   if (process.platform !== 'win32') return;
   const checkpointPath = path.join(dataPath, 'checkpoint-master.key');
   const checkpointEnvelope = await readTrustedSecretFile(checkpointPath);
@@ -1873,8 +1907,11 @@ function defaultStdioCommand(profile: PermissionProfileName): string {
 }
 
 async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
+  recordDesktopStartup('runtime-secrets:begin');
   const secrets = await resolveDesktopRuntimeSecrets(dataPath);
-  return createDesktopRuntime(dataPath, {
+  recordDesktopStartup('runtime-secrets:end');
+  recordDesktopStartup('runtime-create:begin');
+  const runtime = createDesktopRuntime(dataPath, {
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     hostMutationApprovalProvider: requestNativeMutationApproval,
@@ -1883,6 +1920,8 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     }),
     watchToolAvailability: true,
   });
+  recordDesktopStartup('runtime-create:end');
+  return runtime;
 }
 
 function createElectronNativeCapabilityApi(windowProvider: () => BrowserWindow | null): ElectronNativeCapabilityApi {
@@ -1922,8 +1961,117 @@ function createElectronNativeCapabilityApi(windowProvider: () => BrowserWindow |
       return image.isEmpty() ? null : image.toPNG().toString('base64');
     },
     writeClipboardImageBase64: (value) => clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(value, 'base64'))),
+    captureDesktop: captureElectronDesktop,
     hasWindow: () => windowProvider() !== null,
   };
+}
+
+
+async function captureElectronDesktop(request: NativeDesktopCaptureRequest): Promise<NativeDesktopCaptureResult> {
+  const displays = screen.getAllDisplays();
+  if (displays.length === 0) throw new Error('No desktop displays are available');
+  const thumbnailSize = {
+    width: Math.min(16_384, Math.max(...displays.map((display) => Math.max(1, Math.round(display.bounds.width * display.scaleFactor))))),
+    height: Math.min(16_384, Math.max(...displays.map((display) => Math.max(1, Math.round(display.bounds.height * display.scaleFactor))))),
+  };
+  const types: Electron.SourcesOptions['types'] = request.action === 'capture_window' ? ['window'] : ['screen'];
+  const sources = await desktopCapturer.getSources({ types, thumbnailSize, fetchWindowIcons: false });
+  if (sources.length === 0) throw new Error('Electron desktop capture returned no sources');
+
+  if (request.action === 'capture_window') {
+    let candidates = sources;
+    const app = request.app ?? {};
+    const nativeId = numericCaptureSelector(app.hwnd) ?? numericCaptureSelector(app.window_id);
+    if (nativeId !== undefined) candidates = candidates.filter((source) => source.id === nativeId || source.id.split(':').includes(nativeId));
+    const title = captureSelectorText(app.title);
+    if (title !== undefined) candidates = candidates.filter((source) => source.name.toLocaleLowerCase().includes(title.toLocaleLowerCase()));
+    const naturalName = captureSelectorText(app.name) ?? captureSelectorText(app.process_name);
+    if (naturalName !== undefined) {
+      const normalized = naturalName.replace(/\.exe$/iu, '').toLocaleLowerCase();
+      candidates = candidates.filter((source) => source.name.toLocaleLowerCase().includes(normalized));
+    }
+    const index = request.windowIndex ?? 0;
+    const source = candidates[index];
+    if (source === undefined) throw new Error('Requested desktop window capture source was not found');
+    const image = source.thumbnail;
+    const size = image.getSize();
+    if (image.isEmpty() || size.width < 1 || size.height < 1) throw new Error('Desktop window capture returned an empty image');
+    return {
+      format: 'png',
+      mime_type: 'image/png',
+      data_base64: image.toPNG().toString('base64'),
+      width: size.width,
+      height: size.height,
+      origin_x: 0,
+      origin_y: 0,
+      scale_x: 1,
+      scale_y: 1,
+      backend: 'electron-desktop-capturer-window',
+    };
+  }
+
+  const requestedDisplay = request.displayId?.trim();
+  let display = requestedDisplay === undefined
+    ? screen.getPrimaryDisplay()
+    : displays.find((candidate) => String(candidate.id) === requestedDisplay || candidate.label === requestedDisplay);
+  if (request.action === 'capture_region' && request.region !== undefined && requestedDisplay === undefined) {
+    const { x, y, width, height } = request.region;
+    display = displays.find((candidate) => x >= candidate.bounds.x && y >= candidate.bounds.y
+      && x + width <= candidate.bounds.x + candidate.bounds.width
+      && y + height <= candidate.bounds.y + candidate.bounds.height);
+  }
+  if (display === undefined) throw new Error('Requested desktop display capture source was not found');
+  const source = sources.find((candidate) => candidate.display_id === String(display.id))
+    ?? sources.find((candidate) => candidate.id.split(':').includes(String(display.id)))
+    ?? (requestedDisplay === undefined ? sources[0] : undefined);
+  if (source === undefined) throw new Error('Requested desktop display capture source was not found');
+
+  let image = source.thumbnail;
+  const fullSize = image.getSize();
+  if (image.isEmpty() || fullSize.width < 1 || fullSize.height < 1) throw new Error('Desktop display capture returned an empty image');
+  const scaleX = display.bounds.width / fullSize.width;
+  const scaleY = display.bounds.height / fullSize.height;
+  let originX = scaleX > 0 ? display.bounds.x / scaleX : 0;
+  let originY = scaleY > 0 ? display.bounds.y / scaleY : 0;
+
+  if (request.action === 'capture_region') {
+    const region = request.region;
+    if (region === undefined || scaleX <= 0 || scaleY <= 0) throw new Error('Desktop region capture is invalid');
+    const crop = {
+      x: Math.max(0, Math.round((region.x - display.bounds.x) / scaleX)),
+      y: Math.max(0, Math.round((region.y - display.bounds.y) / scaleY)),
+      width: Math.max(1, Math.round(region.width / scaleX)),
+      height: Math.max(1, Math.round(region.height / scaleY)),
+    };
+    if (crop.x + crop.width > fullSize.width || crop.y + crop.height > fullSize.height) throw new Error('Desktop region capture is outside the selected display');
+    image = image.crop(crop);
+    originX = region.x / scaleX;
+    originY = region.y / scaleY;
+  }
+
+  const size = image.getSize();
+  return {
+    format: 'png',
+    mime_type: 'image/png',
+    data_base64: image.toPNG().toString('base64'),
+    width: size.width,
+    height: size.height,
+    origin_x: originX,
+    origin_y: originY,
+    scale_x: scaleX,
+    scale_y: scaleY,
+    backend: request.action === 'capture_region' ? 'electron-desktop-capturer-region' : 'electron-desktop-capturer-display',
+  };
+}
+
+function captureSelectorText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, 512) : undefined;
+}
+
+function numericCaptureSelector(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return String(value);
+  if (typeof value === 'string' && /^\d{1,20}$/u.test(value.trim())) return value.trim();
+  return undefined;
 }
 
 function toElectronOpenDialogOptions(options: NativeDialogOptions): Electron.OpenDialogOptions {
@@ -1946,7 +2094,9 @@ function toElectronSaveDialogOptions(options: NativeDialogOptions): Electron.Sav
 function bootstrapDesktop(configuredDataPath?: string): void {
   if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath(configuredDataPath);
+  recordDesktopStartup('app-ready:waiting');
   void app.whenReady().then(async () => {
+    recordDesktopStartup('app-ready:resolved');
     assertSupportedPlatform();
     app.setAppUserModelId('com.lnwjud.desktop');
     const session = platformCompatibility.linuxSession;
@@ -1955,7 +2105,9 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     );
 
     prependBundledRuntimeToolsToPath();
+    recordDesktopStartup('runtime:begin');
     const runtime = await createNativeDesktopRuntime(dataPath);
+    recordDesktopStartup('runtime:end');
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1967,8 +2119,11 @@ function bootstrapDesktop(configuredDataPath?: string): void {
       onUserSettingsChanged: applyDesktopUserSettings,
       ipcDrainBarrier: desktopIpcDrainBarrier,
     });
+    recordDesktopStartup('window:create:begin');
     createDesktopWindow();
+    recordDesktopStartup('window:create:end');
     createDesktopTray();
+    recordDesktopStartup('desktop:started');
     crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'desktop-started' });
     void runtime.autoStartMcp().catch((error: unknown) => {
       console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -2019,6 +2174,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
 
 function handleDesktopStartupFailure(scope: string, error: unknown): void {
   const message = error instanceof Error ? error.message : 'unknown error';
+  recordDesktopStartup(`${scope}:failed`, error);
   console.error('[Startup] ' + scope + ' failed: ' + message);
   try {
     dialog.showErrorBox('lnwjud failed to start', scope + ' startup failed.\n\n' + message);
@@ -2150,6 +2306,15 @@ function configureCrashRecovery(dataPath: string): void {
   });
 }
 
+function recordDesktopStartup(reason: string, error?: unknown): void {
+  crashDiagnostics?.record({
+    type: 'desktop-startup',
+    processType: 'main',
+    reason,
+    ...(error === undefined ? {} : { error }),
+  });
+}
+
 function configureUserDataPath(): string {
   app.setName(APP_NAME);
   const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
@@ -2160,6 +2325,8 @@ function configureUserDataPath(): string {
 function configureDataPath(configuredDataPath?: string): string {
   const dataPath = configuredDataPath ?? configureUserDataPath();
   configureCrashRecovery(dataPath);
+  recordDesktopStartup('data-path:configured');
+  recordDesktopStartup('restore:begin');
   const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), {
     platform: process.platform,
     arch: process.arch,
@@ -2168,6 +2335,7 @@ function configureDataPath(configuredDataPath?: string): string {
       path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
     ],
   });
+  recordDesktopStartup('restore:end');
   if (restore.error !== undefined) console.error(`Scheduled database restore failed: ${restore.error}`);
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
   return dataPath;
@@ -2175,7 +2343,13 @@ function configureDataPath(configuredDataPath?: string): string {
 
 const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
 const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
+if (configuredUserDataPath !== undefined) {
+  configureCrashRecovery(configuredUserDataPath);
+  recordDesktopStartup('entrypoint');
+  recordDesktopStartup('instance-lock:begin');
+}
 const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
+if (configuredUserDataPath !== undefined) recordDesktopStartup(`instance-lock:end:${gotInstanceLock ? 'acquired' : 'denied'}`);
 if (!gotInstanceLock) {
   app.quit();
 } else {

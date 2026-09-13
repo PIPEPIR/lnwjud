@@ -223,6 +223,20 @@ describe('MVP release verification gate', () => {
     expect(verifier).toContain('latest-linux-${normalizeArtifactArch(arch)}.yml');
   });
 
+  it('binds observed macOS signing policy to normal and artifact-only provenance verification', async () => {
+    const writer = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'write-release-evidence.mjs'), 'utf8');
+    const verifier = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'verify-release-evidence.mjs'), 'utf8');
+    const capture = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'capture-packaged-runtime-evidence.mjs'), 'utf8');
+    const signer = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'sign-macos-runtime.mjs'), 'utf8');
+
+    for (const source of [writer, verifier, capture]) expect(source).toContain('validateMacosSigningPolicyEvidence');
+    expect(writer).toContain('rootExecutableSha256');
+    expect(verifier).toContain('rootExecutableSha256');
+    expect(capture).toContain('readMacosSigningPolicyEvidence');
+    expect(signer).toContain('invalidateMacosSigningPolicyEvidence');
+    expect(signer.indexOf('inspectSigningPolicy(app')).toBeGreaterThan(signer.indexOf("run(['--verify', '--deep', '--strict', app])"));
+  });
+
   it('rejects release tags that do not match the packaged application version', async () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     expect(workflow).toMatch(/GITHUB_REF_NAME|github\.ref_name/);
@@ -234,8 +248,16 @@ describe('MVP release verification gate', () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
     const acceptance = rootPackage.scripts?.['test:acceptance'] ?? '';
     expect(acceptance).toContain('tests/multi-workspace-concurrency-acceptance.test.ts');
-    expect(rootPackage.scripts?.['test:integration']).toContain('--exclude=.local-artifacts/**');
-    expect(rootPackage.scripts?.['test:release-gate']).toContain('--exclude=.local-artifacts/**');
+    for (const scriptName of ['test:integration', 'test:packaging', 'test:release-gate']) {
+      const script = rootPackage.scripts?.[scriptName] ?? '';
+      expect(script).toContain('--exclude=.local-artifacts/**');
+      expect(script).toContain('--exclude=.worktrees/**');
+      expect(script).toContain('--exclude=.superpowers/**');
+    }
+
+    const platformVerifier = await readFile(path.join(repositoryRoot, 'scripts', 'verify-platform-release.mjs'), 'utf8');
+    expect(platformVerifier).toContain("'--exclude=.worktrees/**'");
+    expect(platformVerifier).toContain("'--exclude=.superpowers/**'");
   });
 
   it('keeps Secure Tunnel on the Desktop HTTP runtime instead of headless stdio', async () => {

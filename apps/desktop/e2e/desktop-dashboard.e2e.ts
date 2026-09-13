@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
@@ -147,6 +147,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await expect(page.locator('body')).not.toContainText('do-not-display');
     await browser.close();
   } catch (error: unknown) {
+    await attachStartupDiagnostics(testInfo, dataRoot);
     const stderrPath = testInfo.outputPath('electron-stderr.txt');
     await writeFile(stderrPath, stderr.join(''), 'utf8');
     await testInfo.attach('electron-stderr', { path: stderrPath, contentType: 'text/plain' });
@@ -210,7 +211,7 @@ async function waitForDevTools(port: number, child: ChildProcess, stderr: string
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`Electron exited early: ${stderr.join('')}`);
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
     } catch {
       // retry
@@ -218,6 +219,15 @@ async function waitForDevTools(port: number, child: ChildProcess, stderr: string
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Timed out waiting for Electron DevTools: ${stderr.join('')}`);
+}
+
+async function attachStartupDiagnostics(testInfo: { attach(name: string, options: { body: string; contentType: string }): Promise<void> }, dataRoot: string): Promise<void> {
+  try {
+    const body = await readFile(path.join(dataRoot, 'crashes', 'crash-events.ndjson'), 'utf8');
+    await testInfo.attach('startup-diagnostics', { body, contentType: 'application/x-ndjson' });
+  } catch {
+    await testInfo.attach('startup-diagnostics', { body: 'No startup diagnostics file was created.\n', contentType: 'text/plain' });
+  }
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {

@@ -23,11 +23,19 @@
 
 ---
 
-## Current version: v4.62.1
+## Current version: v4.62.2
 
-`v4.62.1` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.62.2` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.62.1
+### What's new in v4.62.2
+
+- **OAuth-aware Doctor:** when OAuth-protected Remote MCP is the active ChatGPT connection, Doctor no longer reports Secure MCP Tunnel runtime/auth/health failures for the intentionally unused transport.
+- **macOS 26 community-package launch fix:** ad-hoc Electron main/helper process signatures keep hardened runtime but add the scoped `disable-library-validation` entitlement required for ad-hoc Electron Framework loading on macOS 26. Developer ID builds keep normal Library Validation and must retain one Team ID.
+- **macOS 26 exact-artifact release gate:** macOS arm64/x64 packages continue to build on macOS 15, then the same DMG/ZIP bytes are downloaded, provenance-verified, signature-policy-verified, launched through LaunchServices, and smoke-tested on `macos-26` / `macos-26-intel` before publication.
+- **Ponytail FULL activation fix:** the canonical bundled `skills_read` path now carries workspace/goal scope and counts as activation evidence, so a correct Ponytail load no longer loops on the same mutation-blocking error.
+- **Cross-platform capture completion:** carries forward the pending Windows/macOS/Linux window/display capture, DPI/coordinate mapping, native capture, and MCP image-delivery hardening that was present locally but had not been committed into v4.62.1.
+
+### Historical: What's new in v4.62.1
 
 - **External MCP error passthrough:** child `tools/call` now bypasses the SDK layer's eager output-schema validation so a real `isError: true` result reaches lnwjud unchanged; successful structured output and the MCP result envelope are still validated, with regression coverage for the exact SDK-layer failure path reported in Issue #53.
 - **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
@@ -41,7 +49,7 @@
 - **Simpler Home UX:** Home now presents one **ChatGPT Connection** area with Remote MCP OAuth as the primary path and Secure MCP Tunnel as an advanced option, moves Desktop Agent stop/restart/incident actions behind an overflow menu, labels the sidebar **Desktop Agent · Windows/macOS/Linux**, and removes the redundant `MODE / WORK` status card.
 - **Stable Remote MCP public URL:** ngrok Free already provides an assigned development domain. lnwjud now remembers the first successful HTTPS origin in encrypted Remote MCP state and reuses that origin through ngrok `--url` on later starts/updates, refusing to silently switch the ChatGPT endpoint if it drifts. Users do not need to buy/register their own domain; custom domains remain optional, and re-saving the ngrok authtoken intentionally resets the remembered origin for account/domain changes.
 - **Secure Tunnel multi-chat headroom:** one lnwjud Desktop + one Secure Tunnel can serve multiple simultaneous ChatGPT chats without creating a profile per chat. v4.62.0 raises the bundled tunnel transport's active MCP-request allowance from tunnel-client's default 10 to 32 and adds a real 3-session/12-request concurrency regression. Multi-host routing is separate: Mac/Windows hosts that must be independently selectable should use distinct Tunnel IDs/ChatGPT connections because replicas sharing one Tunnel ID consume queued work from whichever host polls first.
-- **macOS 26 / Apple silicon launch fix:** community ad-hoc packages now normalize Electron's nested frameworks/helpers to the same ad-hoc signing identity before sealing the app, and target-native verification rejects any mixed ad-hoc/certificate Team ID state that newer dyld versions refuse to load.
+- **macOS signing normalization (superseded by v4.62.2 for macOS 26):** v4.62.1 normalized Electron's nested ad-hoc signatures and rejected mixed Team-ID state, but Issue #59 proved that normalization alone was insufficient for community ad-hoc packages on macOS 26.
 - **Regression coverage:** mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge tests cover image delivery and reliable window targeting.
 
 ### Historical: What's new in v4.61.0

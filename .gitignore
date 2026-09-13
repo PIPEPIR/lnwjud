@@ -1,5 +1,6 @@
 # Dependencies & Package Managers
 node_modules/
+.worktrees/
 .pnpm-store/
 
 # Build & Compilation

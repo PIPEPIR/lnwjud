@@ -48,6 +48,30 @@ describe('SetOfMarksService', () => {
     expect(calls[2]?.input).toMatchObject({ action: 'annotate', marks: [{ mark_id: 'm1', bounds: { x: 20, y: 30, width: 100, height: 40 } }] });
   });
 
+  it('maps DPI-scaled accessibility bounds into window-image coordinates', async () => {
+    const capabilities: CapabilityService = {
+      execute: async (tool, input): Promise<Result<unknown>> => {
+        if (tool === 'accessibility') {
+          return ok({ elements: [
+            { element: { name: 'Save', enabled: true, offscreen: false, bounds: { x: 330, y: 120, width: 150, height: 60 } } },
+            { element: { name: 'Clipped', enabled: true, offscreen: false, bounds: { x: 285, y: 60, width: 60, height: 60 } } },
+          ] });
+        }
+        if (tool === 'vision' && isRecord(input) && input.action === 'annotate') return ok({ ...image, annotated: true });
+        return ok({ ...image, origin_x: 200, origin_y: 50, scale_x: 1.5, scale_y: 1.5 });
+      },
+    };
+    const service = new SetOfMarksService(capabilities);
+    const result = await service.capture({ workspaceId: 'ws-1', capture: 'window', app: { process_name: 'lnwjud' }, window_index: 0 });
+    expect(result).toMatchObject({ ok: true, value: {
+      image: { origin_x: 200, origin_y: 50, scale_x: 1.5, scale_y: 1.5 },
+      marks: [
+        { markId: 'm1', bounds: { x: 20, y: 30, width: 100, height: 40 } },
+        { markId: 'm2', bounds: { x: 0, y: 0, width: 30, height: 30 } },
+      ],
+    } });
+  });
+
   it('revalidates a mark and rejects unknown, stale, expired, or cross-workspace actions', async () => {
     let now = 1_000;
     const calls: Array<{ tool: CapabilityToolName; input: unknown }> = [];

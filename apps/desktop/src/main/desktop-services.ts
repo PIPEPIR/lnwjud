@@ -293,7 +293,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   }
   const databaseFilename = path.join(dataPath, 'lnwjud.sqlite');
   const backupDirectory = path.join(dataPath, 'backups');
-  const database = new SqliteDatabase(databaseFilename, { backupDirectory, platform: process.platform, arch: process.arch });
+  const database = new SqliteDatabase(databaseFilename, {
+    backupDirectory,
+    platform: process.platform,
+    arch: process.arch,
+    onCanonicalFileReplaced: (filename): void => { console.warn(`[storage] Reopened replaced canonical SQLite database: ${filename}`); },
+  });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
@@ -995,11 +1000,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const requirementIdSet = new Set(requirementRegistry.ids());
   const buildFullDoctorReport = async (locale: UiLocale): Promise<DoctorReport> => {
     const base = await toolCatalogService.runDoctor(undefined, locale);
-    const tunnel = withOAuthCapability(await tunnelController.diagnosticStatus());
+    const [tunnelStatus, remoteMcp] = await Promise.all([tunnelController.diagnosticStatus(), remoteMcpController.status()]);
+    const tunnel = withOAuthCapability(tunnelStatus);
     recordPersistentTunnelStatus(tunnel);
     const mcp = mcpLifecycle.status();
-    const tunnelHealth = await tunnelController.incidentHealth();
-    const checks = [...base.checks, ...buildPersistentTunnelDoctorChecks({ tunnel, mcp, tunnelHealth, persistentEnabled: readSettings().tunnelAutoReconnect })];
+    const remoteMcpActive = remoteMcp.state === 'running' && remoteMcp.publicMcpUrl !== null;
+    const tunnelHealth = remoteMcpActive ? { state: 'unavailable' as const, message: null } : await tunnelController.incidentHealth();
+    const checks = [...base.checks, ...buildPersistentTunnelDoctorChecks({ tunnel, mcp, tunnelHealth, persistentEnabled: readSettings().tunnelAutoReconnect, remoteMcpActive })];
     return { checks, exitCode: checks.some((check) => check.required && (check.status === 'fail' || check.status === 'unknown')) ? 1 : 0 };
   };
   const recheckCatalogAndDoctor = async (request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }> => {
@@ -2315,7 +2322,9 @@ export function buildPersistentTunnelDoctorChecks(input: {
   readonly mcp: McpConnectionStatus;
   readonly tunnelHealth: { readonly state: 'live' | 'unhealthy' | 'unavailable' | 'unknown'; readonly message: string | null };
   readonly persistentEnabled: boolean;
+  readonly remoteMcpActive?: boolean;
 }): readonly DoctorCheck[] {
+  if (input.remoteMcpActive) return [];
   const persistent = input.tunnel.persistent;
   const required = input.persistentEnabled;
   const identityPresent = persistent?.tunnelIdMasked !== null && persistent?.tunnelIdMasked !== undefined;
@@ -2448,32 +2457,41 @@ export async function checkConfiguredMcpPort(
 }
 
 async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
+  const MCP_IDENTITY_PROBE_TIMEOUT_MS = 750;
+  const MCP_IDENTITY_PROBE_MAX_ATTEMPTS = 2;
   const started = Date.now();
-  const failed = (reason: string): false => {
-    console.warn(`[Doctor] MCP identity probe failed: ${reason} after ${Date.now() - started}ms`);
-    return false;
-  };
   const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, endpoint.origin);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 750);
-  try {
-    const response = await fetch(identityUrl, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return failed(`unexpected HTTP response (${response.status})`);
-    const body: unknown = await response.json();
-    const matches = typeof body === 'object' && body !== null
-      && 'product' in body && body.product === 'lnwjud'
-      && 'service' in body && body.service === 'desktop-mcp'
-      && 'protocol' in body && body.protocol === 1;
-    return matches || failed('identity document mismatch');
-  } catch (error: unknown) {
-    return failed(controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error');
-  } finally {
-    clearTimeout(timer);
+  let lastFailure = 'transport error';
+  for (let attempt = 0; attempt < MCP_IDENTITY_PROBE_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MCP_IDENTITY_PROBE_TIMEOUT_MS);
+    try {
+      const response = await fetch(identityUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') {
+        lastFailure = `unexpected HTTP response (${response.status})`;
+        break;
+      }
+      const body: unknown = await response.json();
+      const matches = typeof body === 'object' && body !== null
+        && 'product' in body && body.product === 'lnwjud'
+        && 'service' in body && body.service === 'desktop-mcp'
+        && 'protocol' in body && body.protocol === 1;
+      if (matches) return true;
+      lastFailure = 'identity document mismatch';
+      break;
+    } catch (error: unknown) {
+      lastFailure = controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error';
+      if (lastFailure !== 'timeout' && lastFailure !== 'transport error') break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  console.warn(`[Doctor] MCP identity probe failed: ${lastFailure} after ${Date.now() - started}ms`);
+  return false;
 }
 
 function summarizeLogs(entries: readonly string[]): string {

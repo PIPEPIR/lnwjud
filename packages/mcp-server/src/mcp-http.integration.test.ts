@@ -332,6 +332,22 @@ describe('MCP localhost HTTP transport', () => {
 
       const captured = await client.callTool({ name: 'vision_annotated_capture', arguments: { workspaceId: 'workspace-1' } });
       expect(captured.isError).not.toBe(true);
+      expect(captured.content?.[0]).toEqual({ type: 'image', data: TEST_PNG_640X480, mimeType: 'image/png' });
+      expect(captured.structuredContent?.image).toMatchObject({ format: 'png', mime_type: 'image/png', width: 640, height: 480 });
+      expect(JSON.stringify(captured.structuredContent)).not.toContain(TEST_PNG_640X480);
+
+      const computerSnapshot = await client.callTool({
+        name: 'computer_use',
+        arguments: { workspaceId: 'workspace-1', action: 'snapshot', capture: 'display' },
+      });
+      expect(computerSnapshot.isError).not.toBe(true);
+      expect(computerSnapshot.content?.[0]).toEqual({ type: 'image', data: TEST_PNG_640X480, mimeType: 'image/png' });
+      expect(computerSnapshot.structuredContent).toMatchObject({
+        mode: 'annotated',
+        image: { format: 'png', mime_type: 'image/png', width: 640, height: 480 },
+      });
+      expect(JSON.stringify(computerSnapshot.structuredContent)).not.toContain(TEST_PNG_640X480);
+
       const observationId = captured.structuredContent?.observationId;
       const observationHash = captured.structuredContent?.observationHash;
       expect(observationId).toEqual(expect.any(String));

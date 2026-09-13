@@ -51,16 +51,24 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v4.62.1
+## Current version: v4.62.2
 
-The v4.62.1 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
+The v4.62.2 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
 with **226 advertised by default** and **all 233 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.62.1
+### What's new in v4.62.2
+
+- Doctor treats Secure MCP Tunnel as not applicable when OAuth-protected Remote MCP is the active remote transport, so unused tunnel runtime/auth/health checks no longer appear as errors.
+- Community macOS packages use dedicated ad-hoc Electron entitlements: hardened runtime remains enabled while `disable-library-validation` is scoped to Electron main/helper process signatures. Developer ID mode retains normal Library Validation and one Team ID.
+- CI keeps macOS 15 as the package-build floor and reuses the exact produced DMG/ZIP bytes on `macos-26` (arm64) and `macos-26-intel` (x64) for provenance, signing-policy, LaunchServices, and packaged-app smoke verification.
+- Ponytail FULL recognizes the canonical bundled `skills_read` response as activation evidence when it carries the active workspace/goal scope, eliminating the repeated load-then-block loop shown in Work Log.
+- The previously uncommitted cross-platform capture/computer-use delta is carried forward: native window/display capture, DPI-aware coordinate mapping, Electron capture fallback, and MCP image delivery are included rather than left as a dirty local-only change.
+
+### Historical: What's new in v4.62.1
 
 - Preserves real External MCP child-tool errors through the SDK boundary by issuing raw `tools/call` requests instead of SDK `callTool` output validation; `isError: true` results reach lnwjud unchanged while successful structured output and the MCP result envelope remain validated, including a regression for the exact Issue #53 failure path.
 - Delivers native Vision screenshots as first-class MCP image content while removing duplicate Base64 blobs from the parallel text/structured metadata representation.
@@ -75,7 +83,7 @@ capabilities are additive.
 - Protects the Remote MCP public HTTPS origin across Desktop restarts and upgrades by using ngrok's assigned development domain, remembering the first observed origin in encrypted Remote MCP state, and reusing it through ngrok `--url` on later starts instead of silently changing the ChatGPT endpoint. A purchased/custom domain is not required; custom domains remain optional. Re-saving the ngrok authtoken deliberately clears the remembered origin so an intentional account/domain change can be learned safely.
 - Hardens Secure Tunnel for simultaneous chats by explicitly setting `MCP_MAX_CONCURRENT_REQUESTS=32` instead of tunnel-client's default 10 and by exercising three real MCP sessions with a 12-request concurrent burst on the shared Desktop listener. Multiple chats on one lnwjud host share the same Tunnel normally; independently targetable Mac/Windows hosts should use distinct Tunnel IDs/ChatGPT connections because HTTP replicas sharing one Tunnel ID receive queued work from whichever replica polls first.
 - Changes Recovery Trash/checkpoint automatic cleanup so users who have **never configured retention** start at 30 days, while every existing saved choice—including `Never` (`0`)—remains unchanged.
-- Fixes an Apple-silicon/macOS 26 startup failure where an ad-hoc outer app could still contain Electron Framework code with a different certificate Team ID. Community builds now perform an ad-hoc normalization pass over the standard Electron bundle before runtime manifests are finalized, then seal again after runtime receipts are written; release verification fails closed if any nested framework/helper remains certificate-signed under an ad-hoc outer app.
+- Added ad-hoc normalization and mixed-Team-ID rejection for macOS packaging. Issue #59 later showed that v4.62.1 still failed on macOS 26 because an ad-hoc Electron process had no shared Developer Team ID for Library Validation; v4.62.2 supersedes this behavior with scoped ad-hoc entitlements plus an exact-artifact macOS 26 gate.
 - Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
 
 ### Historical: What's new in v4.61.0
@@ -364,7 +372,7 @@ Choose the guide for the host you will run lnwjud on:
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.62.1.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.62.2.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -475,8 +483,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.62.1.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.62.1.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.62.2.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.62.2.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -755,8 +763,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.62.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.62.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.62.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.62.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1147,7 +1155,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 60 | `wsl_exec` | EXECUTE | default | operational | service_dispatch | Non-blocking WSL2 developer runner for one Linux executable plus argv; shell command strings are not accepted. cwd accepts either an absolute Windows workspace path or an absolute WSL path such as /mnt/e/project returned by wsl_fs. Do not use wsl_exec as a source/config/text editor. For any direct text-file change, call edit_file first; use apply_patch for reviewed whole-file or multi-file replacements and write_file for file creation/replacement. Inline Node/Python/PowerShell-style rewrites and sed in-place edits are rejected before native approval so the client can route to guarded file tools. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, and return a task_id immediately. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). When the user requires babysitting until completion, keep using bounded waits and do not report completion until the terminal result is inspected. Otherwise, if the host turn must yield while a durable task is still running, checkpoint it as trackedTasks {taskId, provider: shell, role: blocking_job, cancelWithGoal: true} and use the active scheduled-continuation handoff instead of abandoning the goal. With Full Bypass OFF, Full Access runs ordinary WSL commands without confirmation while destructive, broad, recursive, outside-project, or unparseable forms retain normal approval/command policy. Trusted Full Bypass skips lnwjud approval, command-policy, Active Project, goalLease, and allowed-root checks, including an explicitly requested external cwd; WSL availability, argv validation, Linux permissions, and process failures still apply. |
 | 61 | `wsl_fs` | READ | default | operational | service_dispatch | Translate paths and inspect metadata between a registered Windows workspace and WSL without exposing raw \\wsl$ read/write access. |
 | 62 | `skills_list` | READ | default | operational | service_dispatch | List the union of bundled skills and every discovered machine-global or active-workspace skill from Cursor, Claude, Agents, Codex, the Codex plugin cache, GitHub workspace roots, and lnwjud settings. Nested and symlinked skill collections are included. Filter with query or source. |
-| 63 | `skills_read` | READ | default | operational | service_dispatch | Read a local skill SKILL.md (or a relative file inside the skill folder). Prefer the source-qualified id returned by skills_list; an unambiguous bare name or $name is also accepted. Follow the skill instructions with lnwjud tools and mcp_call. |
+| 63 | `skills_read` | READ | default | operational | service_dispatch | Read a local skill SKILL.md (or a relative file inside the skill folder). Prefer the source-qualified id returned by skills_list; an unambiguous bare name or $name is also accepted. Pass workspaceId and the active goalId when loading a policy-required skill, then follow it with lnwjud tools and mcp_call. |
 | 64 | `ponytail_session` | WRITE | default | operational | service_dispatch | Temporarily suppress or resume the effective Ponytail coding policy for this MCP session and workspace/goal only. This does not change persisted global, workspace, or durable-goal settings. Use suppressed=true when the user explicitly asks to stop Ponytail or return to normal mode; use false to resume the effective policy. |
 | 65 | `mcp_list` | READ | default | operational | service_dispatch | List local MCP servers discovered from Cursor, Claude Desktop, and lnwjud settings. This inspection is read-only and does not flatten child tools into the lnwjud catalog. |
 | 66 | `mcp_describe` | READ | default | operational | service_dispatch | Connect to one local MCP server (if needed) and return its tool names, descriptions, and input schemas. This operation only inspects the child tool catalog. |

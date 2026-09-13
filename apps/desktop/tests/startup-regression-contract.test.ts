@@ -24,6 +24,18 @@ describe('desktop packaged startup regression contract', () => {
     expect(secretBootstrap).toContain('checkpointEncryptionKey');
   });
 
+  it('settles affected macOS hosts before selecting async safeStorage', () => {
+    const secretBootstrap = section(
+      'async function resolveDesktopRuntimeSecrets',
+      'async function migrateV3SafeStorageSecrets',
+    );
+    expect(secretBootstrap).toContain('await waitForMacosAsyncSafeStorageStartup');
+    expect(secretBootstrap).toContain("recordDesktopStartup('safe-storage:async:selected')");
+    expect(secretBootstrap).toContain('new SafeStorageSecretProtector');
+    expect(secretBootstrap).not.toContain('useSynchronousApi');
+    expect(secretBootstrap).not.toContain('shouldUseSynchronousMacosSafeStorage');
+  });
+
   it('routes migrated v3 tunnel secrets through safeStorage before legacy migration', () => {
     const resolver = section('async function resolveDesktopRuntimeSecrets', 'async function migrateV3SafeStorageSecrets');
     const migration = section('async function migrateV3SafeStorageSecrets', 'async function readTrustedSecretFile');

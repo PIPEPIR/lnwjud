@@ -4,9 +4,18 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { collectPackagedRuntimeEvidence, invalidatePackagedRuntimeEvidence } from './capture-packaged-runtime-evidence.mjs';
+import {
+  inspectMacosSigningPolicy,
+  invalidateMacosSigningPolicyEvidence,
+  writeMacosSigningPolicyEvidence,
+} from './inspect-macos-signing-policy.mjs';
 
 const execFileAsync = promisify(execFile);
+const signingBuildDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'build');
+const adHocRootEntitlements = path.join(signingBuildDirectory, 'entitlements.mac.adhoc.plist');
+const adHocInheritedEntitlements = path.join(signingBuildDirectory, 'entitlements.mac.adhoc.inherit.plist');
 
 export default async function signMacosRuntime(configuration, packager) {
   if (process.platform !== 'darwin') throw new Error('macOS signing requires macOS');
@@ -26,8 +35,16 @@ export default async function signMacosRuntime(configuration, packager) {
 
 // Dependencies isolate native execution for behavioral fixtures; production
 // always uses /usr/bin/codesign and electron-builder's installed signer above.
-export async function signPackagedMacosRuntime(configuration, { run, signApp, requireCertificate = false }) {
+export async function signPackagedMacosRuntime(configuration, {
+  run,
+  signApp,
+  requireCertificate = false,
+  inspectSigningPolicy = inspectMacosSigningPolicy,
+  invalidateSigningPolicy = invalidateMacosSigningPolicyEvidence,
+  writeSigningPolicy = writeMacosSigningPolicyEvidence,
+}) {
   await invalidatePackagedRuntimeEvidence();
+  await invalidateSigningPolicy();
   const { app, keychain, optionsForFile } = configuration;
   const identity = configuration.identity ?? '-';
   const adHoc = identity === '-';
@@ -65,8 +82,18 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
   const ignore = (file) => runtimePaths.has(file) || previousRules.some((rule) =>
     typeof rule === 'function' ? rule(file) : Boolean(file.match(rule)));
   const signOptions = { ...configuration, identity, identityValidation: false,
-    ...(adHoc ? { preAutoEntitlements: false, preEmbedProvisioningProfile: false,
-      optionsForFile: (file) => ({ ...optionsForFile(file), timestamp: 'none' }) } : {}),
+    ...(adHoc ? {
+      preAutoEntitlements: false,
+      preEmbedProvisioningProfile: false,
+      // Ad-hoc signatures have no shared Developer Team ID. On macOS 26 the
+      // Electron process entries must explicitly allow their ad-hoc framework;
+      // certificate mode keeps normal Library Validation and never receives this bypass.
+      optionsForFile: (file) => ({
+        ...optionsForFile(file),
+        entitlements: path.resolve(file) === path.resolve(app) ? adHocRootEntitlements : adHocInheritedEntitlements,
+        timestamp: 'none',
+      }),
+    } : {}),
     ignore };
   // Community builds start from Electron binaries that may already carry the
   // Electron project's certificate. Normalize those nested signatures to the
@@ -100,7 +127,7 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
     runtime.manifestText = `${JSON.stringify(runtime.manifest, null, 2)}\n`;
     await writeFile(runtime.manifestPath, runtime.manifestText, 'utf8');
   }
-  await collectPackagedRuntimeEvidence(context);
+  await collectPackagedRuntimeEvidence(context, { allowIncompleteMacSigningPolicy: true });
   // osx-sign 1.3.1 drops an array in validateOptsIgnore. A single predicate
   // survives normalization and preserves the builder's existing exclusions.
   await signApp(signOptions);
@@ -116,6 +143,13 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
   if (adHoc) {
     await verifySignature(path.join(app, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Versions', 'A', 'Electron Framework'), identity, run);
   }
+  const policy = await inspectSigningPolicy(app, {
+    arch,
+    expectedMode: adHoc ? 'ad-hoc' : 'certificate',
+    ...(adHoc ? {} : { certificateSha1: identity, requireCertificateFingerprint: true }),
+    run,
+  });
+  await writeSigningPolicy(policy);
   await collectPackagedRuntimeEvidence(context);
   // electron-builder now notarizes and invokes afterSign to capture evidence.
 }

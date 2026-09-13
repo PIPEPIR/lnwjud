@@ -61,4 +61,27 @@ describe('Electron native capability backend', () => {
     await expect(backend.execute({ action: 'set_image', data_base64: 'aGVsbG8=' }, undefined, approved)).resolves.toMatchObject({ ok: true, value: { written: true, bytes: 5 } });
     await expect(backend.execute({ action: 'get_image' })).resolves.toMatchObject({ ok: true, value: { format: 'png', data_base64: 'aGVsbG8=', empty: false } });
   });
+  it('returns bounded high-resolution desktop capture payloads through the Electron fallback', async (): Promise<void> => {
+    const api: ElectronNativeCapabilityApi = {
+      captureDesktop: async (request) => ({
+        format: 'png',
+        mime_type: 'image/png',
+        data_base64: 'aGVsbG8=',
+        width: request.action === 'capture_window' ? 1920 : 2560,
+        height: request.action === 'capture_window' ? 1200 : 1440,
+        origin_x: 0,
+        origin_y: 0,
+        scale_x: 1,
+        scale_y: 1,
+        backend: 'electron-desktop-capturer-window',
+      }),
+    };
+    const backend = new ElectronNativeCapabilityBackend('vision', { platform: 'linux', api });
+    await expect(backend.execute({ action: 'status' })).resolves.toMatchObject({ ok: true, value: { available: true, ready: true } });
+    await expect(backend.execute({ action: 'capture_window', app: { name: 'lnwjud' } })).resolves.toMatchObject({
+      ok: true,
+      value: { format: 'png', mime_type: 'image/png', width: 1920, height: 1200, byte_length: 5, backend: 'electron-desktop-capturer-window' },
+    });
+  });
+
 });

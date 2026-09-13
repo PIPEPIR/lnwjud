@@ -17,6 +17,8 @@ interface ImageData {
   readonly height: number;
   readonly origin_x: number;
   readonly origin_y: number;
+  readonly scale_x: number;
+  readonly scale_y: number;
   readonly annotated: boolean;
 }
 
@@ -101,7 +103,7 @@ export class SetOfMarksService {
     const sourceImage = normalizeImage(captured.value, false);
     if (!sourceImage.ok) return sourceImage;
 
-    const marks = applyImageOrigin(observedMarks, sourceImage.value.origin_x, sourceImage.value.origin_y);
+    const marks = applyImageOrigin(observedMarks, sourceImage.value.origin_x, sourceImage.value.origin_y, sourceImage.value.scale_x, sourceImage.value.scale_y, sourceImage.value.width, sourceImage.value.height);
     const annotationInput = {
       action: 'annotate',
       image_base64: sourceImage.value.data_base64,
@@ -111,7 +113,7 @@ export class SetOfMarksService {
     if (signal?.aborted) return cancelledResult('Visual capture');
     const annotatedImage = annotated.ok ? normalizeImage(annotated.value, true) : undefined;
     const image = annotatedImage?.ok === true
-      ? { ...annotatedImage.value, origin_x: sourceImage.value.origin_x, origin_y: sourceImage.value.origin_y }
+      ? { ...annotatedImage.value, origin_x: sourceImage.value.origin_x, origin_y: sourceImage.value.origin_y, scale_x: sourceImage.value.scale_x, scale_y: sourceImage.value.scale_y }
       : sourceImage.value;
     const now = this.now();
     const expiresAtMs = now + parsed.value.ttlSeconds * 1_000;
@@ -281,16 +283,33 @@ function extractMarks(value: unknown, maxMarks: number): readonly StoredMark[] {
   return marks;
 }
 
-function applyImageOrigin(marks: readonly StoredMark[], originX: number, originY: number): readonly StoredMark[] {
-  if (originX === 0 && originY === 0) return marks;
-  return marks.map((mark) => ({
-    ...mark,
-    annotationBounds: {
-      ...mark.annotationBounds,
-      x: mark.annotationBounds.x - Math.round(originX),
-      y: mark.annotationBounds.y - Math.round(originY),
-    },
-  }));
+function applyImageOrigin(
+  marks: readonly StoredMark[],
+  originX: number,
+  originY: number,
+  scaleX: number,
+  scaleY: number,
+  imageWidth: number,
+  imageHeight: number,
+): readonly StoredMark[] {
+  const sx = Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1;
+  const sy = Number.isFinite(scaleY) && scaleY > 0 ? scaleY : 1;
+  const normalized: StoredMark[] = [];
+
+  for (const mark of marks) {
+    const left = Math.round(mark.bounds.x / sx - originX);
+    const top = Math.round(mark.bounds.y / sy - originY);
+    const right = Math.round((mark.bounds.x + mark.bounds.width) / sx - originX);
+    const bottom = Math.round((mark.bounds.y + mark.bounds.height) / sy - originY);
+    const x = clamp(left, 0, imageWidth);
+    const y = clamp(top, 0, imageHeight);
+    const width = clamp(right, 0, imageWidth) - x;
+    const height = clamp(bottom, 0, imageHeight) - y;
+    if (width < 1 || height < 1) continue;
+    normalized.push({ ...mark, annotationBounds: { x, y, width, height } });
+  }
+
+  return normalized;
 }
 
 function normalizeImage(value: unknown, annotated: boolean): Result<ImageData> {
@@ -311,6 +330,8 @@ function normalizeImage(value: unknown, annotated: boolean): Result<ImageData> {
     height,
     origin_x: typeof image.origin_x === 'number' ? image.origin_x : 0,
     origin_y: typeof image.origin_y === 'number' ? image.origin_y : 0,
+    scale_x: typeof image.scale_x === 'number' && Number.isFinite(image.scale_x) && image.scale_x > 0 ? image.scale_x : 1,
+    scale_y: typeof image.scale_y === 'number' && Number.isFinite(image.scale_y) && image.scale_y > 0 ? image.scale_y : 1,
     annotated,
   });
 }
@@ -326,7 +347,7 @@ function toPublicObservation(observation: StoredObservation): Record<string, unk
     observationHash: observation.observationHash,
     expiresAt: observation.expiresAt,
     image: observation.image,
-    marks: observation.marks.map((mark) => ({ markId: mark.markId, label: mark.label, bounds: mark.bounds, target: mark.target })),
+    marks: observation.marks.map((mark) => ({ markId: mark.markId, label: mark.label, bounds: mark.annotationBounds, target: mark.target })),
   };
 }
 

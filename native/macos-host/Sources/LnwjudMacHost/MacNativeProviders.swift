@@ -395,13 +395,22 @@ enum MacNativeProviders {
         if suppliedImage == nil {
             guard MacScreenRecordingProvider.permissionGranted() else { return permissionFailure("Screen Recording permission is required for macOS capture") }
         }
-        guard let image = suppliedImage ?? captureImage(action: action, input: input) else { return dependencyFailure("macOS screen capture returned no image") }
+        let capture = suppliedImage.map { image in
+            (image: image, bounds: CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height)))
+        } ?? captureImage(action: action, input: input)
+        guard let capture else { return dependencyFailure("macOS screen capture returned no image") }
+        let image = capture.image
         if action == "ocr" {
             guard let text = MacVisionOcrProvider.recognize(image) else { return dependencyFailure("macOS Vision OCR returned no result") }
             return .value(["available": AnyEncodable(true), "ready": AnyEncodable(true), "text": AnyEncodable(text)])
         }
         guard let encoded = pngData(image), encoded.count <= maxImageBytes else { return .failure(code: "FILE_TOO_LARGE", message: "macOS capture exceeds the image limit", recoverable: true) }
-        return .value(["available": AnyEncodable(true), "ready": AnyEncodable(true), "format": AnyEncodable("png"), "mime_type": AnyEncodable("image/png"), "data_base64": AnyEncodable(encoded.base64EncodedString()), "width": AnyEncodable(image.width), "height": AnyEncodable(image.height)])
+        let scaleX = capture.bounds.width > 0 ? Double(capture.bounds.width) / Double(image.width) : 1
+        let scaleY = capture.bounds.height > 0 ? Double(capture.bounds.height) / Double(image.height) : 1
+        let originX = scaleX > 0 ? Double(capture.bounds.minX) / scaleX : 0
+        let originY = scaleY > 0 ? Double(capture.bounds.minY) / scaleY : 0
+        let backend = action == "capture_window" ? "CoreGraphics window capture" : action == "capture_display" ? "CoreGraphics display capture" : "CoreGraphics region capture"
+        return .value(["available": AnyEncodable(true), "ready": AnyEncodable(true), "format": AnyEncodable("png"), "mime_type": AnyEncodable("image/png"), "data_base64": AnyEncodable(encoded.base64EncodedString()), "width": AnyEncodable(image.width), "height": AnyEncodable(image.height), "origin_x": AnyEncodable(originX), "origin_y": AnyEncodable(originY), "scale_x": AnyEncodable(scaleX), "scale_y": AnyEncodable(scaleY), "backend": AnyEncodable(backend)])
     }
 
     static func decodedImage(_ input: [String: Any]) -> CGImage? {
@@ -518,41 +527,50 @@ enum MacNativeProviders {
     }
 
     private static func selectedWindow(_ input: [String: Any]) -> WindowRecord? {
+        var selectorInput = input
+        if let app = value(input, "app") as? [String: Any] {
+            for (key, value) in app where selectorInput[key] == nil { selectorInput[key] = value }
+        }
         let windows = windowInfo() ?? []
-        if value(input, "window_index") != nil {
-            guard let index = number(input, "window_index"), index.isFinite, index.rounded(.towardZero) == index, index >= 0, index < Double(windows.count) else { return nil }
+        if value(selectorInput, "window_index") != nil {
+            guard let index = number(selectorInput, "window_index"), index.isFinite, index.rounded(.towardZero) == index, index >= 0, index < Double(windows.count) else { return nil }
             return windows[Int(index)]
         }
         // The shared capability schema calls the native window handle `hwnd`
         // for historical Windows compatibility.  On macOS the corresponding
         // stable selector is the CoreGraphics window number, exposed here as
         // either `window_id` (native spelling) or `hwnd` (shared spelling).
-        if value(input, "window_id") != nil || value(input, "hwnd") != nil {
-            let key = value(input, "window_id") != nil ? "window_id" : "hwnd"
-            guard let id = boundedInteger(input, key, maximum: Double(CGWindowID.max)) else { return nil }
+        if value(selectorInput, "window_id") != nil || value(selectorInput, "hwnd") != nil {
+            let key = value(selectorInput, "window_id") != nil ? "window_id" : "hwnd"
+            guard let id = boundedInteger(selectorInput, key, maximum: Double(CGWindowID.max)) else { return nil }
             return windows.first { $0.id == id }
         }
         let expectedPid: Int?
-        if value(input, "pid") != nil {
-            guard let pid = boundedInteger(input, "pid", maximum: Double(Int32.max)) else { return nil }
+        if value(selectorInput, "pid") != nil {
+            guard let pid = boundedInteger(selectorInput, "pid", maximum: Double(Int32.max)) else { return nil }
             expectedPid = pid
-        } else if value(input, "process_id") != nil {
-            guard let pid = boundedInteger(input, "process_id", maximum: Double(Int32.max)) else { return nil }
+        } else if value(selectorInput, "process_id") != nil {
+            guard let pid = boundedInteger(selectorInput, "process_id", maximum: Double(Int32.max)) else { return nil }
             expectedPid = pid
         } else {
             expectedPid = nil
         }
-        let expectedTitle = string(input, "title")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let expectedProcess = string(input, "process_name")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard expectedPid != nil || !(expectedTitle ?? "").isEmpty || !(expectedProcess ?? "").isEmpty else { return nil }
+        let expectedTitle = string(selectorInput, "title")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedProcess = string(selectorInput, "process_name")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedName = string(selectorInput, "name")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard expectedPid != nil || !(expectedTitle ?? "").isEmpty || !(expectedProcess ?? "").isEmpty || !(expectedName ?? "").isEmpty else { return nil }
         return windows.first { window in
             if let expectedPid, window.pid != expectedPid { return false }
             if let expectedTitle, !expectedTitle.isEmpty, window.title?.localizedCaseInsensitiveContains(expectedTitle) != true { return false }
             if let expectedProcess, !expectedProcess.isEmpty, window.app?.localizedCaseInsensitiveCompare(expectedProcess) != .orderedSame { return false }
+            if let expectedName, !expectedName.isEmpty {
+                let appMatches = window.app?.localizedCaseInsensitiveCompare(expectedName) == .orderedSame
+                let titleMatches = window.title?.localizedCaseInsensitiveContains(expectedName) == true
+                if !appMatches && !titleMatches { return false }
+            }
             return true
         }
     }
-
     private static func selectedWindowId(_ input: [String: Any]) -> CGWindowID? {
         guard let selected = selectedWindow(input), selected.id >= 0 else { return nil }
         return CGWindowID(selected.id)
@@ -603,19 +621,31 @@ enum MacNativeProviders {
         }
     }
 
-    private static func captureImage(action: String, input: [String: Any]) -> CGImage? {
+    private static func captureImage(action: String, input: [String: Any]) -> (image: CGImage, bounds: CGRect)? {
         if action == "capture_window" {
-            guard let id = selectedWindowId(input) else { return nil }
-            return MacScreenCaptureProvider.captureWindow(id)
+            guard let window = selectedWindow(input), window.id >= 0, let bounds = window.bounds,
+                  let image = MacScreenCaptureProvider.captureWindow(CGWindowID(window.id)) else { return nil }
+            return (image, CGRect(x: CGFloat(bounds.x), y: CGFloat(bounds.y), width: CGFloat(bounds.width), height: CGFloat(bounds.height)))
         }
-        var bounds = CGRect.null
-        let region = value(input, "region") as? [String: Any] ?? input
         if action == "capture_region" {
+            let region = value(input, "region") as? [String: Any] ?? input
             guard let x = number(region, "x"), let y = number(region, "y"), let width = number(region, "width"), let height = number(region, "height"), x.isFinite, y.isFinite, width > 0, height > 0, width <= 16_384, height <= 16_384 else { return nil }
             guard abs(x) <= maxWindowCoordinate, abs(y) <= maxWindowCoordinate, regionIntersectsKnownDisplay(x: x, y: y, width: width, height: height) else { return nil }
-            bounds = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+            let bounds = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+            guard let image = MacScreenCaptureProvider.captureRegion(bounds) else { return nil }
+            return (image, bounds)
         }
-        return MacScreenCaptureProvider.captureDisplay(bounds)
+        guard let displayId = selectedDisplayId(input) else { return nil }
+        let bounds = CGDisplayBounds(displayId)
+        guard bounds.width > 0, bounds.height > 0, let image = MacScreenCaptureProvider.captureDisplay(displayId) else { return nil }
+        return (image, bounds)
+    }
+
+    private static func selectedDisplayId(_ input: [String: Any]) -> CGDirectDisplayID? {
+        guard let raw = string(input, "display_id")?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return CGMainDisplayID() }
+        guard let id = UInt32(raw) else { return nil }
+        let bounds = CGDisplayBounds(id)
+        return bounds.width > 0 && bounds.height > 0 ? id : nil
     }
 
     private static func pngData(_ image: CGImage) -> Data? {

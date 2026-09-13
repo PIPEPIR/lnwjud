@@ -5,6 +5,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
+import {
+  readMacosSigningPolicyEvidence,
+  validateMacosSigningPolicyEvidence,
+} from './inspect-macos-signing-policy.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputPath = path.join(desktopRoot, 'build', 'packaged-runtime-evidence.json');
@@ -66,7 +70,7 @@ export async function invalidatePackagedRuntimeEvidence() {
   await writeFile(outputPath, `${JSON.stringify({ schemaVersion: 0, signing: 'incomplete' })}\n`, 'utf8');
 }
 
-export async function collectPackagedRuntimeEvidence(context) {
+export async function collectPackagedRuntimeEvidence(context, { allowIncompleteMacSigningPolicy = false } = {}) {
   const platform = context?.electronPlatformName;
   const target = TARGETS[platform];
   if (target === undefined) return;
@@ -111,7 +115,21 @@ export async function collectPackagedRuntimeEvidence(context) {
       || signingReceipts.some((receipt) => (receipt?.mode ?? 'unsigned') !== mode || receipt?.certificateSha1 !== certificateSha1)
       || mode === 'certificate' && !/^[0-9a-f]{40}$/i.test(certificateSha1 ?? '')
       || mode !== 'certificate' && certificateSha1 !== undefined) throw new Error('Inconsistent macOS signing receipts');
-    signing = { mode, ...(certificateSha1 ? { certificateSha1 } : {}) };
+    let policy;
+    if (mode !== 'unsigned' && !allowIncompleteMacSigningPolicy) {
+      policy = await readMacosSigningPolicyEvidence();
+      const rootExecutable = files.find((entry) => entry.relativePath === 'Contents/MacOS/lnwjud');
+      validateMacosSigningPolicyEvidence(policy, {
+        mode,
+        arch,
+        rootExecutableSha256: rootExecutable?.sha256,
+      });
+    }
+    signing = {
+      mode,
+      ...(certificateSha1 ? { certificateSha1 } : {}),
+      ...(policy ? { policy } : {}),
+    };
   }
   return { schemaVersion: 1, platform, arch, capabilityBridge, files, ...(signing ? { signing } : {}) };
 }
