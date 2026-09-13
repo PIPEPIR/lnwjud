@@ -503,6 +503,10 @@ jobs:
 
   verify:
     # Keep this check name stable because main branch protection requires it.
+    # Direct non-main pushes already run the native platform contract matrix;
+    # skip this duplicate portable gate there while retaining it for PRs,
+    # protected main pushes, and explicit manual dispatches.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Authoritative Release Verification (Windows)
     runs-on: windows-latest
 

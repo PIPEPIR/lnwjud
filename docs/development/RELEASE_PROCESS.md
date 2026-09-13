@@ -46,10 +46,12 @@ The pull-request run answers whether the proposed merge is safe to accept. The
 produces the release artifacts. GitHub may create a merge commit whose SHA
 differs from the `dev` head, so both checks are necessary.
 
-PR and non-main CI run the full portable/test contract while allowing the
-expensive Windows installer packaging to be skipped with
-`-SkipWindowsPackaging`. The native platform contract runs on Windows, macOS,
-and Linux. A protected push to `main` additionally runs Windows packaging and
+PR CI and explicitly dispatched verification runs the full portable/test
+contract while allowing the expensive Windows installer packaging to be
+skipped with `-SkipWindowsPackaging`. Direct pushes to `dev` and other
+non-main branches run the native platform contract without repeating that
+portable gate, so feedback arrives sooner. The native platform contract runs
+on Windows, macOS, and Linux. A protected push to `main` additionally runs Windows packaging and
 the target-native macOS/Linux package matrix, including macOS arm64/x64 and
 Linux x64/arm64. The macOS packages are built on `macos-15` / `macos-15-intel`,
 then those exact SHA-scoped DMG/ZIP artifacts are downloaded and verified on

@@ -135,6 +135,14 @@ describe('MVP release verification gate', () => {
     expect(workflow).toContain("(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'");
   });
 
+  it('does not repeat the full Windows verification gate on direct non-main pushes', async () => {
+    const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const verifyStart = workflow.indexOf('  verify:\n');
+    expect(verifyStart).toBeGreaterThan(-1);
+    const verifyJob = workflow.slice(verifyStart, workflow.indexOf('\n\n', verifyStart));
+    expect(verifyJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
+  });
+
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {
     const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
     const authoritativeStart = workflow.indexOf('  verify:');
