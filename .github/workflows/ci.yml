@@ -327,12 +327,14 @@ jobs:
           name: native-darwin-${{ matrix.arch }}-${{ github.sha }}
           path: macos26-artifact
 
-      - name: Record exact v4.62.1 macOS 26 arm64 baseline failure
+      - name: Record exact v4.62.1 macOS signing-policy regression
         if: matrix.arch == 'arm64'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p macos26-diagnostics "$RUNNER_TEMP/lnwjud-v4.62.1-baseline"
+          sw_vers > macos26-diagnostics/os.txt
+          uname -a >> macos26-diagnostics/os.txt
           baseline_directory="$RUNNER_TEMP/lnwjud-v4.62.1-baseline"
           baseline_dmg="$baseline_directory/lnwjud-4.62.1-arm64.dmg"
           baseline_zip="$baseline_directory/lnwjud-4.62.1-arm64.zip"
@@ -349,17 +351,36 @@ jobs:
           for format in dmg zip; do
             baseline_variable="baseline_${format}"
             baseline="${!baseline_variable}"
+            baseline_app="$RUNNER_TEMP/lnwjud-v4.62.1-${format}-policy-app/lnwjud.app"
+            bash scripts/stage-macos-smoke-app.sh "$baseline" "$baseline_app" stage-only
             set +e
-            bash scripts/stage-macos-smoke-app.sh \
-              "$baseline" "$RUNNER_TEMP/lnwjud-v4.62.1-${format}-app/lnwjud.app" \
-              2>&1 | tee "macos26-diagnostics/v4.62.1-${format}-baseline-red.log"
-            baseline_status="${PIPESTATUS[0]}"
+            node apps/desktop/scripts/inspect-macos-signing-policy.mjs \
+              --app "$baseline_app" --arch arm64 \
+              > "macos26-diagnostics/v4.62.1-${format}-signing-policy.log" 2>&1
+            policy_status="$?"
             set -e
-            if [[ "$baseline_status" -eq 0 ]]; then
-              echo "v4.62.1 $format unexpectedly launched on macOS 26; stop and re-evaluate Issue #59" >&2
+            if [[ "$policy_status" -eq 0 ]]; then
+              echo "v4.62.1 unexpectedly satisfies the fixed macOS signing policy: $format" >&2
               exit 1
             fi
-            echo "Recorded expected v4.62.1 $format macOS 26 launch failure (exit $baseline_status)"
+            if ! grep -Fq 'lacks disable-library-validation' "macos26-diagnostics/v4.62.1-${format}-signing-policy.log"; then
+              cat "macos26-diagnostics/v4.62.1-${format}-signing-policy.log" >&2
+              echo "v4.62.1 $format failed policy inspection for an unexpected reason" >&2
+              exit 1
+            fi
+            echo "Confirmed v4.62.1 $format lacks disable-library-validation"
+
+            # Runtime enforcement differs between hosted runner builds and the
+            # reporter's macOS 26.6.2 (25G83). Record, but do not predicate the
+            # static signing-policy regression on, whether this runner launches it.
+            set +e
+            bash scripts/stage-macos-smoke-app.sh \
+              "$baseline" "$RUNNER_TEMP/lnwjud-v4.62.1-${format}-launch-app/lnwjud.app" \
+              2>&1 | tee "macos26-diagnostics/v4.62.1-${format}-launch-observation.log"
+            launch_status="${PIPESTATUS[0]}"
+            set -e
+            echo "v4.62.1 $format baseline launch observation: exit $launch_status" \
+              | tee -a "macos26-diagnostics/v4.62.1-${format}-launch-observation.log"
           done
 
       - name: Verify exact artifact provenance and macOS 26 signing policy

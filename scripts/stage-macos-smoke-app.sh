@@ -3,12 +3,13 @@ set -euo pipefail
 
 artifact="${1:-}"
 destination="${2:-}"
+mode="${3:-launch}"
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS package launch smoke must run on macOS" >&2
   exit 2
 fi
-if [[ -z "$artifact" || ! -f "$artifact" || -L "$artifact" || -z "$destination" ]]; then
-  echo "usage: stage-macos-smoke-app.sh <dmg-or-zip> <destination-app>" >&2
+if [[ -z "$artifact" || ! -f "$artifact" || -L "$artifact" || -z "$destination" || ( "$mode" != "launch" && "$mode" != "stage-only" ) ]]; then
+  echo "usage: stage-macos-smoke-app.sh <dmg-or-zip> <destination-app> [launch|stage-only]" >&2
   exit 2
 fi
 if [[ "$destination" != *.app ]]; then
@@ -104,6 +105,12 @@ if [[ ! -f "$executable" || -L "$executable" || ! -x "$executable" ]]; then
   exit 1
 fi
 codesign --verify --deep --strict "$destination"
+
+if [[ "$mode" == "stage-only" ]]; then
+  echo "Staged macOS package without launching: $destination" >&2
+  echo "$destination"
+  exit 0
+fi
 
 # Launch through LaunchServices, not by exec'ing the Mach-O directly. This is
 # the boundary a user hits after copying the app out of the DMG/ZIP.

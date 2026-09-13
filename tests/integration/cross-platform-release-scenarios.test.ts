@@ -195,13 +195,15 @@ const nativeCiScenarios: readonly Scenario[] = [
     expect(compatibilityJob).toContain('provenance_list=');
     expect(compatibilityJob).not.toContain('mapfile');
   }],
-  ['105 macOS 26 records the exact public v4.62.1 arm64 failure before accepting the fix', async () => {
+  ['105 macOS 26 records the exact public v4.62.1 arm64 signing regression before accepting the fix', async () => {
     const workflow = await workflowSource();
     expect(workflow).toContain('lnwjud-4.62.1-arm64.dmg');
     expect(workflow).toContain('lnwjud-4.62.1-arm64.zip');
     expect(workflow).toContain('d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c');
     expect(workflow).toContain('cf982b59a42c0ee6f91186212a03a683634e6c14675a718ddbdbf6fe1ba00db8');
-    expect(workflow).toContain('unexpectedly launched on macOS 26; stop and re-evaluate Issue #59');
+    expect(workflow).toContain('v4.62.1 unexpectedly satisfies the fixed macOS signing policy');
+    expect(workflow).toContain('lacks disable-library-validation');
+    expect(workflow).toContain('baseline launch observation');
   }],
 ];
 

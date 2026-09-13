@@ -4,6 +4,8 @@
 
 **Status:** Approved for implementation and release by the user on 2026-09-13. The checkboxes below preserve the original execution and acceptance specification; completion still requires terminal evidence for the exact hosted CI run, merged main SHA, immutable `v4.62.2` tag, release assets, and Issue #59 closure.
 
+**Execution update (CI run `34744910612`):** The first fix-head run produced and launched all macOS 15 artifacts, but exposed two test-harness defects before release. The current hosted `macos-26` arm64 runner launched the exact public v4.62.1 DMG instead of reproducing the reporter's `25G83` dyld abort, so old-runtime failure is not a portable CI invariant. The gate now proves the old defect deterministically by staging the exact hash-pinned v4.62.1 DMG and ZIP without mutation and requiring the effective signing-policy inspector to reject both because their hardened Electron processes lack `disable-library-validation`; the old runtime launch result is retained as a non-gating observation. The same run also showed that target-native provenance sampled build byproducts instead of initial source cleanliness, so the orchestrator now snapshots Git status before any build/test step and forwards that value into release evidence. A new exact-head run must pass both fixes before integration continues.
+
 **Goal:** Make the exact lnwjud macOS arm64 DMG/ZIP launch successfully on macOS 26 without weakening Developer ID builds, add an exact-artifact macOS 26 regression gate, and publish the correction only as a new patch release after the full release contract passes.
 
 **Architecture:** Keep hardened runtime enabled. Select one of two explicit signing policies at package time: community ad-hoc builds receive a dedicated `disable-library-validation` entitlement on the Electron process entry points, while Developer ID builds retain library validation and require one non-empty Team ID across all bundled code. Inspect the effective signature and entitlements after signing, preserve the result in release evidence, then test the same artifact built on the minimum-build runner again on macOS 26 rather than rebuilding it there.
@@ -54,7 +56,7 @@ The message says “Library missing,” but the report shows that the framework 
 | Evidence | Confirmed result | Consequence |
 | --- | --- | --- |
 | Issue report | M1, arm64 DMG, macOS `26.6.2 (25G83)`, dyld Team-ID rejection | Diagnose packaging/signing before application code |
-| Public asset | `lnwjud-4.62.1-arm64.dmg`, SHA-256 `d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c` | Use this exact immutable artifact for the RED reproduction |
+| Public asset | `lnwjud-4.62.1-arm64.dmg`, SHA-256 `d9cf74be1711a123fde49fc070c6fe055bf2c65bf6345395d4c8fa3816bed12c` | Use this exact immutable artifact for the policy RED and runtime observation |
 | Public ZIP | `lnwjud-4.62.1-arm64.zip`, SHA-256 `cf982b59a42c0ee6f91186212a03a683634e6c14675a718ddbdbf6fe1ba00db8` | Validate both distribution formats |
 | Release provenance | CI run `34732348722`, source commit `e05e6f1...`, `signingCredentialConfigured: false`, signing mode `ad-hoc` | The public macOS release is not Developer ID signed |
 | Builder config | `apps/desktop/electron-builder.yml` enables hardened runtime and uses `scripts/sign-macos-runtime.mjs` | Preserve hardened runtime and fix the signing policy |
@@ -63,7 +65,7 @@ The message says “Library missing,” but the report shows that the framework 
 | Static verifier | `scripts/verify-macos-release.sh` checks signature integrity and whether nested code is ad-hoc or has the same Team ID | It does not inspect effective entitlements or prove macOS 26 launch behavior |
 | CI runner | arm64 and x64 packages were built, verified, and launched on macOS 15 runners | CI proved macOS 15 behavior only |
 | Exact CI logs | arm64 ran on macOS `15.7.9 (24G830)` and passed layout, nested ad-hoc signature, LaunchServices, and ten packaged E2E tests | A green v4.62.1 CI run does not contradict the macOS 26 crash |
-| Available runner | GitHub currently exposes `macos-26`; its arm64 image documentation reports macOS `26.6.2 (25G83)` | The reported OS/build can be reproduced in hosted CI at analysis time |
+| Available runner | GitHub currently exposes `macos-26` and `macos-26-intel`; the live OS build is captured in every compatibility artifact | The runner label proves current macOS 26 compatibility, but must not be presented as the reporter's exact `25G83` build unless `sw_vers` confirms it |
 | Documentation | README/FULL_README say the macOS 26 launch problem is fixed; install/release docs describe stronger production signing than the published ad-hoc artifact actually has | Correct the support/release claims together with the code |
 
 The relevant signing, entitlement, verification, and workflow files are unchanged between the current local HEAD and the `v4.62.1` source commit, so the local inspection is representative of the released implementation. The local checkout is still not a valid release-validation baseline because its version and branch state differ.
@@ -90,18 +92,18 @@ Apple documents two valid remedies for a library-validation Team-ID mismatch: si
 
 | ID | Confidence | Hypothesis | Prediction that confirms it | Result that falsifies or redirects it |
 | --- | --- | --- | --- | --- |
-| H1 | High | macOS 26 enforces library validation against the ad-hoc hardened-runtime Electron process even after all bundled code is re-signed ad-hoc | The unchanged v4.62.1 artifact fails on `macos-26`; a build differing only by ad-hoc-only library-validation entitlements launches | The unchanged artifact launches and its signing snapshot matches the reporter's installation |
+| H1 | Confirmed for the reporter's build | macOS library validation can reject the ad-hoc hardened-runtime Electron process even after all bundled code is re-signed ad-hoc | The reporter's dyld record identifies the exact Team-ID validation boundary; the exact v4.62.1 artifacts mechanically lack the required ad-hoc entitlement; a build differing only by the scoped entitlement launches | A reporter-side signing snapshot shows the entitlement was already present, or the corrected exact artifact fails with a different first cause |
 | H2 | Medium | The two-pass signer or current verifier misses the effective code directory/entitlements used by dyld for the main executable or one framework slice | Detailed `codesign -dvvv`, designated requirements, CDHashes, and entitlements expose a mismatch not represented by the current `Signature=adhoc` check | Every relevant slice and process matches the expected snapshot, but launch still fails |
-| H3 | High | The macOS 15-only launch gate masked a target-OS compatibility regression | The same artifact passes on macOS 15 and fails on macOS 26 | It fails identically on both or passes on both |
+| H3 | Confirmed as a coverage gap | The macOS 15-only launch gate could not cover the reporter's newer dyld behavior | The release passed macOS 15 while the reporter's macOS `26.6.2 (25G83)` rejected it | A current hosted macOS 26 runner may still launch the old artifact; that narrows the reproducibility claim but does not erase the missing target-OS gate |
 | H4 | Low | The reporter's downloaded/installed bytes differ from the official v4.62.1 artifact because of a stale download, partial copy, or third-party modification | Reporter hash/CDHashes differ; a clean install of the exact official hash launches | Hashes and signature snapshot match the official artifact and it still fails |
 
-### Diagnostic decision point
+### Diagnostic decision result
 
-No production fix is applied until the exact v4.62.1 artifact is run on macOS 26:
+CI run `34744910612` reached this decision point. The exact hash-pinned v4.62.1 DMG launched on the current hosted arm64 runner, so the plan does not claim a universal macOS 26 runtime reproduction. That result does not falsify the reporter's primary evidence: their `25G83` crash report identifies dyld Library Validation, and static inspection of the released signing policy shows the corresponding hardened Electron process has no Team ID and no `disable-library-validation` entitlement. The fix therefore remains evidence-driven rather than speculative, while the gate separates two assertions:
 
-- If H1/H3 reproduce, proceed with the dual-mode signing policy below.
-- If the artifact launches on the hosted macOS 26 runner, do not add entitlements speculatively. Compare the reporter's artifact hash and read-only signature snapshot with CI, then investigate H2/H4.
-- If the baseline fails for a different reason, stop and use that new first failure as the diagnosis boundary.
+- **Deterministic regression:** the exact v4.62.1 DMG and ZIP must fail the new effective-policy inspector specifically for the missing ad-hoc entitlement.
+- **Current-host compatibility:** the exact v4.62.2 DMG and ZIP must pass provenance/policy checks and launch through LaunchServices on the current arm64 and Intel macOS 26 runners.
+- **Historical runtime observation:** whether the current runner launches v4.62.1 is recorded with `sw_vers` and logs, but is not allowed to fail or bless the corrected release.
 
 ---
 
@@ -168,9 +170,9 @@ The distinction is made from the **resolved signer identity**, not from an envir
 
 ## 6. Detailed Implementation Tasks
 
-### Task 0 — Establish a clean baseline and capture the exact RED failure
+### Task 0 — Establish a clean baseline and capture the exact policy RED
 
-**Purpose:** Prove the fault on the exact released bytes before changing signing behavior.
+**Purpose:** Prove the defective effective signing policy on the exact released bytes, and separately record whether the current hosted image reproduces the runtime abort.
 
 - [ ] Preserve the current dirty workspace and create an isolated implementation worktree from the current approved `origin/dev` only after user authorization. Confirm that it contains commit `e05e6f1f6b6425dd70771cf1fb9950d7d1a7bd26` and Issue #59's v4.62.1 signing changes.
 - [ ] Record `git status --short --branch`, `git rev-parse HEAD`, `git merge-base --is-ancestor e05e6f1f6b6425dd70771cf1fb9950d7d1a7bd26 HEAD`, Node, pnpm, Electron, electron-builder, and osx-sign versions in the implementation notes.
@@ -181,7 +183,7 @@ The distinction is made from the **resolved signer identity**, not from an envir
 - [ ] Repeat the lightweight baseline on the v4.62.1 arm64 ZIP so the archive format is not confused with the signing defect.
 - [ ] Save diagnostics as CI artifacts with the exact source SHA, release asset SHA, runner OS build, architecture, and run ID.
 
-**Expected RED:** The unmodified v4.62.1 app aborts on macOS 26 with the same Electron Framework library-validation rejection while the same bytes remain statically verifiable. If this does not occur, stop at the diagnostic decision point in Section 3.
+**Expected RED:** Both unmodified v4.62.1 formats are statically rejected because their hardened Electron process entries lack the ad-hoc library-validation exception. A matching dyld abort is stronger supplemental evidence when the live runner reproduces it, but is not assumed across runner image/build changes.
 
 **Proposed commit boundary after the RED run is recorded:** `test(macos): reproduce issue 59 on macos 26`
 
@@ -329,13 +331,13 @@ corepack pnpm@10.15.0 exec vitest run tests/packaging/capture-packaged-runtime-e
 - [ ] Run the packaged Playwright smoke suite once against the DMG-staged app; the ZIP needs layout/signature/LaunchServices survival coverage but need not duplicate the full UI suite.
 - [ ] Upload policy snapshots, stage logs, Playwright trace/report, OS build, artifact hashes, and dyld logs under an artifact name containing architecture and exact source SHA, even when the job fails.
 - [ ] Make job failure contribute to the overall CI workflow conclusion. The release workflow already selects only a successful full CI run for the exact main SHA, so this makes macOS 26 compatibility a publication gate without rebuilding in the tag workflow.
-- [ ] Confirm the current GitHub runner image before every release. If `macos-26` later moves beyond the reporter's `25G83`, retain the recorded v4.62.1 RED run as evidence and test the currently supported 26.x image rather than claiming an exact build match.
+- [ ] Confirm the current GitHub runner image before every release. If `macos-26` differs from the reporter's `25G83`, retain the hash-pinned v4.62.1 policy RED and runtime observation, then test the currently exposed 26.x image without claiming an exact build match.
 
 **RED/GREEN workflow sequence:**
 
-1. The diagnostic workflow with unchanged v4.62.1 signing fails on the exact downloaded artifact.
-2. The same workflow definition at the fix commit passes on macOS 15 and macOS 26 for arm64.
-3. x64 passes on macOS 15 Intel and macOS 26 Intel.
+1. The diagnostic workflow rejects the exact downloaded v4.62.1 DMG and ZIP for the specific missing ad-hoc entitlement; their current-runner launch result is recorded separately.
+2. The fix commit's exact artifact passes effective-policy checks and launches on macOS 15 and the current macOS 26 runner for arm64.
+3. x64 passes on macOS 15 Intel and the current macOS 26 Intel runner.
 4. A deliberately removed ad-hoc entitlement fails static policy validation before launch.
 
 **Proposed commit boundary:** `ci(macos): gate releases on macos 26 exact-artifact launch`
@@ -407,7 +409,7 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/veri
 
 - [ ] On macOS 26 arm64/x64, download—not rebuild—the artifacts produced by C for the same SHA.
 - [ ] Verify artifact-only provenance, DMG/ZIP effective policy, LaunchServices startup, and packaged E2E as defined in Task 5.
-- [ ] Compare the fixed arm64 result with the recorded v4.62.1 RED result. The OS build, architecture, artifact hashes, source SHA, and signing mode must be visible in the evidence.
+- [ ] Compare the fixed arm64 result with the recorded v4.62.1 policy RED and runtime observation. The OS build, architecture, artifact hashes, source SHA, signing mode, and entitlement result must be visible in the evidence.
 
 #### E. Exact hosted CI and release gate
 
@@ -432,7 +434,7 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/veri
 
 ### Definition of done
 
-- [ ] The unchanged v4.62.1 artifact has a preserved RED reproduction on macOS 26, or an evidence-backed alternative diagnosis replaces H1 before code changes.
+- [ ] The unchanged v4.62.1 DMG and ZIP have a preserved, hash-pinned policy RED for the missing entitlement; any hosted runtime reproduction or non-reproduction is recorded without overstating build equivalence.
 - [ ] The corrected arm64 DMG and ZIP launch on macOS 26 through LaunchServices without a Team-ID/dyld abort.
 - [ ] The exact same artifact bytes pass provenance and hash verification across producer and compatibility jobs.
 - [ ] macOS 15 arm64/x64 behavior remains green, so the fix does not silently raise the build/runtime floor.

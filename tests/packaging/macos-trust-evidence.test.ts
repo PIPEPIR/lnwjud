@@ -27,6 +27,8 @@ describe('macOS trust evidence contract', () => {
     expect(script).toContain('destination_parent_real');
     expect(script).toContain('refusing destination outside the temporary root');
     expect(script).toContain('safe_remove_directory');
+    expect(script).toContain("mode=\"${3:-launch}\"");
+    expect(script).toContain('stage-only');
     expect(script).not.toContain('rm -rf "$destination"');
   });
 

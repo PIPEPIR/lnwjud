@@ -16,6 +16,11 @@ if (!['win32', 'darwin', 'linux'].includes(target)) throw new Error(`Unsupported
 if (target !== process.platform) throw new Error(`Platform verification must run on ${target}; current host is ${process.platform}`);
 if (!['x64', 'arm64'].includes(architecture)) throw new Error(`Unsupported verification architecture: ${architecture}`);
 
+// Build, test, and native compiler steps legitimately create ignored/untracked
+// outputs. Preserve whether the checked-out source was clean before any of
+// those steps so release provenance describes the input, not build byproducts.
+const sourceDirtyAtStart = await sourceTreeDirty();
+
 const checks = [
   ['typecheck', 'corepack', ['pnpm@10.15.0', 'typecheck']],
   ['lint', 'corepack', ['pnpm@10.15.0', 'lint']],
@@ -59,6 +64,7 @@ async function runCheck(name, command, args) {
       cwd: repositoryRoot,
       env: {
         ...process.env,
+        LNWJUD_SOURCE_DIRTY_AT_START: sourceDirtyAtStart ? '1' : '0',
         LNWJUD_RUNTIME_TARGET: target,
         LNWJUD_RUNTIME_ARCH: architecture,
         LNWJUD_TUNNEL_TARGET: target,
@@ -77,6 +83,15 @@ async function runCheck(name, command, args) {
     if (diagnostic) process.stderr.write(`${diagnostic.slice(-32_768)}\n`);
     return { name, ok: false, durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message.slice(0, 512) : 'unknown error' };
   }
+}
+
+async function sourceTreeDirty() {
+  const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '--untracked-files=normal'], {
+    cwd: repositoryRoot,
+    windowsHide: true,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  return stdout.trim().length > 0;
 }
 
 function resolveInvocation(executable, args, command) {

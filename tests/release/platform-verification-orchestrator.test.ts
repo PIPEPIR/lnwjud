@@ -18,6 +18,14 @@ describe('platform verification orchestrator', () => {
     expect(source).not.toMatch(/electron-builder[^\n]*(?:--publish\s+always|publish)/i);
   });
 
+  it('snapshots source cleanliness before build and forwards it to release evidence', async (): Promise<void> => {
+    const source = await readFile(path.join(repositoryRoot, 'scripts', 'verify-platform-release.mjs'), 'utf8');
+    expect(source).toContain('const sourceDirtyAtStart = await sourceTreeDirty();');
+    expect(source).toContain("LNWJUD_SOURCE_DIRTY_AT_START: sourceDirtyAtStart ? '1' : '0'");
+    expect(source).toContain('async function sourceTreeDirty()');
+    expect(source).toContain("['status', '--porcelain=v1', '--untracked-files=normal']");
+  });
+
   it('keeps macOS and Linux package checks in target-native CI jobs', async (): Promise<void> => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('native-package-verification:');
@@ -29,6 +37,9 @@ describe('platform verification orchestrator', () => {
     expect(workflow).toContain('needs: native-package-verification');
     expect(workflow).toContain('actions/download-artifact@v4');
     expect(workflow).toContain('native-darwin-${{ matrix.arch }}-${{ github.sha }}');
+    expect(workflow).toContain('Record exact v4.62.1 macOS signing-policy regression');
+    expect(workflow).toContain('inspect-macos-signing-policy.mjs');
+    expect(workflow).toContain('lacks disable-library-validation');
     expect(workflow).toContain('ubuntu-24.04-arm');
     expect(workflow).toContain('sigstore/cosign-installer@v4.1.2');
     expect(workflow).toContain("cosign-release: 'v3.1.3'");
