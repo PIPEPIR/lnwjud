@@ -61,7 +61,10 @@ jobs:
 
       - name: Run complete native unit and service acceptance suites
         shell: bash
-        run: corepack pnpm@10.15.0 test
+        # pnpm defaults to four workspace workers. Native contract tests are
+        # independent at the package level, so use a larger pool here; the
+        # release gate keeps its explicit serial workspace order separately.
+        run: corepack pnpm@10.15.0 -r --workspace-concurrency=8 --if-present test
 
       - name: Test macOS native host protocol
         timeout-minutes: 10

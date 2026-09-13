@@ -180,7 +180,7 @@ const nativeCiScenarios: readonly Scenario[] = [
   ['096 native platform contract runs the release-scenario suite', () => expectWorkflowContains('tests/integration/cross-platform-release-scenarios.test.ts')],
   ['097 complete workspace suite runs on every native platform without a Windows exclusion', async () => {
     const workflow = await workflowSource();
-    expect(workflow).toContain('run: corepack pnpm@10.15.0 test');
+    expect(workflow).toContain('run: corepack pnpm@10.15.0 -r --workspace-concurrency=8 --if-present test');
     expect(workflow).not.toContain("if: matrix.name != 'Windows'");
   }],
   ['098 packaged Electron E2E exercises a real MCP client', () => expectWorkflowContains('desktop-mcp-client.e2e.ts')],

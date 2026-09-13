@@ -143,6 +143,11 @@ describe('MVP release verification gate', () => {
     expect(verifyJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
   });
 
+  it('uses an expanded workspace worker pool for native contract tests', async () => {
+    const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+    expect(workflow).toContain('corepack pnpm@10.15.0 -r --workspace-concurrency=8 --if-present test');
+  });
+
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {
     const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
     const authoritativeStart = workflow.indexOf('  verify:');
