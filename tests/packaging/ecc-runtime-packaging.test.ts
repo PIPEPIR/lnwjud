@@ -17,6 +17,13 @@ describe('ECC packaged runtime contract', () => {
     expect(desktopPackage.dependencies?.['ecc-agentshield']).toBe('1.4.0');
     expect(prepareSource).toContain("const EXPECTED_VERSION = '2.2.1'");
     expect(prepareSource).toContain("const EXPECTED_SCANNER_VERSION = '1.4.0'");
+    expect(prepareSource).toContain("scannerRuntimeBundlePath = path.join(targetRoot, '.lnwjud-agentshield-runtime.cjs')");
+    expect(prepareSource).toContain("require('./.lnwjud-agentshield-runtime.cjs')");
+    expect(prepareSource).toContain("[scannerBundlePath, '--version']");
+    expect(prepareSource).toContain('Prepared AgentShield wrapper failed passthrough validation');
+    expect(prepareSource).toContain('scannerCliVersion');
+    expect(prepareSource).toContain('scannerUpstreamCliVersion');
+    expect(prepareSource).toContain('scannerRuntimeBundleSha256');
     expect(prepareSource).toContain("format: 'cjs'");
     expect(prepareSource).toContain('scannerBundleSha256');
     expect(builderSource).toContain('from: build/ecc-runtime');
@@ -28,6 +35,7 @@ describe('ECC packaged runtime contract', () => {
     expect(gitignore).toContain('apps/desktop/build/ecc-runtime/');
     expect(notices).toContain('ecc-universal` 2.2.1');
     expect(notices).toContain('ecc-agentshield` 1.4.0');
+    expect(notices).toContain('normalizes the packaged AgentShield CLI version');
     expect(notices).toContain('Imported rules, hooks, workflows, MCP templates, memories, and instincts do not override lnwjud permissions');
   });
 });
