@@ -2,6 +2,9 @@ packages:
   - apps/*
   - packages/*
 
+overrides:
+  "@electron/osx-sign>isbinaryfile": 5.0.7
+
 onlyBuiltDependencies:
   - electron
   - esbuild

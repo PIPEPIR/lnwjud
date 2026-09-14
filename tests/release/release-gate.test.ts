@@ -254,6 +254,11 @@ describe('MVP release verification gate', () => {
     expect(signer.indexOf('inspectSigningPolicy(app')).toBeGreaterThan(signer.indexOf("run(['--verify', '--deep', '--strict', app])"));
   });
 
+  it('pins the macOS signer binary detector to the protobuf-safe release', async () => {
+    const workspace = await readFile(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8');
+    expect(workspace).toContain('"@electron/osx-sign>isbinaryfile": 5.0.7');
+  });
+
   it('rejects release tags that do not match the packaged application version', async () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     expect(workflow).toMatch(/GITHUB_REF_NAME|github\.ref_name/);
