@@ -664,6 +664,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const trackedProcesses = new Map<string, string>();
   const gitSummaryCache = new AsyncTtlCache<DashboardSnapshot['gitSummary']>(5_000);
   const codexSummaryCache = new AsyncTtlCache<DashboardSnapshot['codex']>(60_000);
+  const codexPresenceCache = new AsyncTtlCache<boolean>(60_000);
   const capabilitySummaryCache = new AsyncTtlCache<DashboardSnapshot['capabilities']>(15_000);
   let gitSummaryWorkspaceId: string | null = null;
   let lastRecoveryRetentionSweepAt = 0;
@@ -924,7 +925,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
-    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: () => requirementProbeFromDoctor(() => checkCodex(codexDiscovery)) },
+    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: async () => readSettings().codexToolsEnabled
+      ? requirementProbeFromDoctor(() => checkCodex(codexDiscovery))
+      : { status: 'pass', detail: 'Codex runtime probe deferred while Codex tools are disabled' } },
     { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
     { id: 'local_mcp_listener', required: true, summaryKey: 'requirement.local_mcp_listener', probe: async () => ({ status: mcpLifecycle.status().running ? 'pass' : 'fail', detail: mcpLifecycle.status().url ?? 'Desktop MCP listener is stopped' }) },
     { id: 'browser_cdp', required: false, summaryKey: 'requirement.browser_cdp', remediationId: 'configure_browser_cdp', probe: () => capabilityRequirement('dom_cdp') },
@@ -1153,7 +1156,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
         : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor, pathGuard));
-      const codex = await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery));
+      const codexToolsEnabled = readSettings().codexToolsEnabled;
+      const codex = codexToolsEnabled
+        ? await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery))
+        : { installed: await codexPresenceCache.get(async () => (await executableResolver.resolve('codex')).ok), version: null };
       const recentAuditEvents = await buildAuditSummary(auditRepository, settingsRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
       const capabilities = await capabilitySummaryCache.get(() => buildCapabilitySummary(capabilityRuntime.health));

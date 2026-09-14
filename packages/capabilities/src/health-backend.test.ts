@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ok, type Result } from '@lnwjud/domain';
 import { HealthCapabilityBackend } from './health-backend.js';
 
@@ -48,5 +48,19 @@ describe('HealthCapabilityBackend', () => {
       supportsDryRun: true,
       auditTarget: 'workspace',
     } });
+  });
+
+  it('does not enumerate Windows scheduled tasks just to report scheduler readiness', async () => {
+    const execute = vi.fn(async (): Promise<Result<unknown>> => ok({ tasks: [] }));
+    const backend = new HealthCapabilityBackend({
+      platform: 'win32',
+      scheduler: { execute },
+    });
+
+    await expect(backend.execute({ operation: 'check_tool', tool: 'scheduler' })).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'scheduler', available: true, ready: true, local: true },
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 });

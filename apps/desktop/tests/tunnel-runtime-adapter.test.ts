@@ -1,4 +1,5 @@
 import type { ExecFileOptionsWithStringEncoding } from 'node:child_process';
+import { createServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import {
   TunnelRuntimeAdapter,
@@ -49,6 +50,208 @@ describe('TunnelRuntimeAdapter', () => {
     });
     const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
     await expect(adapter.status()).resolves.toMatchObject({ exists: false, running: false });
+  });
+
+  it('uses loopback health routes after the first managed-runtime status instead of polling the CLI every healthy cycle', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/healthz' || request.url === '/readyz') {
+        response.statusCode = 200;
+        response.end('ok');
+        return;
+      }
+      if (request.url === '/api/status') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ control_plane_tunnel_id: 'tunnel_fixture012345' }));
+        return;
+      }
+      if (request.url === '/api/system') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          proxy_health: [{
+            health_state: 'healthy',
+            route: { kind: 'control_plane', route_mode: 'proxy' },
+            last_check: '2026-05-08T00:00:00Z',
+          }],
+        }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('missing');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('expected TCP health server');
+      const healthUrl = `http://127.0.0.1:${address.port}`;
+      const execute = executor({
+        'runtimes status lnwjud --json': {
+          stdout: JSON.stringify({
+            tunnel_id: 'tunnel_fixture012345',
+            process_running: true,
+            healthy: true,
+            ready: true,
+            control_plane_poll_health: { state: 'healthy' },
+            health_url: healthUrl,
+          }),
+        },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
+
+      await expect(adapter.status()).resolves.toMatchObject({ running: true, healthUrl });
+      await expect(adapter.status()).resolves.toMatchObject({ running: true, healthy: true, ready: true, pollHealthy: true });
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
+  it('maps v0.0.14 control-plane unhealthy state without spawning a second CLI status', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/healthz' || request.url === '/readyz') {
+        response.statusCode = 200;
+        response.end('ok');
+        return;
+      }
+      if (request.url === '/api/status') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ control_plane_tunnel_id: 'tunnel_fixture012345' }));
+        return;
+      }
+      if (request.url === '/api/system') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          proxy_health: [{
+            health_state: 'unhealthy',
+            route: { kind: 'control_plane', route_mode: 'proxy' },
+          }],
+        }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('missing');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('expected TCP health server');
+      const healthUrl = `http://127.0.0.1:${address.port}`;
+      const execute = executor({
+        'runtimes status lnwjud --json': {
+          stdout: JSON.stringify({ tunnel_id: 'tunnel_fixture012345', process_running: true, healthy: true, ready: true, health_url: healthUrl }),
+        },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
+
+      await adapter.status();
+      await expect(adapter.status()).resolves.toMatchObject({ running: true, healthy: true, ready: true, pollHealthy: false });
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
+  it('supports the newer control-plane health endpoint when the v0.0.14 system snapshot is unavailable', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/healthz' || request.url === '/readyz') {
+        response.statusCode = 200;
+        response.end('ok');
+        return;
+      }
+      if (request.url === '/api/status') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ control_plane_tunnel_id: 'tunnel_fixture012345' }));
+        return;
+      }
+      if (request.url === '/api/system') {
+        response.statusCode = 404;
+        response.end('missing');
+        return;
+      }
+      if (request.url === '/health/control-plane') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ status: 'ok', state: 'polling' }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('missing');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('expected TCP health server');
+      const healthUrl = `http://127.0.0.1:${address.port}`;
+      const execute = executor({
+        'runtimes status lnwjud --json': {
+          stdout: JSON.stringify({ tunnel_id: 'tunnel_fixture012345', process_running: true, healthy: true, ready: true, health_url: healthUrl }),
+        },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
+
+      await adapter.status();
+      await expect(adapter.status()).resolves.toMatchObject({ running: true, healthy: true, ready: true, pollHealthy: true });
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
+  it('falls back to authoritative CLI status when the cached admin URL belongs to a different tunnel', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/healthz' || request.url === '/readyz') {
+        response.statusCode = 200;
+        response.end('ok');
+        return;
+      }
+      if (request.url === '/api/status') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ control_plane_tunnel_id: 'tunnel_other012345' }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('missing');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('expected TCP health server');
+      const healthUrl = `http://127.0.0.1:${address.port}`;
+      const execute = executor({
+        'runtimes status lnwjud --json': {
+          stdout: JSON.stringify({ tunnel_id: 'tunnel_fixture012345', process_running: true, healthy: true, ready: true, health_url: healthUrl }),
+        },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
+
+      await adapter.status();
+      await expect(adapter.status()).resolves.toMatchObject({ running: true, tunnelId: 'tunnel_fixture012345' });
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
   });
 
   it('verifies the managed runtime is actually stopped instead of trusting the stop command exit code', async () => {

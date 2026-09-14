@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { open as openFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { promisify } from 'node:util';
 import type { ExecFileOptionsWithStringEncoding } from 'node:child_process';
 import {
@@ -42,6 +44,7 @@ export interface NativeRuntimeConnectRequest {
 
 export class TunnelRuntimeAdapter {
   private capabilitiesCache: TunnelRuntimeCapabilities | null = null;
+  private lastStatus: NativeTunnelRuntimeStatus | null = null;
   private readonly alias: string;
   private readonly execute: TunnelRuntimeExecutor;
 
@@ -96,14 +99,25 @@ export class TunnelRuntimeAdapter {
     return this.capabilitiesCache;
   }
 
-  public async status(): Promise<NativeTunnelRuntimeStatus> {
+  public async status(forceCli = false): Promise<NativeTunnelRuntimeStatus> {
+    if (!forceCli && this.lastStatus?.running === true) {
+      const local = await probeLocalRuntimeStatus(this.lastStatus);
+      if (local !== null) {
+        this.lastStatus = local;
+        return local;
+      }
+    }
     const result = await this.capture(['runtimes', 'status', this.alias, '--json'], 15_000);
     if (!result.ok) {
       const message = normalizedCliMessage(result.stderr, result.stdout);
-      if (isUnknownAliasMessage(message)) return missingRuntime(message);
+      if (isUnknownAliasMessage(message)) {
+        this.lastStatus = missingRuntime(message);
+        return this.lastStatus;
+      }
       throw new Error(message || `tunnel-client runtimes status ${this.alias} failed`);
     }
-    return parseNativeRuntimeStatus(result.stdout, result.stderr);
+    this.lastStatus = parseNativeRuntimeStatus(result.stdout, result.stderr);
+    return this.lastStatus;
   }
 
   public async connect(request: NativeRuntimeConnectRequest): Promise<NativeTunnelRuntimeStatus> {
@@ -125,6 +139,7 @@ export class TunnelRuntimeAdapter {
     if (parsed.tunnelId !== null && parsed.tunnelId !== tunnelId) {
       throw new Error(`Native runtime tunnel ID mismatch: expected ${tunnelId}`);
     }
+    this.lastStatus = parsed;
     return parsed;
   }
 
@@ -140,7 +155,7 @@ export class TunnelRuntimeAdapter {
     const intervalMs = Math.max(0, Math.min(5_000, this.options.stopVerifyIntervalMs ?? DEFAULT_STOP_VERIFY_INTERVAL_MS));
     const sleep = this.options.sleep ?? delay;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const current = await this.status();
+      const current = await this.status(true);
       if (!current.exists || !current.running) return current;
       if (attempt + 1 < attempts && intervalMs > 0) await sleep(intervalMs);
     }
@@ -171,6 +186,173 @@ async function defaultExecutor(executable: string, args: readonly string[], opti
 
 async function delay(delayMs: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function probeLocalRuntimeStatus(status: NativeTunnelRuntimeStatus): Promise<NativeTunnelRuntimeStatus | null> {
+  if (!status.running) return null;
+  if (status.pid !== null && !isProcessAlive(status.pid)) return null;
+  const baseUrl = await resolveRuntimeHealthBaseUrl(status);
+  if (baseUrl === null) return null;
+  const [healthz, readyz, adminStatus] = await Promise.all([
+    probeLoopbackEndpoint(baseUrl, '/healthz'),
+    probeLoopbackEndpoint(baseUrl, '/readyz'),
+    probeLoopbackEndpoint(baseUrl, '/api/status', 1_500, 64 * 1024),
+  ]);
+  if (healthz === null || readyz === null || adminStatus === null) return null;
+  const adminTunnelId = parseAdminTunnelId(adminStatus.body);
+  if (adminTunnelId === undefined || (status.tunnelId !== null && adminTunnelId !== status.tunnelId)) return null;
+  const legacySystem = await probeLoopbackEndpoint(baseUrl, '/api/system', 1_500, 256 * 1024);
+  let pollHealthy = legacySystem === null ? undefined : parseLegacySystemPollHealth(legacySystem.body);
+  if (pollHealthy === undefined) {
+    const controlPlane = await probeLoopbackEndpoint(baseUrl, '/health/control-plane');
+    if (controlPlane === null) return null;
+    pollHealthy = parseControlPlaneComponentHealth(controlPlane.body);
+  }
+  if (pollHealthy === undefined) return null;
+  return {
+    ...status,
+    running: true,
+    healthy: healthz.statusCode === 200,
+    ready: readyz.statusCode === 200,
+    pollHealthy,
+  };
+}
+
+async function resolveRuntimeHealthBaseUrl(status: NativeTunnelRuntimeStatus): Promise<string | null> {
+  let candidate = status.healthUrl?.trim() ?? '';
+  if (candidate.length === 0 && status.healthUrlFile !== undefined && status.healthUrlFile !== null) {
+    candidate = (await readBoundedHealthUrlFile(status.healthUrlFile))?.trim() ?? '';
+  }
+  if (candidate.length === 0) return null;
+  try {
+    const parsed = new URL(candidate);
+    const hostname = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(hostname)) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+async function readBoundedHealthUrlFile(filePath: string): Promise<string | null> {
+  try {
+    const handle = await openFile(filePath, 'r');
+    try {
+      const stats = await handle.stat();
+      if (stats.size <= 0 || stats.size > 4_096) return null;
+      const buffer = Buffer.alloc(Number(stats.size));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      return buffer.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+interface LoopbackProbeResult {
+  readonly statusCode: number;
+  readonly body: string;
+}
+
+function probeLoopbackEndpoint(baseUrl: string, pathname: string, timeoutMs = 1_500, maxBodyBytes = 16 * 1024): Promise<LoopbackProbeResult | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: LoopbackProbeResult | null): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let url: URL;
+    try {
+      url = new URL(pathname, `${baseUrl}/`);
+    } catch {
+      finish(null);
+      return;
+    }
+    const request = httpRequest(url, { method: 'GET', headers: { accept: 'application/json' } }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk: string) => {
+        body += chunk;
+        if (Buffer.byteLength(body, 'utf8') > maxBodyBytes) request.destroy(new Error('health response exceeded bound'));
+      });
+      response.once('end', () => finish({ statusCode: response.statusCode ?? 0, body }));
+      response.once('error', () => finish(null));
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error('health request timed out')));
+    request.once('error', () => finish(null));
+    request.end();
+  });
+}
+
+function parseAdminTunnelId(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    const value = typeof record.control_plane_tunnel_id === 'string'
+      ? record.control_plane_tunnel_id
+      : typeof record.tunnel_id === 'string'
+        ? record.tunnel_id
+        : undefined;
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseLegacySystemPollHealth(body: string): boolean | null | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    const proxyHealth = (parsed as Record<string, unknown>).proxy_health;
+    if (!Array.isArray(proxyHealth)) return undefined;
+    for (const candidate of proxyHealth) {
+      if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) continue;
+      const summary = candidate as Record<string, unknown>;
+      const route = summary.route;
+      if (typeof route !== 'object' || route === null || Array.isArray(route)) continue;
+      const kind = typeof (route as Record<string, unknown>).kind === 'string'
+        ? String((route as Record<string, unknown>).kind).toLowerCase()
+        : '';
+      if (kind !== 'control_plane') continue;
+      const state = typeof summary.health_state === 'string' ? summary.health_state.toLowerCase() : '';
+      if (state === 'direct' || state === 'healthy') return true;
+      if (state === 'unhealthy' || state === 'failed' || state === 'degraded' || state === 'error') return false;
+      if (state === 'unknown' || state === '') return null;
+      return undefined;
+    }
+    return null;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseControlPlaneComponentHealth(body: string): boolean | null | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    const status = typeof record.status === 'string' ? record.status.toLowerCase() : '';
+    if (status === 'ok') return true;
+    if (status === 'degraded') return false;
+    if (status === 'unknown' || status === 'disabled') return null;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
 }
 
 export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTunnelRuntimeStatus {
@@ -217,6 +399,8 @@ export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTun
     mcpServerUrl: pickRuntimeMcpServerUrl(flat, text),
     pid: pickNumber(flat, ['process.pid', 'pid', 'runtime.pid']),
     uiUrl: pickString(flat, ['ui_url', 'health.ui_url', 'admin_ui_url', 'url']) ?? matchUiUrl(text),
+    healthUrl: pickString(flat, ['health_url', 'local.effective_health.url', 'local.effective_health.base_url', 'local.health.url', 'local.health.base_url']),
+    healthUrlFile: pickString(flat, ['health_url_file', 'process.health_url_file', 'local.health.path']),
     message: pickString(flat, ['message', 'error', 'status_message']) ?? normalizedCliMessage(stderr),
   };
 }
