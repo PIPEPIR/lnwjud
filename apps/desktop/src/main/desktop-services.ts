@@ -44,6 +44,7 @@ import {
   createFileActivitySink,
   mcpActivityLogPath,
   type ActivitySinkEvent,
+  type EccRuntimeOptions,
   type HostMutationApprovalRequest,
   type McpApplicationServices,
   type McpHttpServerOptions,
@@ -233,6 +234,8 @@ export interface DesktopRuntimeOptions {
   readonly secretProtector?: SecretProtector;
   /** Electron main-process surface for cross-platform native UI capabilities. */
   readonly nativeCapabilityApi?: ElectronNativeCapabilityApi;
+  /** Pinned ECC resources resolved by the Electron composition root. */
+  readonly eccRuntimeOptions?: EccRuntimeOptions;
 }
 
 export function toolAvailabilityHostSyncDisposition(
@@ -478,6 +481,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const mcpServices: McpApplicationServices = {
     platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
+    ...(options.eccRuntimeOptions === undefined ? {} : { eccRuntimeOptions: options.eccRuntimeOptions }),
     runtimeTiming: () => ({ mcpPollWaitSeconds: readSettings().mcpPollWaitSeconds }),
     localProviders: () => {
       const settings = readSettings();

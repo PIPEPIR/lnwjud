@@ -40,6 +40,7 @@ const INPUT_DEPENDENT_TOOLS = new Set([
   'cache_clear', 'cache_invalidate', 'hook_register', 'hook_remove', 'plugin_install', 'plugin_enable',
   'plugin_disable', 'plugin_remove', 'project_profile_set', 'git_worktree_spawn', 'git_worktree_remove',
   'lsp_rename', 'debug_attach', 'debug_step', 'docx_merge', 'self_heal_apply', 'skills_import', 'agent_swarm_run',
+  'ecc_configure', 'ecc_security_scan', 'ecc_memory_save',
 ]);
 
 const CANCEL_TOOLS = new Set([
@@ -51,7 +52,7 @@ const CANCEL_TOOLS = new Set([
 const DRY_RUN_TOOLS = new Set([
   'git', 'shell', 'wsl_exec', 'scheduler', 'accessibility', 'input_event', 'window', 'office', 'file_dialog',
   'clipboard', 'dry_run', 'git_worktree_spawn', 'git_worktree_remove', 'project_profile_set', 'docx_merge',
-  'self_heal_apply', 'skills_import',
+  'self_heal_apply', 'skills_import', 'ecc_security_scan',
 ]);
 
 const actor = { clientId: 'desktop-tool-catalog', clientName: 'lnwjud Desktop Tool Catalog' };
@@ -92,7 +93,7 @@ function categoryFor(name: string): ToolCategory {
   if (/^(audio$|screen_record$|office(?:_|$)|inspect_workbook$|compare_workbook_layout$|render_excel_preview$|inspect_pdf$|compare_pdf_pages$|pdf_extract_tables$|docx_merge$)/.test(name)) return 'office_media';
   if (/^(tool_batch$|route_intent$|recipe_|dry_run$|review_changes$|run_affected_tests$|cache_|hook_|response_mode$|execution_plan$|benchmark_run$|regression_report$|sandbox_exec$|event_watch$|crash_trace$|lsp_|db_|self_heal_)/.test(name)) return 'automation';
   if (/^(codex_|run_goal$|get_goal$|checkpoint_goal$|finish_goal$|cancel_goal$|list_goals$|prepare_scheduled_continuation$|record_scheduled_continuation_receipt$|claim_scheduled_continuation$|get_scheduled_continuation$|expedite_scheduled_continuation$|cancel_scheduled_continuation$|task_|delegate(?:_|$)|parallel_delegate$|agent_swarm_run$|session_)/.test(name)) return 'agent_goals';
-  if (/^(skills_|skill_|ponytail_|mcp_|plugin_|capabilities$|tool_schema_|tool_search$|tool_dynamic_filter$|tool_describe$|tool_categories$|tool_aliases$|mcp_hub$)/.test(name)) return 'extensions';
+  if (/^(skills_|skill_|ponytail_|mcp_|plugin_|ecc_|capabilities$|tool_schema_|tool_search$|tool_dynamic_filter$|tool_describe$|tool_categories$|tool_aliases$|mcp_hub$)/.test(name)) return 'extensions';
   return 'system';
 }
 
@@ -111,6 +112,7 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
     ids.add('platform_windows');
   }
   if (/^(mcp_describe|mcp_call|mcp_resources)$/.test(name)) ids.add('external_mcp_connection');
+  if (/^ecc_memory_/.test(name)) ids.add('registered_workspace');
   if (/^(dom_cdp$|inspect_web_app$|debug_ui$|capture_ui_state$|form_context$|network_context$|console_context$|browser_debug_context$|capture_screenshot$|dom_snapshot$|layout_metadata$|visual_context$)/.test(name)) ids.add('browser_cdp');
   if (name === 'accessibility') { ids.add('platform_supported'); ids.add('native_accessibility'); }
   if (name === 'computer_use') {

@@ -1,3 +1,6 @@
+import { mkdirSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ok } from '@lnwjud/domain';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
@@ -22,6 +25,8 @@ export function runtimeRecord(value: unknown): Record<string, unknown> {
 }
 
 export function createRuntimeSuccessServices(calls: string[]): McpApplicationServices {
+  const runtimeEccWorkspaceRoot = path.join(os.tmpdir(), `lnwjud-runtime-contract-ecc-${process.pid}`);
+  mkdirSync(runtimeEccWorkspaceRoot, { recursive: true });
   const processSnapshot = {
     processId: 'process-1', executable: 'pnpm.cmd', args: ['typecheck'], cwd: 'E:\\project', state: 'exited',
     startedAt: new Date(0).toISOString(), finishedAt: new Date(1).toISOString(), exitCode: 0,
@@ -42,9 +47,13 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
         message: 'fixture event',
       }])),
     },
-    workspaceInfo: serviceProxy('workspaceInfo', calls, (method) => method === 'list'
-      ? [{ id: 'workspace-1', path: process.cwd(), realRootPath: process.cwd() }]
-      : { id: 'workspace-1', path: process.cwd(), realRootPath: process.cwd() }),
+    workspaceInfo: serviceProxy('workspaceInfo', calls, (method, args) => {
+      const requestedWorkspaceId = typeof args[1] === 'string' ? args[1] : 'workspace-1';
+      const root = requestedWorkspaceId === 'ecc-workspace' ? runtimeEccWorkspaceRoot : process.cwd();
+      return method === 'list'
+        ? [{ id: 'workspace-1', path: process.cwd(), realRootPath: process.cwd() }, { id: 'ecc-workspace', path: runtimeEccWorkspaceRoot, realRootPath: runtimeEccWorkspaceRoot }]
+        : { id: requestedWorkspaceId, path: root, realRootPath: root };
+    }),
     workspaceQuery: serviceProxy('workspaceQuery', calls, () => ({ entries: [] })),
     projectSnapshot: serviceProxy('projectSnapshot', calls, () => ({ workspaceId: 'workspace-1', files: 1 })),
     project: serviceProxy('project', calls, () => ({ kind: 'node', packageManager: 'pnpm' })),

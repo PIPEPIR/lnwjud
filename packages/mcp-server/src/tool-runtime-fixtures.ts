@@ -8,7 +8,8 @@ export type ToolRuntimePreparation =
   | 'cache_seed'
   | 'hook_register'
   | 'session_checkpoint'
-  | 'git_worktree_spawn';
+  | 'git_worktree_spawn'
+  | 'ecc_memory_save';
 
 export interface ToolRuntimeFixture {
   readonly input: Readonly<Record<string, unknown>>;
@@ -28,6 +29,7 @@ export interface ToolRuntimeOracle {
 }
 
 const workspaceId = 'workspace-1';
+const eccWorkspaceId = 'ecc-workspace';
 const zeroUuid = '00000000-0000-0000-0000-000000000000';
 
 const service = (
@@ -361,11 +363,24 @@ export const PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES = {
   agent_swarm_run: service({ operation: 'list', workspaceId }, 'agentSwarm.list'),
 } as const satisfies Readonly<Record<string, ToolRuntimeFixture>>;
 
+export const ECC_TOOL_RUNTIME_FIXTURES = {
+  ecc_status: deterministic({}, { expected: { tool: 'ecc_status', status: 'needs_setup', available: false, ready: false, executed: true }, requiredKeys: ['provider', 'configuration', 'authority'] }),
+  ecc_catalog: deterministic({}, { expected: { tool: 'ecc_catalog', status: 'ready', available: true, ready: true, executed: true, provider: 'ecc', total: 0, returned: 0, truncated: false }, requiredKeys: ['artifacts'] }),
+  ecc_load: unavailable({ id: 'ecc:missing' }, 'needs_setup'),
+  ecc_configure: unavailable({ enabled: true, mode: 'selective' }, 'needs_setup'),
+  ecc_security_scan: unavailable({ workspaceId }, 'needs_setup'),
+  ecc_memory_save: service({ workspaceId: eccWorkspaceId, title: 'Runtime contract memory', body: 'runtime contract memory body', kind: 'note', sourceHarness: 'lnwjud-test' }, 'workspaceInfo.info'),
+  ecc_memory_search: service({ workspaceId: eccWorkspaceId, query: 'runtime contract' }, 'workspaceInfo.info'),
+  ecc_memory_read: service({ workspaceId: eccWorkspaceId, id: 'prepared-memory-id' }, 'workspaceInfo.info', 'ecc_memory_save'),
+  ecc_memory_doctor: service({ workspaceId: eccWorkspaceId }, 'workspaceInfo.info'),
+} as const satisfies Readonly<Record<string, ToolRuntimeFixture>>;
+
 export const TOOL_RUNTIME_FIXTURES: Readonly<Record<string, ToolRuntimeFixture>> = Object.freeze({
   ...CORE_TOOL_RUNTIME_FIXTURES,
   ...PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES,
   ...PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES,
   ...PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES,
+  ...ECC_TOOL_RUNTIME_FIXTURES,
 });
 
 export const CORE_TOOL_SMOKE_INPUTS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = Object.freeze(

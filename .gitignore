@@ -78,6 +78,7 @@ docs/architecture/*
 !docs/roadmap/
 docs/roadmap/*
 !docs/roadmap/2026-08-25-v4.11.0-persistent-openai-tunnel-runtime-plan.md
+!docs/roadmap/2026-09-14-v4.70.0-full-ecc-integration-plan.md
 !docs/development/
 docs/development/*
 !docs/development/OPENAI_TUNNEL_LOCAL_CONTINUITY.md
@@ -116,5 +117,6 @@ lnwjud-incident.json
 .codegraph
 apps/desktop/build/tunnel-client/
 apps/desktop/build/runtime-tools/
+apps/desktop/build/ecc-runtime/
 apps/desktop/build/vendor/
 .tmp

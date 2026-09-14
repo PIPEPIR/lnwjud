@@ -89,6 +89,16 @@ async function preparedInput(
       if (!result.ok) throw new Error(result.error.message);
       return fixture.input;
     }
+    case 'ecc_memory_save': {
+      const result = await executeDefinition(registry, 'ecc_memory_save', {
+        workspaceId: 'ecc-workspace', title: 'Runtime contract memory', body: 'runtime contract memory body', kind: 'note', sourceHarness: 'lnwjud-test',
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      const memory = record(record(result.value).memory);
+      const id = typeof memory.id === 'string' ? memory.id : undefined;
+      if (id === undefined) throw new Error('ecc_memory_save preparation did not return a memory id');
+      return { ...fixture.input, workspaceId: 'ecc-workspace', id };
+    }
     case 'cache_seed':
       return fixture.input;
     case undefined:
@@ -260,7 +270,8 @@ describe('tool runtime delivery contract', () => {
     if (oracle.state === 'session_checkpoint') {
       const history = await executeDefinition(registry, 'session_history', {});
       expect(history).toMatchObject({ ok: true });
-      const checkpoints = history.ok && Array.isArray(record(history.value).checkpoints) ? record(history.value).checkpoints : [];
+      const checkpointValue = history.ok ? record(history.value).checkpoints : undefined;
+      const checkpoints: unknown[] = Array.isArray(checkpointValue) ? checkpointValue : [];
       expect(checkpoints.length).toBeGreaterThan(0);
       expect(checkpoints.every((checkpoint) => (
         typeof checkpoint === 'object' && checkpoint !== null
