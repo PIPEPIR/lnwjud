@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@electron/osx-sign>isbinaryfile': 5.0.7
+
 importers:
 
   .:
@@ -2072,10 +2075,6 @@ packages:
     resolution: {integrity: sha512-knxG2q4UC3u8stRGyAVJCOdxFmv5DZiRcdlIaAQXAbSfJya+OhopNotLQrstBhququ4ZpuKbDc/8S6mgXgPFPw==}
     engines: {node: '>=10'}
 
-  isbinaryfile@4.0.10:
-    resolution: {integrity: sha512-iHrqe5shvBUcFbmZq9zOQHBoeOhZJu6RQGrDpBgenUm/Am+F3JM2MgQj+rK3Z601fzrL5gLZWtAPH2OBaSVcyw==}
-    engines: {node: '>= 8.0.0'}
-
   isbinaryfile@5.0.7:
     resolution: {integrity: sha512-gnWD14Jh3FzS3CPhF0AxNOJ8CxqeblPTADzI38r0wt8ZyQl5edpy75myt08EG2oKvpyiqSqsx+Wkz9vtkbTqYQ==}
     engines: {node: '>= 18.0.0'}
@@ -3199,7 +3198,7 @@ snapshots:
       compare-version: 0.1.2
       debug: 4.4.3
       fs-extra: 10.1.0
-      isbinaryfile: 4.0.10
+      isbinaryfile: 5.0.7
       minimist: 1.2.8
       plist: 3.1.0
     transitivePeerDependencies:
@@ -4873,8 +4872,6 @@ snapshots:
   is-lambda@1.0.1: {}
 
   is-unicode-supported@0.1.0: {}
-
-  isbinaryfile@4.0.10: {}
 
   isbinaryfile@5.0.7: {}
 
