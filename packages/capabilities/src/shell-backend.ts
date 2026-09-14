@@ -430,7 +430,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       owner: request.owner,
     });
     if (!launched.ok || request.execution === 'background') return launched;
-    return this.durableStore.wait(taskId, Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds()), undefined, request.owner);
+    return this.durableStore.wait(taskId, Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds()), undefined, request.owner, false);
   }
 
   private async listTasks(owner: CapabilityTaskOwner): Promise<Result<unknown>> {

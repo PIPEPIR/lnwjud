@@ -245,14 +245,23 @@ export class DurableShellTaskStore {
     return ok({ matched: true, state: 'termination_unverified', detail: typeof state === 'string' ? state : 'unknown' });
   }
 
-  public async wait(taskId: string, seconds: number, tailLines?: number, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
+  public async wait(taskId: string, seconds: number, tailLines?: number, owner?: CapabilityTaskOwner, refreshTerminalAfterDeadline = true): Promise<Result<Record<string, unknown>>> {
     const deadline = Date.now() + Math.max(0, seconds) * 1000;
     let snapshot = await this.snapshot(taskId, tailLines, owner);
     while (snapshot.ok && snapshot.value.state === 'running' && Date.now() < deadline) {
       await delay(Math.min(100, Math.max(10, deadline - Date.now())));
       snapshot = await this.snapshot(taskId, tailLines, owner);
     }
-    return snapshot;
+    if (!snapshot.ok || snapshot.value.state !== 'running' || !refreshTerminalAfterDeadline) return snapshot;
+
+    // A slow host liveness probe can consume the wait budget after reading a
+    // running snapshot while the worker persists its terminal state. Refresh
+    // task.json once without another process probe so wait returns the latest
+    // durable result instead of a stale running state.
+    const latest = await this.readMetadata(taskId);
+    if (!latest.ok || !isTerminal(latest.value.state)) return snapshot;
+    if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(latest.value), owner)) return snapshot;
+    return ok(await this.snapshotFromMetadata(latest.value, tailLines));
   }
 
   public async cancel(taskId: string, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
