@@ -4,7 +4,7 @@ import { RemediationRegistry } from '../src/main/tool-catalog/remediation-regist
 import type { ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { ToolCatalogService } from '../src/main/tool-catalog/tool-catalog-service.js';
 
-function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean; availabilityOverrides?: Record<string, 'enabled' | 'disabled'> } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
+function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean; eccEnabled?: boolean; availabilityOverrides?: Record<string, 'enabled' | 'disabled'> } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
   const ids = [
     'platform_windows', 'platform_supported', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
     'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr', 'native_accessibility', 'native_input', 'native_window', 'native_capture', 'native_office', 'office_desktop',
@@ -30,6 +30,7 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
   const catalog = new ToolCatalogService(registry, new RemediationRegistry(), {
     profileDecision: (): 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN' => options.profileDecision ?? 'ALLOW',
     codexEnabled: (): boolean => options.codexEnabled ?? false,
+    eccEnabled: (): boolean => options.eccEnabled ?? false,
     toolAvailabilitySnapshotProvider: (): ToolAvailabilitySnapshot => ({ version: 1, generation: 1, overrides: options.availabilityOverrides ?? {} }),
   });
   return { registry, catalog, probes };
@@ -111,6 +112,13 @@ describe('tool catalog readiness aggregation', () => {
       readiness: 'disabled', readinessReason: 'feature_disabled', deliveryState: 'feature_disabled', available: false,
     });
     expect(disabledCodex?.remediationIds).toContain('configure_codex');
+
+    const eccDisabled = (await service({}, { eccEnabled: false }).catalog.getSnapshot('en')).items.find((item) => item.name === 'ecc_catalog');
+    expect(eccDisabled).toMatchObject({
+      readiness: 'disabled', readinessReason: 'feature_disabled', deliveryState: 'feature_disabled', systemEligible: false, effectiveExposed: false,
+    });
+    expect((await service({}, { eccEnabled: false }).catalog.getSnapshot('en')).items.find((item) => item.name === 'ecc_status')).toMatchObject({ systemEligible: true, effectiveExposed: true });
+    expect((await service({}, { eccEnabled: true }).catalog.getSnapshot('en')).items.find((item) => item.name === 'ecc_catalog')).toMatchObject({ systemEligible: true, effectiveExposed: true });
 
     const disabledWithOverride = service({}, { codexEnabled: false, availabilityOverrides: { codex_run: 'enabled' } });
     const gatedCodex = (await disabledWithOverride.catalog.getSnapshot('en')).items.find((item) => item.name === 'codex_run');

@@ -269,6 +269,13 @@ export class ToolRegistry {
   }
 
   private isEffectivelyExposed(name: string): boolean {
+    if (name.startsWith('ecc_') && name !== 'ecc_status' && this.services.eccEnabledProvider !== undefined) {
+      try {
+        if (this.services.eccEnabledProvider() !== true) return false;
+      } catch {
+        return false;
+      }
+    }
     return resolveEffectiveToolAvailability({
       name,
       snapshot: this.currentToolAvailabilitySnapshot(),
@@ -1187,7 +1194,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.63.0 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.70.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

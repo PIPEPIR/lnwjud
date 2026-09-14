@@ -189,6 +189,15 @@ export const UPGRADE_TOOL_CATALOG: readonly UpgradeToolCatalogEntry[] = [
   dangerous('self_heal_apply', 46, 'Apply a current reversible recovery plan without automatic destructive retries; standard mode requires confirmation and trusted Full Bypass skips lnwjud approval.', ['recovery', 'self-healing', 'safety'], { availability: 'optional', requirements: ['current recovery plan from self_heal_plan', 'dry-run preview'], supportsCancel: true, supportsDryRun: true, auditTarget: 'recovery-mutation' }),
   write('skills_import', 46, 'Import a validated local SKILL.md into the selected workspace skill catalog through guarded file read/write operations.', ['skills', 'compatibility', 'import'], { supportsCancel: false, supportsDryRun: true, auditTarget: 'skill-catalog' }),
   execute('agent_swarm_run', 46, 'Run or inspect a bounded, owner-scoped Codex agent swarm in enforced read-only mode.', ['agent', 'swarm', 'parallel', 'codex'], { availability: 'optional', requirements: ['Codex opt-in', 'Codex runtime', 'ownership ledger', 'read-only sandbox', 'mutation policy'], supportsCancel: true, supportsDryRun: false, auditTarget: 'agent-swarm' }),
+  read('ecc_status', 47, 'Report the pinned ECC provider, provenance, activation policy, and bundled security-scanner readiness.', ['ecc', 'provider', 'security']),
+  read('ecc_catalog', 47, 'Search the pinned ECC artifact catalog without eagerly loading artifact bodies.', ['ecc', 'provider', 'catalog', 'skills', 'agents', 'rules']),
+  read('ecc_load', 47, 'Load one selected bounded ECC text artifact by stable catalog ID.', ['ecc', 'provider', 'context', 'skills', 'agents', 'rules']),
+  write('ecc_configure', 47, 'Persist selective ECC activation settings without granting imported artifacts extra runtime authority.', ['ecc', 'provider', 'configuration']),
+  execute('ecc_security_scan', 47, 'Run the pinned bundled AgentShield scanner against ECC resources or a registered workspace with bounded JSON output.', ['ecc', 'security', 'agentshield'], { availability: 'optional', requirements: ['bundled pinned AgentShield scanner'], supportsCancel: true, supportsDryRun: true, auditTarget: 'ecc-agentshield' }),
+  write('ecc_memory_save', 48, 'Create one unreviewed ecc.memory.v1 document without overwriting existing memory.', ['ecc', 'memory', 'vault'], { auditTarget: 'ecc-memory-vault' }),
+  read('ecc_memory_search', 48, 'Search active ECC Memory Vault entries with bounded local lexical retrieval.', ['ecc', 'memory', 'vault', 'search']),
+  read('ecc_memory_read', 48, 'Read one ECC Memory Vault entry by stable memory id after completeness checks.', ['ecc', 'memory', 'vault']),
+  read('ecc_memory_doctor', 48, 'Validate ECC Memory Vault documents, symlinks, duplicates, and schema health without rewriting them.', ['ecc', 'memory', 'vault', 'diagnostics']),
 ];
 
 export function upgradeCatalogEntry(name: string): UpgradeToolCatalogEntry | undefined {

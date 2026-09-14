@@ -173,6 +173,63 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
       error: { code: 'INTERNAL_ERROR', message: 'Windows bridge integrity manifest is missing or invalid' },
     });
   });
+  it('returns FILE_TOO_LARGE when bridge stdout exceeds the retained response budget', async () => {
+    const payload = JSON.stringify({ ok: true, value: { payload: 'x'.repeat(4_096) } });
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+      });
+      child.stdin.on('finish', () => {
+        child.stdout.write(payload);
+        child.emit('close', 0);
+      });
+      return child as ReturnType<typeof spawn>;
+    });
+    const bridge = new PowerShellWindowsCapabilityBridge({
+      scriptPath: path.resolve('bridge.ps1'),
+      platform: 'win32',
+      maxOutputBytes: 1_024,
+    });
+
+    await expect(bridge.execute({ capability: 'system_info', input: { action: 'summary' } })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'FILE_TOO_LARGE',
+        message: 'Windows bridge response exceeded the bounded output limit',
+        recoverable: true,
+      },
+    });
+  });
+  it('does not repeatedly rescan the accumulated stdout string for large bridge responses', async () => {
+    const payload = JSON.stringify({ ok: true, value: { payload: 'x'.repeat(512 * 1024) } });
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+      });
+      child.stdin.on('finish', () => {
+        for (let offset = 0; offset < payload.length; offset += 4_096) {
+          child.stdout.write(payload.slice(offset, offset + 4_096));
+        }
+        child.emit('close', 0);
+      });
+      return child as ReturnType<typeof spawn>;
+    });
+    const byteLengthSpy = vi.spyOn(Buffer, 'byteLength');
+    try {
+      const bridge = new PowerShellWindowsCapabilityBridge({
+        scriptPath: path.resolve('bridge.ps1'),
+        platform: 'win32',
+      });
+      await expect(bridge.execute({ capability: 'system_info', input: { action: 'summary' } })).resolves.toMatchObject({ ok: true });
+
+      const wholePayloadRescans = byteLengthSpy.mock.calls.filter(([value]) =>
+        typeof value === 'string' && value.startsWith('{"ok":true') && value.length > 64 * 1024,
+      );
+      expect(wholePayloadRescans).toEqual([]);
+    } finally {
+      byteLengthSpy.mockRestore();
+    }
+  });
 });
 
 async function temporaryRoot(): Promise<string> {

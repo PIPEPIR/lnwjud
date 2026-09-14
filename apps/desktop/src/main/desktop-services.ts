@@ -44,6 +44,7 @@ import {
   createFileActivitySink,
   mcpActivityLogPath,
   type ActivitySinkEvent,
+  type EccRuntimeOptions,
   type HostMutationApprovalRequest,
   type McpApplicationServices,
   type McpHttpServerOptions,
@@ -65,6 +66,7 @@ import {
   MIN_CONFIGURABLE_WAIT_SECONDS,
   MAX_CONFIGURABLE_WAIT_SECONDS,
   DEFAULT_CODEX_TOOLS_ENABLED,
+  DEFAULT_ECC_ENABLED,
   DEFAULT_PONYTAIL_MODE,
   DEFAULT_TUNNEL_MAX_AUTO_RESTARTS,
   DEFAULT_RECOVERY_RETENTION_DAYS,
@@ -233,6 +235,8 @@ export interface DesktopRuntimeOptions {
   readonly secretProtector?: SecretProtector;
   /** Electron main-process surface for cross-platform native UI capabilities. */
   readonly nativeCapabilityApi?: ElectronNativeCapabilityApi;
+  /** Pinned ECC resources resolved by the Electron composition root. */
+  readonly eccRuntimeOptions?: EccRuntimeOptions;
 }
 
 export function toolAvailabilityHostSyncDisposition(
@@ -478,6 +482,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const mcpServices: McpApplicationServices = {
     platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
+    ...(options.eccRuntimeOptions === undefined ? {} : { eccRuntimeOptions: options.eccRuntimeOptions }),
+    eccEnabledProvider: (): boolean => readSettings().eccEnabled === true,
     runtimeTiming: () => ({ mcpPollWaitSeconds: readSettings().mcpPollWaitSeconds }),
     localProviders: () => {
       const settings = readSettings();
@@ -658,6 +664,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const trackedProcesses = new Map<string, string>();
   const gitSummaryCache = new AsyncTtlCache<DashboardSnapshot['gitSummary']>(5_000);
   const codexSummaryCache = new AsyncTtlCache<DashboardSnapshot['codex']>(60_000);
+  const codexPresenceCache = new AsyncTtlCache<boolean>(60_000);
   const capabilitySummaryCache = new AsyncTtlCache<DashboardSnapshot['capabilities']>(15_000);
   let gitSummaryWorkspaceId: string | null = null;
   let lastRecoveryRetentionSweepAt = 0;
@@ -918,7 +925,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
-    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: () => requirementProbeFromDoctor(() => checkCodex(codexDiscovery)) },
+    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: async () => readSettings().codexToolsEnabled
+      ? requirementProbeFromDoctor(() => checkCodex(codexDiscovery))
+      : { status: 'pass', detail: 'Codex runtime probe deferred while Codex tools are disabled' } },
     { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
     { id: 'local_mcp_listener', required: true, summaryKey: 'requirement.local_mcp_listener', probe: async () => ({ status: mcpLifecycle.status().running ? 'pass' : 'fail', detail: mcpLifecycle.status().url ?? 'Desktop MCP listener is stopped' }) },
     { id: 'browser_cdp', required: false, summaryKey: 'requirement.browser_cdp', remediationId: 'configure_browser_cdp', probe: () => capabilityRequirement('dom_cdp') },
@@ -988,6 +997,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const toolCatalogOptions: ToolCatalogServiceOptions = {
     profileDecision: (permission): ToolProfileDecision => permission === 'UNKNOWN' ? 'UNKNOWN' : activePermissionProfile().defaults[permission],
     codexEnabled: (): boolean => readSettings().codexToolsEnabled,
+    eccEnabled: (): boolean => readSettings().eccEnabled === true,
     toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
     externalItems: (locale): Promise<readonly ToolCatalogItem[]> => projectExternalMcpTools(extensionsService, locale),
   };
@@ -1146,7 +1156,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
         : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor, pathGuard));
-      const codex = await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery));
+      const codexToolsEnabled = readSettings().codexToolsEnabled;
+      const codex = codexToolsEnabled
+        ? await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery))
+        : { installed: await codexPresenceCache.get(async () => (await executableResolver.resolve('codex')).ok), version: null };
       const recentAuditEvents = await buildAuditSummary(auditRepository, settingsRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
       const capabilities = await capabilitySummaryCache.get(() => buildCapabilitySummary(capabilityRuntime.health));
@@ -2039,6 +2052,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    eccEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.eccEnabled), DEFAULT_ECC_ENABLED),
     ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
     updateAutoCheck: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateAutoCheck), true),
     updateCheckOnStartup: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateCheckOnStartup), true),
@@ -2068,6 +2082,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
+  settingsRepository.set(USER_SETTING_KEYS.eccEnabled, settings.eccEnabled === true ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
   settingsRepository.set(USER_SETTING_KEYS.updateAutoCheck, settings.updateAutoCheck ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateCheckOnStartup, settings.updateCheckOnStartup ? 'true' : 'false');

@@ -29,6 +29,8 @@ export interface NativeTunnelRuntimeStatus {
   readonly mcpServerUrl: string | null;
   readonly pid: number | null;
   readonly uiUrl: string | null;
+  readonly healthUrl?: string | null;
+  readonly healthUrlFile?: string | null;
   readonly message: string | null;
 }
 

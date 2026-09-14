@@ -1,6 +1,6 @@
 # lnwjud tool contract
 
-Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.63.0`.
+Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.70.0`.
 
 This is the compatibility contract for the current MCP surface. The runtime
 advertises the JSON Schema for every input through `tools/list`; the TypeScript
@@ -34,7 +34,7 @@ allowed to fail later.
 <!-- BEGIN GENERATED TOOL REGISTRY -->
 ## Generated live ToolRegistry index
 
-This complete inventory is generated from `ToolRegistry.listAll()`: **233 total tool definitions**. The runtime advertises **226 tools by default** and **233 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
+This complete inventory is generated from `ToolRegistry.listAll()`: **242 total tool definitions**. The runtime advertises **235 tools by default** and **242 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
 Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm docs:tools:check` and fails on drift.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Read-only | Destructive |
@@ -271,7 +271,16 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 230 | `self_heal_plan` | READ | default | operational | service_dispatch | yes | no |
 | 231 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | no | yes |
 | 232 | `skills_import` | WRITE | default | operational | service_dispatch | no | no |
-| 233 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 233 | `ecc_status` | READ | default | operational | deterministic_operation | yes | no |
+| 234 | `ecc_catalog` | READ | default | operational | deterministic_operation | yes | no |
+| 235 | `ecc_load` | READ | default | operational | truthful_unavailable | yes | no |
+| 236 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | no | no |
+| 237 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 238 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | no | no |
+| 239 | `ecc_memory_search` | READ | default | operational | service_dispatch | yes | no |
+| 240 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
+| 241 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
+| 242 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
 <!-- END GENERATED TOOL REGISTRY -->
 
 ## Protocol and result rules

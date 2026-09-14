@@ -62,7 +62,9 @@ export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridg
     }
 
     return new Promise((resolve) => {
-      let stdout = '';
+      const stdoutChunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      let stdoutOverflow = false;
       let stopReason: 'timed_out' | 'cancelled' | null = null;
       let stopPromise: Promise<void> | null = null;
       let settled = false;
@@ -86,12 +88,18 @@ export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridg
         clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);
       };
-      const append = (current: string, value: Buffer | string): string => {
-        const chunk = Buffer.isBuffer(value) ? value.toString('utf8') : value;
-        const remaining = this.maxOutputBytes - Buffer.byteLength(current, 'utf8');
-        return remaining <= 0 ? current : current + chunk.slice(0, remaining);
-      };
-      child.stdout?.on('data', (chunk: Buffer | string) => { stdout = append(stdout, chunk); });
+      child.stdout?.on('data', (value: Buffer | string) => {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+        const remaining = this.maxOutputBytes - stdoutBytes;
+        if (remaining <= 0) {
+          if (chunk.byteLength > 0) stdoutOverflow = true;
+          return;
+        }
+        const accepted = chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining);
+        stdoutChunks.push(accepted);
+        stdoutBytes += accepted.byteLength;
+        if (accepted.byteLength < chunk.byteLength) stdoutOverflow = true;
+      });
       child.stderr?.resume();
       child.once('error', () => {
         spawnFailed = child.pid === undefined;
@@ -112,6 +120,11 @@ export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridg
           resolve(err(appError('INTERNAL_ERROR', 'Windows bridge process could not start', true)));
           return;
         }
+        if (stdoutOverflow) {
+          resolve(err(appError('FILE_TOO_LARGE', 'Windows bridge response exceeded the bounded output limit', true)));
+          return;
+        }
+        const stdout = Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8');
         const result = parseBridgeResult(stdout);
         if (result !== undefined) {
           resolve(result);

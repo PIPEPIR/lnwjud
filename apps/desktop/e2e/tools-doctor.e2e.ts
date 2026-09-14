@@ -13,6 +13,7 @@ const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = electronExecutablePath(desktopRoot);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim() || undefined;
+const FIRST_PARTY_TOOL_COUNT = 242;
 
 type LaunchedDesktop = {
   readonly process: ChildProcess;
@@ -32,7 +33,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const app = await launchDesktop({ legacyCheckpoint: true });
     try {
       await openTools(app.page);
-      await expect(app.page.locator('.tool-card')).toHaveCount(233);
+      await expect(app.page.locator('.tool-card')).toHaveCount(FIRST_PARTY_TOOL_COUNT);
       expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key'), 'utf8')).toMatch(/^safe:v1:/);
       expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.legacy-backup'), 'utf8')).toMatch(/^dpapi:v2:/);
       expect(JSON.parse(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.migration.json'), 'utf8'))).toMatchObject({ operation: 'dpapi_v2' });
@@ -43,8 +44,8 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const app = await launchDesktop();
     try {
       await openTools(app.page);
-      await expect(app.page.getByRole('tab', { name: /lnwjud \(233\)/ })).toBeVisible();
-      await expect(app.page.locator('.tool-card')).toHaveCount(233);
+      await expect(app.page.getByRole('tab', { name: new RegExp(`lnwjud \\(${FIRST_PARTY_TOOL_COUNT}\\)`) })).toBeVisible();
+      await expect(app.page.locator('.tool-card')).toHaveCount(FIRST_PARTY_TOOL_COUNT);
       await expect(app.page.locator('.tool-status-strip')).toContainText(/พร้อม|ต้องดำเนินการ|ready|needs_setup/i);
     } finally { await closeDesktop(app); }
   });

@@ -1,11 +1,16 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ShellCapabilityBackend } from './shell-backend.js';
 import { DurableShellTaskStore, parsePosixProcessProbe } from './durable-shell-task-store.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 const temporaryRoots: string[] = [];
 
@@ -280,6 +285,115 @@ describe('durable shell background tasks', () => {
       if (first.ok) await store.cancel('task-one', owner);
     }
   }, 15_000);
+  it('does not hydrate historical durable output while enforcing the concurrency limit', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-memory-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const historicalId = 'historical-completed';
+    const historicalDirectory = path.join(taskStateDirectory, historicalId);
+    await mkdir(historicalDirectory, { recursive: true });
+    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    await writeFile(path.join(historicalDirectory, 'task.json'), JSON.stringify({
+      version: 1,
+      task_id: historicalId,
+      state: 'completed',
+      started_at: startedAt,
+      finished_at: new Date(Date.now() - 4_000).toISOString(),
+      exit_code: 0,
+      include_stdout: true,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+    }), 'utf8');
+    const historicalOutputPath = path.join(historicalDirectory, 'stdout.log');
+    await writeFile(historicalOutputPath, Buffer.alloc(2 * 1024 * 1024, 0x61));
+
+    vi.mocked(readFile).mockClear();
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const owner = { clientId: 'chatgpt', sessionId: 'session-a', workspaceId: 'workspace-a' };
+    const launched = await store.launch({
+      taskId: 'new-task',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('ok')"],
+      cwd: root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      owner,
+    });
+    expect(launched.ok).toBe(true);
+
+    const historicalOutputReads = vi.mocked(readFile).mock.calls.filter(
+      ([filename]) => String(filename) === historicalOutputPath,
+    );
+    expect(historicalOutputReads).toEqual([]);
+
+    if (launched.ok) await store.wait('new-task', 5, undefined, owner);
+  }, 15_000);
+
+  it('lists durable task metadata without hydrating historical output', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-list-memory-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const taskId = 'listed-completed';
+    const taskDirectory = path.join(taskStateDirectory, taskId);
+    await mkdir(taskDirectory, { recursive: true });
+    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    await writeFile(path.join(taskDirectory, 'task.json'), JSON.stringify({
+      version: 1,
+      task_id: taskId,
+      state: 'completed',
+      started_at: startedAt,
+      finished_at: new Date(Date.now() - 4_000).toISOString(),
+      exit_code: 0,
+      include_stdout: true,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+    }), 'utf8');
+    const outputPath = path.join(taskDirectory, 'stdout.log');
+    await writeFile(outputPath, Buffer.alloc(2 * 1024 * 1024, 0x63));
+
+    vi.mocked(readFile).mockClear();
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const listed = await store.list();
+    expect(listed).toEqual([expect.objectContaining({ task_id: taskId, state: 'completed', durable: true })]);
+    expect(listed[0]).not.toHaveProperty('stdout');
+    expect(listed[0]).not.toHaveProperty('stderr');
+  });
+  it('reads oversized legacy task output without whole-file readFile allocation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-bounded-read-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const taskId = 'legacy-oversized';
+    const taskDirectory = path.join(taskStateDirectory, taskId);
+    await mkdir(taskDirectory, { recursive: true });
+    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    await writeFile(path.join(taskDirectory, 'task.json'), JSON.stringify({
+      version: 1,
+      task_id: taskId,
+      state: 'completed',
+      started_at: startedAt,
+      finished_at: new Date(Date.now() - 4_000).toISOString(),
+      exit_code: 0,
+      include_stdout: true,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+    }), 'utf8');
+    const legacyOutputPath = path.join(taskDirectory, 'stdout.log');
+    await writeFile(legacyOutputPath, Buffer.alloc(2 * 1024 * 1024, 0x62));
+
+    vi.mocked(readFile).mockClear();
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const snapshot = await store.snapshot(taskId);
+    expect(snapshot).toMatchObject({ ok: true, value: { stdout: 'b'.repeat(1024) } });
+    const wholeFileReads = vi.mocked(readFile).mock.calls.filter(
+      ([filename]) => String(filename) === legacyOutputPath,
+    );
+    expect(wholeFileReads).toEqual([]);
+  });
 });
 
 async function waitUntil(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

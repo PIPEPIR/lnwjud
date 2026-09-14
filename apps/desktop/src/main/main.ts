@@ -69,7 +69,7 @@ import {
   type UpdateStatus,
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
-import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
+import { readSharedActivitySnapshot, startMcpStdio, type EccRuntimeOptions, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { createExplicitKeySecretProtector, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
@@ -106,6 +106,21 @@ import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
 import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
+
+const ECC_UPSTREAM_VERSION = '2.2.1';
+
+function resolveDesktopEccRuntimeOptions(): EccRuntimeOptions {
+  const appRoot = app.getAppPath();
+  return {
+    rootPath: app.isPackaged
+      ? path.join(process.resourcesPath, 'ecc-runtime')
+      : path.join(appRoot, 'node_modules', 'ecc-universal'),
+    expectedVersion: ECC_UPSTREAM_VERSION,
+    agentShieldBundlePath: app.isPackaged
+      ? path.join(process.resourcesPath, 'ecc-runtime', '.lnwjud-agentshield.cjs')
+      : path.join(appRoot, 'node_modules', 'ecc-agentshield', 'dist', 'index.js'),
+  };
+}
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
@@ -211,6 +226,7 @@ const defaultUserSettings: UserSettings = {
   lspCommands: {},
   mcpHttpPort: 18_765,
   codexToolsEnabled: false,
+  eccEnabled: false,
   ponytailMode: 'off',
   updateAutoCheck: true,
   updateCheckOnStartup: true,
@@ -1130,6 +1146,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     lspCommands: stringRecord(record.lspCommands, 'lspCommands', 32),
     mcpHttpPort: boundedInteger(record.mcpHttpPort, 'mcpHttpPort', 0, 65_535),
     codexToolsEnabled: booleanField(record.codexToolsEnabled, 'codexToolsEnabled'),
+    eccEnabled: record.eccEnabled === undefined ? false : booleanField(record.eccEnabled, 'eccEnabled'),
     ponytailMode: ponytailModeField(record.ponytailMode),
     updateAutoCheck: booleanField(record.updateAutoCheck, 'updateAutoCheck'),
     updateCheckOnStartup: booleanField(record.updateCheckOnStartup, 'updateCheckOnStartup'),
@@ -1528,6 +1545,7 @@ function bootstrapMcpStdio(): void {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
       nativeCapabilityApi: createElectronNativeCapabilityApi(() => null),
+      eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
       ...secrets,
       watchToolAvailability: true,
     });
@@ -1914,6 +1932,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
   const runtime = createDesktopRuntime(dataPath, {
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
+    eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),

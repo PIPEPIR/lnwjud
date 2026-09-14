@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/pro
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { CodexDiscovery } from '@lnwjud/codex';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
 
@@ -46,6 +47,20 @@ describe('DesktopRuntime persistence', () => {
       expect((await restarted.services.getDashboard()).settings.recoveryRetentionDays).toBe(0);
     } finally {
       await restarted.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
+  it('does not execute Codex discovery for the default-disabled Codex tools on dashboard refresh', async () => {
+    const discover = vi.spyOn(CodexDiscovery.prototype, 'discover');
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-codex-disabled-'));
+    temporaryRoots.push(rawDataRoot);
+    const runtime = createDesktopRuntime(await realpath(rawDataRoot));
+    try {
+      await runtime.services.getDashboard();
+      expect(discover).not.toHaveBeenCalled();
+    } finally {
+      discover.mockRestore();
+      await runtime.close();
     }
   }, RUNTIME_TEST_TIMEOUT_MS);
 
@@ -416,6 +431,7 @@ describe('DesktopRuntime persistence', () => {
     const firstRuntime = createDesktopRuntime(dataRoot);
     try {
       const initial = firstRuntime.getUserSettings();
+      expect(initial.eccEnabled).toBe(false);
       const next = {
         ...initial,
         mcpCallTimeoutMs: 120_000,
@@ -427,6 +443,7 @@ describe('DesktopRuntime persistence', () => {
         pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
         lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
         codexToolsEnabled: true,
+        eccEnabled: true,
         updateAutoCheck: false,
         updateCheckOnStartup: false,
         updateIntervalMinutes: 120,
@@ -481,6 +498,7 @@ describe('DesktopRuntime persistence', () => {
           pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
           lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
           codexToolsEnabled: true,
+          eccEnabled: true,
           updateAutoCheck: false,
           updateCheckOnStartup: false,
           updateIntervalMinutes: 120,

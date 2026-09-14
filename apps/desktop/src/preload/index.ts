@@ -350,6 +350,7 @@ function userSettings(value: unknown): UserSettings {
     lspCommands: stringRecordResponse(value.lspCommands),
     mcpHttpPort: integerField(value, 'mcpHttpPort'),
     codexToolsEnabled: booleanField(value, 'codexToolsEnabled'),
+    eccEnabled: value.eccEnabled === undefined ? false : booleanField(value, 'eccEnabled'),
     ponytailMode: ponytailModeResponse(value.ponytailMode),
     updateAutoCheck: booleanField(value, 'updateAutoCheck'),
     updateCheckOnStartup: booleanField(value, 'updateCheckOnStartup'),

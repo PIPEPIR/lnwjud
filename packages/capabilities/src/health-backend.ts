@@ -48,6 +48,15 @@ export class HealthCapabilityBackend implements CapabilityBackend {
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
     if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') return this.describe(tool, { available: true, ready: true, local: true });
+    if (tool === 'scheduler' && this.platform === 'win32') {
+      const configured = this.backends.scheduler ?? this.scheduler;
+      return this.describe(tool, {
+        available: configured !== undefined,
+        ready: configured !== undefined,
+        local: true,
+        ...(configured === undefined ? { reason: 'Backend is not configured' } : {}),
+      });
+    }
     const composed = this.backends[tool];
     if (composed !== undefined) return this.describe(tool, await this.checkDelegated(composed, statusInputFor(tool)));
     if (tool === 'scheduler') return this.describe(tool, await this.checkDelegated(this.scheduler, { action: 'list' }));

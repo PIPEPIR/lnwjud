@@ -24,6 +24,8 @@ extraResources:
     to: tunnel-client
   - from: build/runtime-tools
     to: runtime-tools
+  - from: build/ecc-runtime
+    to: ecc-runtime
   - from: ../../.agents/skills/lnwjud-scheduled-continuation
     to: agent-skills/lnwjud-scheduled-continuation
   - from: ../../.agents/skills/ponytail

@@ -49,7 +49,7 @@ interface SettingsPageProps {
 }
 
 export type SettingsSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel' | 'backup';
-export type SettingsFocusTarget = 'security-profile' | 'tools-codex' | 'tools-local-providers' | 'mcp-servers';
+export type SettingsFocusTarget = 'security-profile' | 'tools-ecc' | 'tools-codex' | 'tools-local-providers' | 'mcp-servers';
 type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
@@ -98,6 +98,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [retentionBusy, setRetentionBusy] = useState(false);
+  const [eccBusy, setEccBusy] = useState(false);
+  const [eccMessage, setEccMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (props.requestedSection === undefined) return;
@@ -217,6 +219,21 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
         : t('settings.saved'));
     } catch (cause: unknown) {
       setPolicyError(cause instanceof Error ? cause.message : 'Could not save STDIO policy');
+    }
+  }
+
+  async function setEccEnabled(enabled: boolean): Promise<void> {
+    setEccBusy(true);
+    setEccMessage(null);
+    try {
+      await props.onUserSettingsChange({ ...props.dashboard.settings, eccEnabled: enabled });
+      setEccMessage(enabled
+        ? (props.locale === 'th' ? 'เปิด ECC แล้ว — lnwjud จะโหลด ECC แบบเลือกใช้เฉพาะงานที่เกี่ยวข้อง' : 'ECC enabled — lnwjud will selectively load ECC only when relevant.')
+        : (props.locale === 'th' ? 'ปิด ECC แล้ว — ECC agents, skills, memory และ action tools จะไม่ถูกใช้งาน' : 'ECC disabled — ECC agents, skills, memory, and action tools will not be used.'));
+    } catch (cause: unknown) {
+      setEccMessage(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'บันทึกการตั้งค่า ECC ไม่สำเร็จ' : 'Could not save the ECC setting.'));
+    } finally {
+      setEccBusy(false);
     }
   }
 
@@ -408,7 +425,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const navItems: readonly { id: SettingsSection; icon: string; title: string; description: string }[] = [
     { id: 'general', icon: '⌘', title: props.locale === 'th' ? 'ทั่วไป' : 'General', description: props.locale === 'th' ? 'ภาษา, Startup, Update' : 'Language, startup, updates' },
     { id: 'security', icon: '◇', title: props.locale === 'th' ? 'ความปลอดภัย' : 'Security', description: props.locale === 'th' ? 'สิทธิ์และ Workspace policy' : 'Permissions and workspace policy' },
-    { id: 'tools', icon: '◎', title: props.locale === 'th' ? 'Tools' : 'Tools', description: props.locale === 'th' ? 'Codex, Timeout, Roots' : 'Codex, timeouts, roots' },
+    { id: 'tools', icon: '◎', title: props.locale === 'th' ? 'Tools' : 'Tools', description: props.locale === 'th' ? 'ECC, Codex, Timeout, Roots' : 'ECC, Codex, timeouts, roots' },
     { id: 'mcp', icon: '⬡', title: 'MCP & Extensions', description: props.locale === 'th' ? 'Servers, Skills, Allowlist' : 'Servers, skills, allowlist' },
     { id: 'tunnel', icon: '↗', title: props.locale === 'th' ? 'Remote MCP & Tunnel' : 'Remote MCP & Tunnel', description: props.locale === 'th' ? 'OAuth, ngrok, API Key, Client' : 'OAuth, ngrok, API key, client' },
     { id: 'backup', icon: '▣', title: props.locale === 'th' ? 'กู้คืนข้อมูล' : 'Recovery', description: props.locale === 'th' ? 'Recovery Trash, Checkpoint, Backup' : 'Recovery Trash, checkpoints, backups' },
@@ -562,6 +579,35 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 {stdioMessage === null ? null : <div className="toast-success-banner" role="status">✓ {stdioMessage}</div>}
               </section>
             </>
+          ) : null}
+
+          {activeSection === 'tools' ? (
+            <section className="panel settings-card settings-card-polished" aria-label="ECC Integration" data-settings-focus="tools-ecc" tabIndex={-1}>
+              <SettingsCardHeading
+                icon="E"
+                title="ECC Integration"
+                subtitle={props.locale === 'th' ? 'Everything Claude Code ที่ติดมากับ lnwjud แต่เปิดใช้แบบ opt-in' : 'Everything Claude Code bundled with lnwjud as an opt-in provider'}
+                badge={props.dashboard.settings.eccEnabled === true ? 'ENABLED' : 'DISABLED'}
+              />
+              <SettingSwitch
+                checked={props.dashboard.settings.eccEnabled === true}
+                disabled={eccBusy}
+                label={props.locale === 'th' ? 'เปิดใช้งาน ECC' : 'Enable ECC'}
+                description={props.locale === 'th'
+                  ? 'ค่าเริ่มต้นคือปิด เมื่อเปิด lnwjud จะอนุญาต ECC agents, skills, rules, workflows, Memory Vault และ AgentShield ผ่านขอบเขตสิทธิ์ของ lnwjud'
+                  : 'Off by default. When enabled, lnwjud allows ECC agents, skills, rules, workflows, Memory Vault, and AgentShield through lnwjud security boundaries.'}
+                onChange={(enabled) => { void setEccEnabled(enabled); }}
+              />
+              <div className={props.dashboard.settings.eccEnabled === true ? 'toast-success-banner' : 'empty-setting-state'} role="status">
+                {props.dashboard.settings.eccEnabled === true
+                  ? (props.locale === 'th' ? '✓ ECC กำลังใช้งานแบบ selective activation' : '✓ ECC is active with selective activation')
+                  : (props.locale === 'th' ? 'ECC ติดตั้งอยู่ แต่ปิดใช้งาน — ไม่ inject context และไม่ expose ECC action tools' : 'ECC is installed but disabled — no ECC context injection or ECC action-tool exposure')}
+              </div>
+              <p className="hint">{props.locale === 'th'
+                ? 'ถ้า ChatGPT ยังเห็นรายการ action เก่าหลังเปิด/ปิด ให้ใช้ Action Refresh / Scan Tools ของ ChatGPT; ไม่จำเป็นต้องเปิด ECC สำหรับผู้ใช้ทั่วไป'
+                : 'If ChatGPT still shows an old action snapshot after toggling ECC, use ChatGPT Action Refresh / Scan Tools. ECC is not required for normal lnwjud use.'}</p>
+              {eccMessage === null ? null : <div className="toast-success-banner" role="status">{eccMessage}</div>}
+            </section>
           ) : null}
 
           {userConfigSection === 'security' ? null : (

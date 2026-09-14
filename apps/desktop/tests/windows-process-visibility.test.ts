@@ -5,8 +5,11 @@ import { describe, expect, it } from 'vitest';
 const repositoryRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const internalProcessSources = [
   'apps/desktop/src/main/tunnel-controller.ts',
+  'apps/desktop/src/main/tunnel-runtime-adapter.ts',
   'apps/desktop/src/main/tunnel-lock.ts',
   'apps/desktop/src/main/portable-update.ts',
+  'packages/codex/src/codex-discovery.ts',
+  'packages/capabilities/src/scheduler-backend.ts',
   'packages/capabilities/src/shell-backend.ts',
   'packages/capabilities/src/durable-shell-task-store.ts',
   'packages/capabilities/src/windows-bridge.ts',

@@ -9,7 +9,12 @@ import { CAPABILITY_TASK_OWNER_METADATA_KEY } from './task-ownership.js';
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 8 : 0,
+    retryDelay: 100,
+  })));
 });
 
 describe('ShellCapabilityBackend', () => {

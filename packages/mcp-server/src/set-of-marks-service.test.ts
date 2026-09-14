@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityService, CapabilityToolName } from '@lnwjud/capabilities';
 import { SetOfMarksObservationStore, SetOfMarksService } from './set-of-marks-service.js';
@@ -166,6 +166,50 @@ describe('SetOfMarksService', () => {
 
     await expect(acting).resolves.toEqual(err(appError('PROCESS_TIMEOUT', 'Marked UI action was cancelled', true)));
     expect(actions).toBe(0);
+  });
+  it('bounds retained observations even when captures arrive before TTL expiry', async () => {
+    const store = new SetOfMarksObservationStore();
+    const capabilities: CapabilityService = {
+      execute: async (tool, input): Promise<Result<unknown>> => {
+        if (tool === 'accessibility') return ok({ elements: [] });
+        if (tool === 'vision' && isRecord(input) && input.action === 'annotate') return ok({ ...image, annotated: true });
+        return ok(image);
+      },
+    };
+    const service = new SetOfMarksService(capabilities, { store, defaultTtlSeconds: 300 });
+    let firstObservationId = '';
+    for (let index = 0; index < 33; index += 1) {
+      const captured = await service.capture({ workspaceId: 'ws-1', capture: 'display' });
+      if (!captured.ok) throw new Error('capture failed');
+      if (index === 0) firstObservationId = String(captured.value.observationId);
+    }
+
+    expect(store.get(firstObservationId)).toBeUndefined();
+  });
+  it('releases expired observations without requiring a later capture or action', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(1_000));
+      const store = new SetOfMarksObservationStore();
+      const capabilities: CapabilityService = {
+        execute: async (tool, input): Promise<Result<unknown>> => {
+          if (tool === 'accessibility') return ok({ elements: [] });
+          if (tool === 'vision' && isRecord(input) && input.action === 'annotate') return ok({ ...image, annotated: true });
+          return ok(image);
+        },
+      };
+      const service = new SetOfMarksService(capabilities, { store, defaultTtlSeconds: 1 });
+      const captured = await service.capture({ workspaceId: 'ws-1', capture: 'display' });
+      if (!captured.ok) throw new Error('capture failed');
+      const observationId = String(captured.value.observationId);
+      expect(store.get(observationId)).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(1_001);
+
+      expect(store.get(observationId)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

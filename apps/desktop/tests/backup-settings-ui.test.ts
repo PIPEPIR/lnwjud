@@ -38,7 +38,7 @@ const dashboard: DashboardSnapshot = {
   settings: {
     customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
     mcpCallTimeoutMs: 60_000, mcpIdleTimeoutMs: 300_000, processTimeoutMs: 3_600_000, mcpPollWaitSeconds: 5, shellSynchronousWaitSeconds: 60,
-    capabilityRoots: [], pdfProviderPath: '', lspCommands: {}, mcpHttpPort: 18_765, codexToolsEnabled: false, ponytailMode: 'off',
+    capabilityRoots: [], pdfProviderPath: '', lspCommands: {}, mcpHttpPort: 18_765, codexToolsEnabled: false, eccEnabled: false, ponytailMode: 'off',
     updateAutoCheck: true, updateCheckOnStartup: true, updateIntervalMinutes: 30, updateAutoDownload: true,
     closeBehavior: 'tray', launchAtStartup: false, startMinimized: false, tunnelAutoReconnect: true, tunnelMaxAutoRestarts: 5, recoveryRetentionDays: 0,
     extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
@@ -148,5 +148,27 @@ describe('Backup settings UI', () => {
     expect(markup).toContain('Add or relink each project folder on this machine');
     expect(markup).toContain('Host-bound secrets and providers were not transplanted.');
     expect(markup).toContain('Cross-platform');
+  });
+
+  it('shows ECC as installed but disabled by default in Tools settings', () => {
+    const markup = renderToStaticMarkup(createElement(SettingsPage, {
+      locale: 'en', initialSection: 'tools', dashboard,
+      onLocaleChange: noop, onPermissionProfileChange: noop,
+      onUnrestrictedChange: async (): Promise<boolean> => false,
+      onDestructiveDeletePolicyChange: noop,
+      onStdioPolicyChange: async (): Promise<boolean> => false,
+      onCreateBackup: noop, onScheduleRestoreBackup: async (): Promise<boolean> => true,
+      onRestoreRecoveryItem: noop, onRestoreCheckpoint: noop,
+      onSaveTunnelApiKey: noop, onSetTunnelClientPath: noop,
+      onUserSettingsChange: async (): Promise<boolean> => false,
+      onChooseTunnelClientPath: async (): Promise<string | null> => null,
+      onConfigureTunnelProfile: async (): Promise<string> => '',
+      onStartTunnel: noop, onStopTunnel: noop,
+    }));
+
+    expect(markup).toContain('ECC Integration');
+    expect(markup).toContain('DISABLED');
+    expect(markup).toContain('ECC is installed but disabled');
+    expect(markup).toContain('Enable ECC');
   });
 });

@@ -18,6 +18,7 @@ const environment = {
 const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
 
 await run('node', ['scripts/prepare-runtime-tools.mjs'], environment);
+await run('node', ['scripts/prepare-ecc-runtime.mjs'], environment);
 await run('node', [target === 'macos' ? 'scripts/build-macos-host.mjs' : 'scripts/build-linux-host.mjs'], environment);
 await run(corepack, ['pnpm@10.15.0', 'build'], environment);
 await run('electron-builder', [target === 'macos' ? '--mac' : '--linux', ...(target === 'macos' ? ['dmg', 'zip'] : ['AppImage', 'deb']), `--${architecture}`, '--publish', 'never'], environment);

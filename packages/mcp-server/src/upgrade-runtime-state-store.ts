@@ -20,6 +20,7 @@ export interface UpgradeRuntimeSessionState {
 export interface UpgradeRuntimeSharedState {
   readonly plugins: readonly unknown[];
   readonly worktrees: readonly unknown[];
+  readonly ecc?: unknown;
 }
 
 export interface UpgradeRuntimeStateSnapshot {
@@ -169,6 +170,7 @@ function normalizeSharedState(value: unknown): UpgradeRuntimeSharedState {
   return {
     plugins: Array.isArray(record?.plugins) ? record.plugins : EMPTY_SHARED_STATE.plugins,
     worktrees: Array.isArray(record?.worktrees) ? record.worktrees : EMPTY_SHARED_STATE.worktrees,
+    ...(asRecord(record?.ecc) === undefined ? {} : { ecc: record!.ecc }),
   };
 }
 

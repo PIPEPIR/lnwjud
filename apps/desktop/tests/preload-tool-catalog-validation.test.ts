@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { ipcChannels, type LnwjudApi, type ToolCatalogItem, type ToolCatalogSnapshot } from '@lnwjud/ipc-contracts';
+import { ipcChannels, type LnwjudApi, type ToolCatalogItem, type ToolCatalogSnapshot, type UserSettings } from '@lnwjud/ipc-contracts';
 
 const electron = vi.hoisted(() => ({
   exposed: undefined as LnwjudApi | undefined,
@@ -29,8 +29,57 @@ function response(override: Record<string, unknown>): ToolCatalogSnapshot {
   return { generatedAt: checkedAt, locale: 'en', items: [{ ...item, ...override }], remediations: [] };
 }
 
+const userSettingsFixture: UserSettings = {
+  customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
+  desktopFullBypassAll: false,
+  stdioFullBypassAll: false,
+  mcpCallTimeoutMs: 60_000,
+  mcpIdleTimeoutMs: 300_000,
+  processTimeoutMs: 3_600_000,
+  mcpPollWaitSeconds: 5,
+  shellSynchronousWaitSeconds: 60,
+  capabilityRoots: [],
+  pdfProviderPath: '',
+  lspCommands: {},
+  mcpHttpPort: 18_765,
+  codexToolsEnabled: false,
+  eccEnabled: false,
+  ponytailMode: 'off',
+  updateAutoCheck: true,
+  updateCheckOnStartup: true,
+  updateIntervalMinutes: 30,
+  updateAutoDownload: true,
+  closeBehavior: 'tray',
+  launchAtStartup: false,
+  startMinimized: false,
+  tunnelAutoReconnect: true,
+  tunnelMaxAutoRestarts: 5,
+  recoveryRetentionDays: 30,
+  extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
+};
+
 describe('preload Tool Catalog validation', () => {
   beforeAll(async () => { await import('../src/preload/index.js'); });
+
+  it('preserves ECC opt-in state through the preload settings parser', async () => {
+    const enabled = { ...userSettingsFixture, eccEnabled: true };
+    electron.invoke.mockResolvedValueOnce({ settings: enabled, restartRequired: false });
+    await expect(electron.exposed!.setUserSettings({ settings: enabled })).resolves.toMatchObject({
+      settings: { eccEnabled: true },
+      restartRequired: false,
+    });
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.setUserSettings, { settings: enabled });
+  });
+
+  it('keeps ECC disabled when an older settings response omits eccEnabled', async () => {
+    const legacySettings = { ...userSettingsFixture } as Record<string, unknown>;
+    delete legacySettings.eccEnabled;
+    electron.invoke.mockResolvedValueOnce({ settings: legacySettings, restartRequired: false });
+    await expect(electron.exposed!.setUserSettings({ settings: userSettingsFixture })).resolves.toMatchObject({
+      settings: { eccEnabled: false },
+      restartRequired: false,
+    });
+  });
 
   it('preserves valid optional readiness fields from IPC', async () => {
     electron.invoke.mockResolvedValueOnce(response({

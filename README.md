@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>233 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, and extensibility; 226 are advertised by default and all 233 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>242 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, ECC integration, and extensibility; 235 are advertised by default and all 242 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,22 +18,22 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-233%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-242%20tools-6f42c1" />
 </p>
 
 ---
 
-## Current version: v4.63.0
+## Current version: v4.70.0
 
-`v4.63.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.70.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.63.0
+### What's new in v4.70.0
 
-- **Compact Git workspace:** the Desktop Git page is reorganized for faster day-to-day review with denser status/diff/history presentation while preserving the existing guarded mutation boundaries.
-- **Recoverable MCP errors:** expected recoverable tool failures are normalized so clients receive actionable tool errors instead of unnecessary session-level failures.
-- **Safer recovery handoff:** session recovery state is explicitly treated as task state rather than persistent user/agent instructions, preventing recovered workflow context from leaking into instruction memory.
-- **Faster cross-platform CI:** native contract tests and Desktop test shards are distributed across runners, while duplicate release-gate/package work is skipped on ordinary `dev` pushes without weakening the exact-`main` release boundary.
-- **Validation hygiene:** generated `.tmp` Playwright/report artifacts are excluded consistently from repository linting, and the Windows LSP runtime carries an explicit typed spawner contract so lint/typecheck/release validation remain deterministic.
+- **Full ECC provider integration:** lnwjud can inventory and selectively load pinned ECC agents, skills, command shims, layered rules, hooks, workflows, MCP templates, instincts, and supporting resources without granting imported content extra runtime authority.
+- **ECC Memory Vault:** new `ecc_memory_*` tools provide bounded local `ecc.memory.v1` save/search/read/doctor workflows with create-only unreviewed memory, explicit user-scope opt-in, completeness checks, and no automatic promotion into policy.
+- **AgentShield security boundary:** `ecc_security_scan` runs the pinned bundled AgentShield scanner with bounded JSON output and no auto-fix, network expansion, or imported hook/workflow execution.
+- **Packaged ECC provenance:** Windows, macOS, and Linux packaging materialize the pinned ECC runtime and security scanner as verified resources with third-party/license provenance instead of depending on ambient global installs.
+- **242-tool contract:** the MCP registry now contains 242 definitions, advertises 235 by default, and advertises all 242 when Codex delegation plus Agent Swarm are enabled.
 
 ### Historical: What's new in v4.62.2
 

@@ -77,6 +77,19 @@ describe('canonical bilingual tool catalog', () => {
     expect(catalogDefinitions.web_fetch?.requirementIds).not.toContain('platform_windows');
   });
 
+  it('surfaces ECC controls in Extensions with truthful safety metadata', () => {
+    for (const name of ['ecc_status', 'ecc_catalog', 'ecc_load', 'ecc_configure', 'ecc_security_scan', 'ecc_memory_save', 'ecc_memory_search', 'ecc_memory_read', 'ecc_memory_doctor'] as const) {
+      expect(catalogDefinitions[name]?.category, name).toBe('extensions');
+    }
+    for (const name of ['ecc_memory_save', 'ecc_memory_search', 'ecc_memory_read', 'ecc_memory_doctor'] as const) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('registered_workspace');
+    }
+    expect(catalogDefinitions.ecc_configure?.riskMode).toBe('input_dependent');
+    expect(catalogDefinitions.ecc_memory_save?.riskMode).toBe('input_dependent');
+    expect(catalogDefinitions.ecc_security_scan?.riskMode).toBe('input_dependent');
+    expect(catalogDefinitions.ecc_security_scan?.supportsDryRun).toBe(true);
+  });
+
   it('keeps provider-specific tools on their real prerequisites', () => {
     expect(catalogDefinitions.inspect_pdf?.requirementIds).toContain('local_pdf_provider');
     expect(catalogDefinitions.pdf_extract_tables?.requirementIds).toContain('local_pdf_provider');

@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>233 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, and extensibility; 226 are advertised by default and all 233 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>242 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, ECC integration, and extensibility; 235 are advertised by default and all 242 when Codex delegation plus Agent Swarm is enabled.</em>
 
   <em>อ่านที่เหลือใน Readme ได้เลยครับ ติดปัญหาทักมาได้ใน FB: Adisorn NM ได้ตลอดครับ / กำลังพัฒนาให้เรื่อยๆครับ ท่านที่ถามหาช่องสนับสนุนค่ากาแฟ แปะลิงค์ ไว้ให้แล้วครับ ขอบคุณครับ</em>
  https://easydonate.app/abcz
@@ -25,7 +25,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-233%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-242%20tools-6f42c1" />
 </p>
 
 ---
@@ -51,22 +51,22 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v4.63.0
+## Current version: v4.70.0
 
-The v4.63.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
-with **226 advertised by default** and **all 233 advertised when the six `codex_*`
+The v4.70.0 source/release-candidate runtime contract contains **242 total MCP tool definitions**,
+with **235 advertised by default** and **all 242 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.63.0
+### What's new in v4.70.0
 
-- Desktop Git is reorganized into a more compact daily-review surface while preserving guarded mutation semantics.
-- Recoverable MCP/tool failures are hardened so expected errors stay actionable at the tool boundary instead of unnecessarily destabilizing the session.
-- Session recovery handoff is explicitly task state rather than persistent user/agent instruction state, preventing recovered run context from being reinterpreted as durable instructions.
-- Cross-platform CI is faster through native workspace concurrency and Desktop test sharding, while ordinary `dev` pushes skip duplicate release packaging/gates that are still mandatory on the exact `main` release SHA.
-- Repository validation ignores generated `.tmp` artifacts consistently and keeps the Windows LSP spawner fully typed, so lint/typecheck/release gates remain deterministic after local/E2E runs.
+- Full ECC provider integration inventories and selectively loads pinned ECC agents, skills, command shims, layered rules, hooks, workflows, MCP templates, instincts, and resources while lnwjud remains the permission/security/durable-goal authority.
+- ECC Memory Vault support exposes create-only unreviewed `ecc.memory.v1` save/search/read/doctor operations with bounded lexical retrieval, completeness checks, explicit user-scope opt-in, and no automatic policy promotion.
+- AgentShield is bundled at the pinned runtime version and exposed through a bounded JSON-only security scan that cannot auto-fix, widen network scope, or execute imported ECC hooks/workflows.
+- Native Windows/macOS/Linux packages materialize ECC and AgentShield into verified app resources with third-party notices, license evidence, and SHA-256 provenance instead of relying on ambient global installations.
+- The live MCP contract is 242 total tool definitions, 235 advertised by default, and all 242 with Codex delegation plus Agent Swarm enabled.
 
 ### Historical: What's new in v4.62.2
 
@@ -380,7 +380,7 @@ Choose the guide for the host you will run lnwjud on:
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.63.0.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.70.0.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -434,7 +434,7 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
 5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no PIN entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket.
 6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship. A short-lived 6-digit PIN is generated only when an OAuth client does not match the supported ChatGPT callback contract.
-7. Confirm the connection discovers **226 tools by default** (or **233** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
+7. Confirm the connection discovers **235 tools by default** (or **242** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
 
@@ -491,8 +491,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.63.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.63.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.70.0.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.70.0.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -771,8 +771,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.63.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.63.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.70.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.70.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1095,7 +1095,7 @@ For workspace <workspace-id>, show the project snapshot, Git status, and the top
 When a first-party tool is enabled or disabled, standards-compliant MCP clients receive `notifications/tools/list_changed` and can refresh the live list without restarting lnwjud. ChatGPT app/action catalogs may additionally use a host-managed approved snapshot: use the ChatGPT action refresh/tool-scan flow that is actually available for the workspace. A browser F5 alone is **not** guaranteed to update an approved/frozen action snapshot, and lnwjud does not claim host synchronization without evidence.
 
 <!-- BEGIN GENERATED README TOOL REGISTRY -->
-## Complete MCP tool catalog (233 total definitions; 226 advertised by default; 233 with Codex delegation plus Agent Swarm enabled)
+## Complete MCP tool catalog (242 total definitions; 235 advertised by default; 242 with Codex delegation plus Agent Swarm enabled)
 
 This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds seven opt-in definitions to the advertised surface.
 
@@ -1333,7 +1333,16 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 230 | `self_heal_plan` | READ | default | operational | service_dispatch | Propose safe, deterministic, reversible recovery steps without applying mutations. |
 | 231 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | Apply a current reversible recovery plan without automatic destructive retries; standard mode requires confirmation and trusted Full Bypass skips lnwjud approval. |
 | 232 | `skills_import` | WRITE | default | operational | service_dispatch | Import a validated local SKILL.md into the selected workspace skill catalog through guarded file read/write operations. |
-| 233 | `tool_batch` | EXECUTE | default | operational | service_dispatch | Execute multiple MCP tools with parallel, dependency-aware, timeout, cancellation, and partial-result handling. |
+| 233 | `ecc_status` | READ | default | operational | deterministic_operation | Report the pinned ECC provider, provenance, activation policy, and bundled security-scanner readiness. |
+| 234 | `ecc_catalog` | READ | default | operational | deterministic_operation | Search the pinned ECC artifact catalog without eagerly loading artifact bodies. |
+| 235 | `ecc_load` | READ | default | operational | truthful_unavailable | Load one selected bounded ECC text artifact by stable catalog ID. |
+| 236 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | Persist selective ECC activation settings without granting imported artifacts extra runtime authority. |
+| 237 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | Run the pinned bundled AgentShield scanner against ECC resources or a registered workspace with bounded JSON output. |
+| 238 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | Create one unreviewed ecc.memory.v1 document without overwriting existing memory. |
+| 239 | `ecc_memory_search` | READ | default | operational | service_dispatch | Search active ECC Memory Vault entries with bounded local lexical retrieval. |
+| 240 | `ecc_memory_read` | READ | default | operational | service_dispatch | Read one ECC Memory Vault entry by stable memory id after completeness checks. |
+| 241 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | Validate ECC Memory Vault documents, symlinks, duplicates, and schema health without rewriting them. |
+| 242 | `tool_batch` | EXECUTE | default | operational | service_dispatch | Execute multiple MCP tools with parallel, dependency-aware, timeout, cancellation, and partial-result handling. |
 <!-- END GENERATED README TOOL REGISTRY -->
 
 ## Detailed capability guide

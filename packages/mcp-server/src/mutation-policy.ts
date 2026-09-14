@@ -213,7 +213,11 @@ export function inspectMutationOperation(
         : deletion('git_worktree_remove removes a ledger-owned worktree');
     case 'plugin_install':
     case 'hook_register':
+    case 'ecc_configure':
+    case 'ecc_memory_save':
       return boundedWrite(`${toolName} creates persisted application state`);
+    case 'ecc_security_scan':
+      return execute('ECC security scan executes the pinned bounded read-only scanner');
     case 'git_worktree_spawn':
       return inputUsesDefaultDryRun(value)
         ? read('git_worktree_spawn defaults to a no-side-effect preview')
