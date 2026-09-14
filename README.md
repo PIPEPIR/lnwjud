@@ -23,11 +23,18 @@
 
 ---
 
-## Current version: v4.70.0
+## Current version: v4.70.1
 
-`v4.70.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.70.1` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.70.0
+### What's new in v4.70.1
+
+- **Progressive log rendering:** Work Log and Live Logs render bounded batches while scrolling instead of mounting thousands of rows at once; Recovery lists use the same progressive pattern for large histories.
+- **Fresh visible log sessions:** reopening the desktop starts Work Log and file-backed Live Log views from the new session boundary without deleting persisted SQLite audit history or existing log files.
+- **Human-readable log exports:** exported Work Log and Live Log files default to `.log`, retain optional `.txt` output, and use structured headers, numbered entries, localized labels, readable spacing, and preserved technical metadata/detail.
+- **Clearer tunnel settings:** Persistent Tunnel Runtime now lives inside the Tunnel block instead of appearing as a third top-level connection method beside OAuth and Tunnel.
+
+### Historical: What's new in v4.70.0
 
 - **Full ECC provider integration:** lnwjud can inventory and selectively load pinned ECC agents, skills, command shims, layered rules, hooks, workflows, MCP templates, instincts, and supporting resources without granting imported content extra runtime authority.
 - **ECC Memory Vault:** new `ecc_memory_*` tools provide bounded local `ecc.memory.v1` save/search/read/doctor workflows with create-only unreviewed memory, explicit user-scope opt-in, completeness checks, and no automatic promotion into policy.

@@ -99,6 +99,7 @@ describe('complete log detail resolution and export', () => {
     const rows = await resolveRows!(fixture.repository, [`audit:${completed.id}`]);
     expect(rows).toHaveLength(1);
     for (const expected of [
+      'เวลา:', 'ประเภท: RESULT', 'เครื่องมือ: run_goal', 'ผลลัพธ์: SUCCESS', 'ระยะเวลา: 9 ms', 'ข้อมูลทางเทคนิค:',
       `eventId=${completed.id}`, 'callId=completed-detail-call', `workspaceId=${workspaceId}`, 'sessionId=session-complete',
       'toolName=run_goal', 'phase=completed', 'resultCode=SUCCESS', 'durationMs=9', `goalId=${goalId}`, 'status=active', 'revision=12',
     ]) expect(rows[0]).toContain(expected);
@@ -141,7 +142,7 @@ describe('complete log detail resolution and export', () => {
     const started = events.find((event) => event.phase === 'started')!;
     const resolveRows = (desktopServices as unknown as { resolveWorkLogExportRows?: ResolveWorkLogExportRows }).resolveWorkLogExportRows;
     const rows = await resolveRows!(fixture.repository, [`audit:${started.id}`]);
-    expect(rows[0]).toContain('Complete target detail unavailable');
+    expect(rows[0]).toContain('รายละเอียดเป้าหมายฉบับเต็มไม่พร้อมใช้งาน รายการนี้อาจไม่ครบ');
     fixture.database.close();
   });
 

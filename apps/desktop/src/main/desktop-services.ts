@@ -312,6 +312,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ? toolAvailabilityService.watch(250)
     : (): void => {};
   const workLogViewState = new WorkLogViewState(settingsRepository);
+  // Each desktop launch starts a fresh visible work-log session. Audit rows stay in SQLite.
+  workLogViewState.clear({});
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
   const checkpointEncryptionKey = options.checkpointEncryptionKey ?? resolveTestCheckpointEncryptionKey();
@@ -2271,11 +2273,20 @@ function parseWorkLogIdentity(value: string): { readonly kind: 'audit' | 'inflig
 
 function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTargetDetail | null, locale: UiLocale): string {
   const kind = classifyMcpWorkLogKind(event.toolName, event.phase, event.resultCode);
-  const tag = kind === 'task' ? '[TASK]' : kind === 'error' ? '[ERROR]' : '[RESULT]';
-  const duration = kind === 'task' ? '' : ` ${event.durationMs}ms`;
-  const summary = event.targetSummary === undefined || event.targetSummary.trim().length === 0 ? '' : ` ${event.targetSummary}`;
-  const error = event.errorMessage === undefined || event.errorMessage.trim().length === 0 ? '' : ` — ${event.errorMessage}`;
-  const base = `${formatActivityExportTimestamp(event.timestamp, locale)} ${tag} ${event.toolName}${summary}${error}${duration}`.trim();
+  const labels = locale === 'th'
+    ? { time: 'เวลา', type: 'ประเภท', tool: 'เครื่องมือ', result: 'ผลลัพธ์', duration: 'ระยะเวลา', target: 'เป้าหมาย', error: 'ข้อผิดพลาด', workspace: 'Workspace', session: 'Session', technical: 'ข้อมูลทางเทคนิค' }
+    : { time: 'Time', type: 'Type', tool: 'Tool', result: 'Result', duration: 'Duration', target: 'Target', error: 'Error', workspace: 'Workspace', session: 'Session', technical: 'Technical metadata' };
+  const readable = [
+    `${labels.time}: ${formatActivityExportTimestamp(event.timestamp, locale)}`,
+    `${labels.type}: ${kind === 'task' ? 'TASK' : kind === 'error' ? 'ERROR' : 'RESULT'}`,
+    `${labels.tool}: ${event.toolName}`,
+    `${labels.result}: ${event.resultCode}`,
+    `${labels.duration}: ${event.durationMs} ms`,
+    `${labels.workspace}: ${event.workspaceId ?? '-'}`,
+    `${labels.session}: ${event.sessionId ?? '-'}`,
+    ...(event.targetSummary === undefined || event.targetSummary.trim().length === 0 ? [] : [`${labels.target}: ${event.targetSummary}`]),
+    ...(event.errorMessage === undefined || event.errorMessage.trim().length === 0 ? [] : [`${labels.error}: ${event.errorMessage}`]),
+  ];
   const metadata = [
     `eventId=${event.id}`,
     `callId=${event.callId ?? '<none>'}`,
@@ -2288,7 +2299,7 @@ function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTarg
     ...(event.targetSummary === undefined ? [] : [`targetSummary=${event.targetSummary}`]),
     ...(event.errorMessage === undefined ? [] : [`errorMessage=${event.errorMessage}`]),
   ];
-  const baseWithMetadata = `${base}\r\n${metadata.join('\r\n')}`;
+  const baseWithMetadata = `${readable.join('\r\n')}\r\n\r\n${labels.technical}:\r\n${metadata.map((entry) => `  ${entry}`).join('\r\n')}`;
   if (event.targetDetail.legacyIncomplete && event.targetDetail.itemCount > event.targetDetail.preview.length) {
     return formatIncompleteLegacyHistory(baseWithMetadata);
   }
@@ -2302,11 +2313,14 @@ export function formatIncompleteLegacyHistory(base: string): string {
 
 export function formatCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, detailExpected = false, locale: UiLocale = 'th'): string {
   if (detail === null) {
-    return detailExpected ? `${base}\r\nComplete target detail unavailable; this row may be incomplete.` : base;
+    if (!detailExpected) return base;
+    return `${base}\r\n\r\n${locale === 'th' ? 'รายละเอียดเป้าหมายฉบับเต็มไม่พร้อมใช้งาน รายการนี้อาจไม่ครบ' : 'Complete target detail unavailable; this row may be incomplete.'}`;
   }
   if (detail.items.length === 0) return base;
-  const heading = detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
-  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
+  const heading = locale === 'th'
+    ? detail.kind === 'files' ? 'ไฟล์ที่เกี่ยวข้อง' : detail.kind === 'tools' ? 'เครื่องมือที่เกี่ยวข้อง' : 'รายละเอียดเพิ่มเติม'
+    : detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
+  return `${base}\r\n\r\n${heading}:\r\n${detail.items.map((item) => `  - ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
 }
 
 function unavailableTunnelOAuthBackend(): TunnelOAuthProvisioningBackend {

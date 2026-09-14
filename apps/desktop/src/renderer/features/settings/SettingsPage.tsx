@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement, type UIEvent } from 'react';
 import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, PonytailModeOverride, PonytailPolicyContext, TunnelOAuthLoginStatus, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
@@ -52,6 +52,8 @@ export type SettingsSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel
 export type SettingsFocusTarget = 'security-profile' | 'tools-ecc' | 'tools-codex' | 'tools-local-providers' | 'mcp-servers';
 type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
+const RECOVERY_PAGE_SIZE = 40;
+
 export function SettingsPage(props: SettingsPageProps): ReactElement {
   const t = createTranslator(props.locale);
   const hostPlatform = props.dashboard.hostPlatform;
@@ -97,6 +99,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [recoveryBusyId, setRecoveryBusyId] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [trashVisibleCount, setTrashVisibleCount] = useState(RECOVERY_PAGE_SIZE);
+  const [checkpointVisibleCount, setCheckpointVisibleCount] = useState(RECOVERY_PAGE_SIZE);
+  const [backupVisibleCount, setBackupVisibleCount] = useState(RECOVERY_PAGE_SIZE);
   const [retentionBusy, setRetentionBusy] = useState(false);
   const [eccBusy, setEccBusy] = useState(false);
   const [eccMessage, setEccMessage] = useState<string | null>(null);
@@ -137,6 +142,12 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   useEffect(() => {
     setClientPath(props.dashboard.tunnel.clientPath ?? '');
   }, [props.dashboard.tunnel.clientPath]);
+
+  useEffect(() => {
+    setTrashVisibleCount(RECOVERY_PAGE_SIZE);
+    setCheckpointVisibleCount(RECOVERY_PAGE_SIZE);
+    setBackupVisibleCount(RECOVERY_PAGE_SIZE);
+  }, [props.dashboard.selectedWorkspace?.id]);
 
   useEffect(() => {
     if (oauthLogin?.state !== 'waiting_for_browser' && oauthLogin?.state !== 'exchanging') return;
@@ -431,7 +442,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     { id: 'backup', icon: '▣', title: props.locale === 'th' ? 'กู้คืนข้อมูล' : 'Recovery', description: props.locale === 'th' ? 'Recovery Trash, Checkpoint, Backup' : 'Recovery Trash, checkpoints, backups' },
   ];
 
-  const userConfigSection: UserConfigSection | null = activeSection === 'backup' ? null : activeSection;
+  const userConfigSection: UserConfigSection | null = activeSection === 'backup' || activeSection === 'tunnel' ? null : activeSection;
   const currentNav = navItems.find((item) => item.id === activeSection) ?? navItems[0]!;
 
   return (
@@ -610,7 +621,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
             </section>
           ) : null}
 
-          {userConfigSection === 'security' ? null : (
+          {userConfigSection === null || userConfigSection === 'security' ? null : (
             <UserConfigPanel
               locale={props.locale}
               hostPlatform={hostPlatform}
@@ -808,6 +819,20 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   subtitle={props.locale === 'th' ? 'โหมดเดิมสำหรับ OpenAI Tunnel transport; Runtime API key ยังรองรับเต็มรูปแบบ และ OAuth ส่วนนี้เป็นคนละระบบกับ Remote MCP OAuth ด้านบน' : 'Existing OpenAI Tunnel transport. Runtime API key remains fully supported; OAuth here is separate from the working Remote MCP OAuth above.'}
                   badge={props.dashboard.tunnel.auth?.mode === 'oauth' ? 'OAUTH' : 'API KEY'}
                 />
+                <UserConfigPanel
+                  locale={props.locale}
+                  hostPlatform={hostPlatform}
+                  hostArch={hostArch}
+                  permissionProfile={props.dashboard.permissionProfile}
+                  stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
+                  settings={props.dashboard.settings}
+                  section="tunnel"
+                  unrestricted={props.dashboard.unrestricted}
+                  onUnrestrictedChange={props.onUnrestrictedChange}
+                  onSave={props.onUserSettingsChange}
+                  onInstallPdfProvider={props.onInstallPdfProvider}
+                  embedded
+                />
                 <div className="setting-grid two-col">
                   <div className="setting-field">
                     <span className="field-label">{props.locale === 'th' ? 'วิธีที่ใช้อยู่' : 'Active method'}</span>
@@ -947,7 +972,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
                 <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'ไฟล์ที่ลบ / สำเนาก่อนเขียนทับ' : 'Deleted / pre-replacement backups'}</strong><span>{props.dashboard.recovery.trashItems.length}</span></div>
                 {props.dashboard.recovery.trashItems.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'Recovery Trash ยังว่าง' : 'Recovery Trash is empty'}</div> : (
-                  <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.trashItems.map((item) => (
+                  <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setTrashVisibleCount((current) => Math.min(props.dashboard.recovery.trashItems.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.trashItems.slice(0, trashVisibleCount).map((item) => (
                     <div key={item.recoveryId} className="backup-item">
                       <div><strong>{item.relativePath}</strong><p className="hint">{formatDateTime(item.deletedAt, '—', props.locale)} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
                       <button type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'กู้คืน' : 'Restore')}</button>
@@ -956,7 +981,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 )}
                 <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Checkpoint ก่อนแก้/เขียนทับ' : 'Pre-change checkpoints'}</strong><span>{props.dashboard.recovery.checkpoints.length}</span></div>
                 {props.dashboard.recovery.checkpoints.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี checkpoint' : 'No checkpoints yet'}</div> : (
-                  <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.checkpoints.map((checkpoint) => {
+                  <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setCheckpointVisibleCount((current) => Math.min(props.dashboard.recovery.checkpoints.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.checkpoints.slice(0, checkpointVisibleCount).map((checkpoint) => {
                     const paths = checkpoint.files.map((file) => file.path);
                     return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt, '—', props.locale)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
                   })}</div>
@@ -973,7 +998,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 ) : null}
                 <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองฐานข้อมูลโปรแกรม' : 'Application Database Backup'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
                 {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
-                  <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
+                  <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setBackupVisibleCount((current) => Math.min(props.dashboard.backups.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.backups.slice(0, backupVisibleCount).map((backup) => (
                     <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt, '—', props.locale)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
                   ))}</div>
                 )}
@@ -996,6 +1021,11 @@ function SettingsCardHeading({ icon, title, subtitle, badge, action }: { readonl
       {action ?? (badge === undefined ? null : <span className="pill-badge gold">{badge}</span>)}
     </div>
   );
+}
+
+function nearScrollEnd(event: UIEvent<HTMLDivElement>): boolean {
+  const element = event.currentTarget;
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 320;
 }
 
 function ponytailPolicySourceLabel(locale: UiLocale, source: PonytailPolicyContext['effectiveWorkspaceSource']): string {

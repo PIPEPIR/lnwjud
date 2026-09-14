@@ -23,6 +23,7 @@ interface UserConfigPanelProps {
   readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSave: (settings: UserSettings) => Promise<boolean>;
   readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
+  readonly embedded?: boolean;
 }
 
 const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -53,7 +54,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
   const isWindowsHost = hostPlatform === 'win32';
@@ -400,8 +401,10 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
       ) : null}
 
       {section === 'tunnel' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Persistent tunnel runtime">
-          <CardHeading icon="↻" title="Persistent Tunnel Runtime" subtitle={locale === 'th' ? 'รักษา Tunnel ID เดิม และ reconnect อัตโนมัติเฉพาะตอนที่ผู้ใช้สั่งให้ Runtime ทำงาน' : 'Keep the same Tunnel ID and reconnect only while the runtime is intended to run'} badge={draft.tunnelAutoReconnect ? 'ON' : 'OFF'} />
+        <section className={embedded ? 'tunnel-setup-box persistent-runtime-card' : 'panel settings-card settings-card-polished'} aria-label="Persistent tunnel runtime">
+          {embedded
+            ? <div className="settings-mini-heading"><strong>Persistent Tunnel Runtime</strong><span>{draft.tunnelAutoReconnect ? 'ON' : 'OFF'}</span></div>
+            : <CardHeading icon="↻" title="Persistent Tunnel Runtime" subtitle={locale === 'th' ? 'รักษา Tunnel ID เดิม และ reconnect อัตโนมัติเฉพาะตอนที่ผู้ใช้สั่งให้ Runtime ทำงาน' : 'Keep the same Tunnel ID and reconnect only while the runtime is intended to run'} badge={draft.tunnelAutoReconnect ? 'ON' : 'OFF'} />}
           <SettingSwitch checked={draft.tunnelAutoReconnect} label={locale === 'th' ? 'เชื่อมต่อใหม่อัตโนมัติ' : 'Automatic reconnect'} description={locale === 'th' ? 'เมื่อเปิด ระบบจะ retry ด้วย backoff หลังการหลุด แต่ถ้าผู้ใช้กด Stop จะคงสถานะหยุดแม้เปิดโปรแกรมใหม่ จนกว่าจะกด Start Tunnel อีกครั้ง' : 'When enabled, transient failures retry with backoff. An explicit Stop remains stopped across app restarts until Start Tunnel is pressed again.'} onChange={(value) => patch({ tunnelAutoReconnect: value })} />
           <p className="hint">{locale === 'th' ? 'Persistent Tunnel Identity เก็บ Tunnel ID เดิมแยกจากสถานะ Run/Stop; การจำ identity ไม่ได้บังคับให้ runtime ต้องเปิดตลอด' : 'Persistent Tunnel Identity is separate from Run/Stop state; remembering the identity does not force the runtime to stay running.'}</p>
         </section>

@@ -956,20 +956,32 @@ async function exportLogsToFile(
   const capturedRows = request.lines.map((reference) => ({ reference, line: lineById.get(reference.lineId) ?? null }));
   const result = await dialog.showSaveDialog(window, {
     title: 'Export lnwjud logs',
-    defaultPath: `lnwjud-${request.source}-logs.txt`,
-    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+    defaultPath: `lnwjud-${request.source}-logs.log`,
+    filters: [{ name: 'Log file', extensions: ['log'] }, { name: 'Text file', extensions: ['txt'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) {
     return { exported: false };
   }
   async function* serializedRows(): AsyncIterable<string> {
-    for (const captured of capturedRows) {
+    yield formatLogExportHeader(locale, 'Live Logs', request.source, capturedRows.length);
+    for (const [index, captured] of capturedRows.entries()) {
       const { reference, line } = captured;
       if (line === null) {
-        yield `Live Log row unavailable [line:${reference.lineId}]: the captured identity is no longer present.`;
+        yield `${formatLogEntryHeading(index + 1)}\r\n${locale === 'th' ? 'สถานะ' : 'Status'}: ${locale === 'th' ? 'ไม่พบรายการที่จับไว้แล้ว' : 'Captured row is no longer available'}\r\nlineId=${reference.lineId}`;
         continue;
       }
-      const base = `${formatExportLogTimestamp(line.timestamp, locale)} [${line.level.toUpperCase()}] ${line.text}`;
+      const labels = locale === 'th'
+        ? { time: 'เวลา', level: 'ระดับ', message: 'ข้อความ', source: 'แหล่งที่มา', workspace: 'Workspace', session: 'Session', technical: 'ข้อมูลทางเทคนิค' }
+        : { time: 'Time', level: 'Level', message: 'Message', source: 'Source', workspace: 'Workspace', session: 'Session', technical: 'Technical metadata' };
+      const readable = [
+        formatLogEntryHeading(index + 1),
+        `${labels.time}: ${formatExportLogTimestamp(line.timestamp, locale)}`,
+        `${labels.level}: ${line.level.toUpperCase()}`,
+        `${labels.source}: ${line.source}`,
+        `${labels.workspace}: ${line.workspaceId ?? '-'}`,
+        `${labels.session}: ${line.sessionId ?? '-'}`,
+        `${labels.message}: ${line.text}`,
+      ];
       const metadata = [
         `lineId=${line.id}`,
         `source=${line.source}`,
@@ -988,7 +1000,7 @@ async function exportLogsToFile(
           `pid=${line.correlation.pid ?? '<none>'}`,
         ] : []),
       ];
-      const baseWithMetadata = `${base}\r\n${metadata.join('\r\n')}`;
+      const baseWithMetadata = `${readable.join('\r\n')}\r\n\r\n${labels.technical}:\r\n${metadata.map((entry) => `  ${entry}`).join('\r\n')}`;
       const targetDetail = line.targetDetail;
       if (targetDetail?.legacyIncomplete === true && targetDetail.itemCount > targetDetail.preview.length) {
         yield formatIncompleteLegacyHistory(baseWithMetadata);
@@ -1007,14 +1019,42 @@ async function exportLogsToFile(
 
 async function exportWorkLogToFile(window: BrowserWindow | null, services: DesktopIpcServices, request: ExportWorkLogRequest): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
+  const locale = request.locale ?? desktopLocale;
   const result = await dialog.showSaveDialog(window, {
     title: 'Export lnwjud work log',
-    defaultPath: 'lnwjud-work-log.txt',
-    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+    defaultPath: 'lnwjud-work-log.log',
+    filters: [{ name: 'Log file', extensions: ['log'] }, { name: 'Text file', extensions: ['txt'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
-  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds, request.locale ?? desktopLocale));
+  async function* serializedRows(): AsyncIterable<string> {
+    yield formatLogExportHeader(locale, locale === 'th' ? 'บันทึกการทำงาน' : 'Work Log', 'mcp', request.rowIds.length);
+    let index = 0;
+    for await (const row of services.streamWorkLogExportRows(request.rowIds, locale)) {
+      index += 1;
+      yield `${formatLogEntryHeading(index)}\r\n${row}`;
+    }
+  }
+  await writeSerializedLogRows(result.filePath, serializedRows());
   return { exported: true };
+}
+
+function formatLogExportHeader(locale: UiLocale, title: string, source: string, rows: number): string {
+  const labels = locale === 'th'
+    ? { exported: 'เวลาส่งออก', source: 'แหล่งข้อมูล', rows: 'จำนวนรายการ' }
+    : { exported: 'Exported', source: 'Source', rows: 'Rows' };
+  return [
+    '============================================================',
+    `lnwjud - ${title}`,
+    '============================================================',
+    `${labels.exported}: ${formatExportLogTimestamp(new Date().toISOString(), locale)}`,
+    `${labels.source}: ${source}`,
+    `${labels.rows}: ${rows}`,
+    '============================================================',
+  ].join('\r\n');
+}
+
+function formatLogEntryHeading(index: number): string {
+  return `\r\n-------------------- #${index} --------------------`;
 }
 
 function formatExportLogTimestamp(value: string, locale: UiLocale): string {
@@ -2132,7 +2172,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     applyDesktopUserSettings(runtime.getUserSettings());
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start();
+    runtime.logHub.start({ skipExisting: true });
     registerIpcHandlers(() => mainWindow, runtime.services, {
       onLocaleChanged: setDesktopLocale,
       onUserSettingsChanged: applyDesktopUserSettings,
@@ -2175,7 +2215,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start();
+    runtime.logHub.start({ skipExisting: true });
     registerIpcHandlers(() => mainWindow, runtime.services, { ipcDrainBarrier: desktopIpcDrainBarrier });
     const viewer = openLogViewerWindow();
     if (viewer !== null) {

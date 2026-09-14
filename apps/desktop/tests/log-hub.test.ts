@@ -122,6 +122,24 @@ describe('LogHub', () => {
     expect(hub.snapshot().lines.find((line) => line.text === 'boom')?.level).toBe('error');
   });
 
+  it('can start a fresh visible session without replaying existing tunnel history', async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-fresh-session-'));
+    temporaryRoots.push(root);
+    const logPath = path.join(root, 'lnwjud-tunnel.log');
+    await writeFile(logPath, '{"level":"info","msg":"old session"}\n', 'utf8');
+
+    const hub = new LogHub({ tunnelLogPath: logPath });
+    hub.start({ skipExisting: true });
+    expect(hub.snapshot().lines).toHaveLength(0);
+
+    await appendFile(logPath, '{"level":"info","msg":"current session"}\n', 'utf8');
+    await vi.advanceTimersByTimeAsync(700);
+    hub.stop();
+
+    expect(hub.snapshot().lines.map((line) => line.text)).toEqual(['current session']);
+  });
+
   it('normalizes structured tunnel lifecycle fields into bounded categories', async () => {
     vi.useFakeTimers();
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-lifecycle-'));

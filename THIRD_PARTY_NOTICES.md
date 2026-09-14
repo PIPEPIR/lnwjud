@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-lnwjud v4.70.0 includes pinned resources from the following MIT-licensed projects.
+lnwjud v4.70.1 includes pinned resources from the following MIT-licensed projects.
 
 ## Everything Claude Code / ECC (`ecc-universal` 2.2.1)
 
