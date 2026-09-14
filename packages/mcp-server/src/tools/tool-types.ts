@@ -54,6 +54,8 @@ export interface McpApplicationServices {
   readonly runtimeTiming?: () => McpRuntimeTiming;
   /** Pinned ECC provider resources injected by the host composition root. */
   readonly eccRuntimeOptions?: EccRuntimeOptions;
+  /** Optional host-owned consent gate. When present, ECC runtime actions cannot override it. */
+  readonly eccEnabledProvider?: () => boolean;
   /** Test-only deterministic override for Windows Sandbox discovery; production runtimes leave this undefined. */
   readonly sandboxRuntimeOptions?: { readonly platform?: NodeJS.Platform; readonly sandboxExecutable?: string };
   /** Test-only deterministic override for native event-log queries; production runtimes leave this undefined. */

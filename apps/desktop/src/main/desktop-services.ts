@@ -66,6 +66,7 @@ import {
   MIN_CONFIGURABLE_WAIT_SECONDS,
   MAX_CONFIGURABLE_WAIT_SECONDS,
   DEFAULT_CODEX_TOOLS_ENABLED,
+  DEFAULT_ECC_ENABLED,
   DEFAULT_PONYTAIL_MODE,
   DEFAULT_TUNNEL_MAX_AUTO_RESTARTS,
   DEFAULT_RECOVERY_RETENTION_DAYS,
@@ -482,6 +483,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
     ...(options.eccRuntimeOptions === undefined ? {} : { eccRuntimeOptions: options.eccRuntimeOptions }),
+    eccEnabledProvider: (): boolean => readSettings().eccEnabled === true,
     runtimeTiming: () => ({ mcpPollWaitSeconds: readSettings().mcpPollWaitSeconds }),
     localProviders: () => {
       const settings = readSettings();
@@ -992,6 +994,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const toolCatalogOptions: ToolCatalogServiceOptions = {
     profileDecision: (permission): ToolProfileDecision => permission === 'UNKNOWN' ? 'UNKNOWN' : activePermissionProfile().defaults[permission],
     codexEnabled: (): boolean => readSettings().codexToolsEnabled,
+    eccEnabled: (): boolean => readSettings().eccEnabled === true,
     toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
     externalItems: (locale): Promise<readonly ToolCatalogItem[]> => projectExternalMcpTools(extensionsService, locale),
   };
@@ -2043,6 +2046,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    eccEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.eccEnabled), DEFAULT_ECC_ENABLED),
     ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
     updateAutoCheck: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateAutoCheck), true),
     updateCheckOnStartup: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateCheckOnStartup), true),
@@ -2072,6 +2076,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
+  settingsRepository.set(USER_SETTING_KEYS.eccEnabled, settings.eccEnabled === true ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
   settingsRepository.set(USER_SETTING_KEYS.updateAutoCheck, settings.updateAutoCheck ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateCheckOnStartup, settings.updateCheckOnStartup ? 'true' : 'false');

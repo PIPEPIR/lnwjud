@@ -119,8 +119,8 @@ interface RuntimeEccConfiguration {
 }
 
 const DEFAULT_ECC_CONFIGURATION: RuntimeEccConfiguration = Object.freeze({
-  enabled: true,
-  activationMode: 'selective',
+  enabled: false,
+  activationMode: 'disabled',
   hookProfile: 'standard',
   userMemoryEnabled: false,
   selectedRules: [],
@@ -221,6 +221,31 @@ export class UpgradeRuntimeService {
     this.lsp = new LspRuntimeService(services, actor);
     this.documents = new DocumentRuntimeService(services, actor);
     this.diagnostics = createPlatformDiagnosticsProvider(platform);
+  }
+
+  private hostEccEnabled(): boolean | undefined {
+    if (this.services.eccEnabledProvider === undefined) return undefined;
+    try {
+      return this.services.eccEnabledProvider() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private effectiveEccConfiguration(): RuntimeEccConfiguration {
+    const hostEnabled = this.hostEccEnabled();
+    if (hostEnabled === undefined) return this.eccConfig;
+    return {
+      ...this.eccConfig,
+      enabled: hostEnabled,
+      activationMode: hostEnabled ? 'selective' : 'disabled',
+    };
+  }
+
+  private async requireEccEnabled(tool: string): Promise<Result<unknown> | undefined> {
+    await this.refreshSharedState();
+    if (this.effectiveEccConfiguration().enabled) return undefined;
+    return ok(truthfulUnavailable(tool, 'disabled', ['enable ECC in host Settings']));
   }
 
   public async execute(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -965,6 +990,8 @@ export class UpgradeRuntimeService {
       for (const task of rawTasks) {
         let prompt = task.prompt;
         if (task.eccAgentId !== undefined) {
+          const disabled = await this.requireEccEnabled(name);
+          if (disabled !== undefined) return disabled;
           if (!task.eccAgentId.startsWith('ecc:agent:')) return err(appError('INVALID_INPUT', 'eccAgentId must be an ECC agent id from ecc_catalog'));
           const loaded = await this.ecc.loadTextArtifact(task.eccAgentId);
           if (loaded === undefined) return err(appError('FILE_NOT_FOUND', `ECC agent not found or failed provenance verification: ${task.eccAgentId}`));
@@ -1603,14 +1630,15 @@ export class UpgradeRuntimeService {
   private async eccStatus(): Promise<Result<unknown>> {
     await this.refreshSharedState();
     const provider = await this.ecc.status();
+    const configuration = this.effectiveEccConfiguration();
     return ok({
       tool: 'ecc_status',
-      status: provider.ready ? 'ready' : 'needs_setup',
+      status: !configuration.enabled ? 'disabled' : provider.ready ? 'ready' : 'needs_setup',
       available: provider.available,
-      ready: provider.ready,
+      ready: configuration.enabled && provider.ready,
       executed: true,
       provider,
-      configuration: this.eccConfig,
+      configuration,
       authority: {
         runtime: 'lnwjud',
         permissions: 'lnwjud',
@@ -1622,6 +1650,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccCatalog(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_catalog');
+    if (disabled !== undefined) return disabled;
     const kind = parseEccArtifactKind(readString(input, 'kind'));
     if (readString(input, 'kind') !== undefined && kind === undefined) {
       return err(appError('INVALID_INPUT', 'ecc_catalog kind must be agent, skill, command, rule, hook, workflow, mcp_template, instinct, or resource'));
@@ -1636,6 +1666,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccLoad(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_load');
+    if (disabled !== undefined) return disabled;
     const id = readString(input, 'id') ?? readString(input, 'artifactId');
     if (id === undefined || !id.startsWith('ecc:')) return err(appError('INVALID_INPUT', 'ecc_load requires a stable ECC artifact id from ecc_catalog'));
     const provider = await this.ecc.status();
@@ -1657,10 +1689,19 @@ export class UpgradeRuntimeService {
 
   private async configureEcc(input: Record<string, unknown>): Promise<Result<unknown>> {
     if (this.stateStore === undefined) return ok(truthfulUnavailable('ecc_configure', 'needs_setup', ['persistent runtime state path']));
-    const enabled = typeof input.enabled === 'boolean' ? input.enabled : this.eccConfig.enabled;
+    await this.refreshSharedState();
+    const hostEnabled = this.hostEccEnabled();
+    if (hostEnabled !== undefined && typeof input.enabled === 'boolean' && input.enabled !== hostEnabled) {
+      return err(appError('INVALID_INPUT', 'ECC enable/disable is controlled by host Settings'));
+    }
+    const enabled = hostEnabled ?? (typeof input.enabled === 'boolean' ? input.enabled : this.eccConfig.enabled);
     const requestedMode = readString(input, 'mode');
     if (requestedMode !== undefined && requestedMode !== 'disabled' && requestedMode !== 'selective') {
       return err(appError('INVALID_INPUT', 'ECC activation mode must be disabled or selective'));
+    }
+    const hostMode = hostEnabled === undefined ? undefined : hostEnabled ? 'selective' : 'disabled';
+    if (hostMode !== undefined && requestedMode !== undefined && requestedMode !== hostMode) {
+      return err(appError('INVALID_INPUT', 'ECC activation mode is controlled by host Settings'));
     }
     const requestedProfile = readString(input, 'hookProfile');
     if (requestedProfile !== undefined && !['minimal', 'standard', 'strict'].includes(requestedProfile)) {
@@ -1684,7 +1725,7 @@ export class UpgradeRuntimeService {
       this.replaceSharedState(persisted);
       return ok({
         tool: 'ecc_configure', status: 'ready', available: true, ready: true, executed: true,
-        configuration: this.eccConfig,
+        configuration: this.effectiveEccConfiguration(),
         importedHooksAutoExecuted: false,
         importedMcpTemplatesAutoStarted: false,
         importedArtifactsGrantAuthority: false,
@@ -1696,6 +1737,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccMemorySave(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_memory_save');
+    if (disabled !== undefined) return disabled;
     const root = await this.eccMemoryWorkspaceRoot('ecc_memory_save', input);
     if (!root.ok) return root;
     const title = readString(input, 'title');
@@ -1739,6 +1782,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccMemorySearch(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_memory_search');
+    if (disabled !== undefined) return disabled;
     const root = await this.eccMemoryWorkspaceRoot('ecc_memory_search', input);
     if (!root.ok) return root;
     const query = readString(input, 'query');
@@ -1769,6 +1814,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccMemoryRead(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_memory_read');
+    if (disabled !== undefined) return disabled;
     const root = await this.eccMemoryWorkspaceRoot('ecc_memory_read', input);
     if (!root.ok) return root;
     const id = readString(input, 'id');
@@ -1796,6 +1843,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccMemoryDoctor(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_memory_doctor');
+    if (disabled !== undefined) return disabled;
     const root = await this.eccMemoryWorkspaceRoot('ecc_memory_doctor', input);
     if (!root.ok) return root;
     let scopes: EccMemoryScope[];
@@ -1831,6 +1880,8 @@ export class UpgradeRuntimeService {
   }
 
   private async eccSecurityScan(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+    const disabled = await this.requireEccEnabled('ecc_security_scan');
+    if (disabled !== undefined) return disabled;
     const provider = await this.ecc.status();
     if (!provider.ready || provider.rootPath === null) return ok(truthfulUnavailable('ecc_security_scan', 'needs_setup', ['pinned ECC runtime resource']));
     if (!provider.agentShieldBundled || provider.agentShieldBundlePath === null) return ok(truthfulUnavailable('ecc_security_scan', 'needs_setup', ['bundled pinned AgentShield scanner']));
@@ -1873,10 +1924,13 @@ export class UpgradeRuntimeService {
 
   private async skillInsight(name: string, input: Record<string, unknown>): Promise<Result<unknown>> {
     const extensions = this.services.extensions;
+    await this.refreshSharedState();
+    const eccEnabled = this.effectiveEccConfiguration().enabled;
 
     if (name === 'skill_match') {
       const query = readString(input, 'query') ?? readString(input, 'prompt') ?? '';
       const source = readString(input, 'source')?.trim().toLowerCase();
+      if (source === 'ecc' && !eccEnabled) return ok(truthfulUnavailable(name, 'disabled', ['enable ECC in host Settings']));
       const skills: unknown[] = [];
       if (source !== 'ecc') {
         if (extensions === undefined) {
@@ -1890,7 +1944,7 @@ export class UpgradeRuntimeService {
           skills.push(...listed.value.skills);
         }
       }
-      if (source === undefined || source === 'ecc') {
+      if (eccEnabled && (source === undefined || source === 'ecc')) {
         const provider = await this.ecc.status();
         if (provider.ready && provider.rootPath !== null) {
           const rootPath = provider.rootPath;
@@ -1920,6 +1974,7 @@ export class UpgradeRuntimeService {
     const skillId = requestedSkillId.startsWith('$') ? requestedSkillId.slice(1) : requestedSkillId;
     const relativePath = readString(input, 'relativePath') ?? readString(input, 'path');
     if (skillId.startsWith('ecc:skill:')) {
+      if (!eccEnabled) return ok(truthfulUnavailable(name, 'disabled', ['enable ECC in host Settings']));
       const loaded = relativePath === undefined
         ? await this.ecc.loadTextArtifact(skillId)
         : await this.ecc.loadRelativeTextArtifact(skillId, relativePath);

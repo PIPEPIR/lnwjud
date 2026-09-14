@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FileActor } from '@lnwjud/application';
 import { ok } from '@lnwjud/domain';
+import { ToolRegistry } from './tool-registry.js';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
@@ -31,9 +32,37 @@ async function eccFixture(): Promise<string> {
 }
 
 describe('ECC upgrade runtime adapters', () => {
+  it('keeps ECC opt-in and exposes only status until host Settings enables it', async () => {
+    const rootPath = await eccFixture();
+    let enabled = false;
+    const services = { eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' }, eccEnabledProvider: () => enabled, runtimeStatePath: path.join(rootPath, 'runtime.json') } as McpApplicationServices;
+    const runtime = new UpgradeRuntimeService(services, actor);
+    const registry = new ToolRegistry(services, actor);
+
+    await expect(runtime.execute('ecc_status', {})).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'disabled', ready: false, provider: { ready: true }, configuration: { enabled: false, activationMode: 'disabled' } },
+    });
+    await expect(runtime.execute('ecc_catalog', {})).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'ecc_catalog', status: 'disabled', available: false, executed: false },
+    });
+    expect(registry.list().map((tool) => tool.name)).toContain('ecc_status');
+    expect(registry.list().map((tool) => tool.name)).not.toContain('ecc_catalog');
+    await expect(runtime.execute('ecc_configure', { enabled: true })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    enabled = true;
+    expect(registry.list().map((tool) => tool.name)).toContain('ecc_catalog');
+    await expect(runtime.execute('ecc_configure', { mode: 'disabled' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    await expect(runtime.execute('skill_match', { query: 'tdd', source: 'ecc' })).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'ready', skills: [{ id: 'ecc:skill:skills/tdd/SKILL.md' }] },
+    });
+  });
+
   it('adds pinned ECC skills to skill_match without requiring an external skill catalog', async () => {
     const rootPath = await eccFixture();
-    const services = { eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' } } as McpApplicationServices;
+    const services = { eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' }, eccEnabledProvider: () => true } as McpApplicationServices;
     const runtime = new UpgradeRuntimeService(services, actor);
 
     await expect(runtime.execute('skill_match', { query: 'tdd', source: 'ecc' })).resolves.toMatchObject({
@@ -49,7 +78,7 @@ describe('ECC upgrade runtime adapters', () => {
 
   it('loads ECC SKILL.md and bounded relative references through verified provider artifacts', async () => {
     const rootPath = await eccFixture();
-    const services = { eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' } } as McpApplicationServices;
+    const services = { eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' }, eccEnabledProvider: () => true } as McpApplicationServices;
     const runtime = new UpgradeRuntimeService(services, actor);
     const skillId = 'ecc:skill:skills/tdd/SKILL.md';
 
@@ -72,6 +101,7 @@ describe('ECC upgrade runtime adapters', () => {
     let startedInput: Record<string, unknown> | undefined;
     const services = {
       eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' },
+      eccEnabledProvider: () => true,
       agentSwarm: {
         async start(_actor: unknown, input: Record<string, unknown>) {
           startedInput = input;
@@ -102,6 +132,7 @@ describe('ECC upgrade runtime adapters', () => {
     temporaryRoots.push(workspaceRoot);
     const services = {
       eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1', agentShieldBundlePath: scannerPath },
+      eccEnabledProvider: () => true,
       workspaceInfo: {
         async info() { return ok({ realRootPath: workspaceRoot }); },
       },
@@ -129,6 +160,7 @@ describe('ECC upgrade runtime adapters', () => {
     temporaryRoots.push(workspaceRoot);
     const services = {
       eccRuntimeOptions: { rootPath, expectedVersion: '2.2.1' },
+      eccEnabledProvider: () => true,
       workspaceInfo: {
         async info() { return ok({ realRootPath: workspaceRoot }); },
       },

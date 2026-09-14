@@ -215,7 +215,7 @@ describe('tool runtime delivery contract', () => {
 
   it.each(Object.entries(TOOL_RUNTIME_FIXTURES))('%s produces its declared runtime evidence', async (name, fixture) => {
     const calls: string[] = [];
-    const registry = new ToolRegistry(successServices(calls), actor, { codexToolsEnabled: true });
+    const registry = new ToolRegistry({ ...successServices(calls), eccEnabledProvider: (): boolean => true }, actor, { codexToolsEnabled: true });
     const input = await preparedInput(registry, name, fixture);
     const generationBefore = fixture.prepare === 'cache_seed' ? await cacheGeneration(registry) : undefined;
     const callsBefore = calls.length;

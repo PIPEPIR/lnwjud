@@ -269,6 +269,13 @@ export class ToolRegistry {
   }
 
   private isEffectivelyExposed(name: string): boolean {
+    if (name.startsWith('ecc_') && name !== 'ecc_status' && this.services.eccEnabledProvider !== undefined) {
+      try {
+        if (this.services.eccEnabledProvider() !== true) return false;
+      } catch {
+        return false;
+      }
+    }
     return resolveEffectiveToolAvailability({
       name,
       snapshot: this.currentToolAvailabilitySnapshot(),

@@ -416,6 +416,7 @@ describe('DesktopRuntime persistence', () => {
     const firstRuntime = createDesktopRuntime(dataRoot);
     try {
       const initial = firstRuntime.getUserSettings();
+      expect(initial.eccEnabled).toBe(false);
       const next = {
         ...initial,
         mcpCallTimeoutMs: 120_000,
@@ -427,6 +428,7 @@ describe('DesktopRuntime persistence', () => {
         pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
         lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
         codexToolsEnabled: true,
+        eccEnabled: true,
         updateAutoCheck: false,
         updateCheckOnStartup: false,
         updateIntervalMinutes: 120,
@@ -481,6 +483,7 @@ describe('DesktopRuntime persistence', () => {
           pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
           lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
           codexToolsEnabled: true,
+          eccEnabled: true,
           updateAutoCheck: false,
           updateCheckOnStartup: false,
           updateIntervalMinutes: 120,

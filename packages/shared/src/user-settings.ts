@@ -12,6 +12,7 @@ export const USER_SETTING_KEYS = Object.freeze({
   lspCommands: 'lsp_commands',
   mcpHttpPort: 'mcp_http_port',
   codexToolsEnabled: 'codex_tools_enabled',
+  eccEnabled: 'ecc_enabled',
   ponytailMode: 'ponytail_mode',
   toolAvailability: 'tool_availability_v1',
   updateAutoCheck: 'update_auto_check',
@@ -34,6 +35,7 @@ export const DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS = 60;
 export const MIN_CONFIGURABLE_WAIT_SECONDS = 5;
 export const MAX_CONFIGURABLE_WAIT_SECONDS = 60;
 export const DEFAULT_CODEX_TOOLS_ENABLED = false;
+export const DEFAULT_ECC_ENABLED = false;
 export const DEFAULT_UPDATE_INTERVAL_MINUTES = 30;
 export const DEFAULT_TUNNEL_MAX_AUTO_RESTARTS = 5;
 export const DEFAULT_RECOVERY_RETENTION_DAYS = 30;

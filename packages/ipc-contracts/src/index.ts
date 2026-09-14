@@ -286,6 +286,8 @@ export interface UserSettings {
   readonly lspCommands: Readonly<Record<string, string>>;
   readonly mcpHttpPort: number;
   readonly codexToolsEnabled: boolean;
+  /** Host-owned ECC consent gate. Missing/false means ECC stays disabled. */
+  readonly eccEnabled?: boolean;
   readonly ponytailMode: 'off' | 'lite' | 'full' | 'ultra';
   readonly updateAutoCheck: boolean;
   readonly updateCheckOnStartup: boolean;
