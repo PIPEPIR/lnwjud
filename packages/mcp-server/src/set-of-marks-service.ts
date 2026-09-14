@@ -42,14 +42,70 @@ interface StoredObservation {
   readonly uiParameters: Readonly<Record<string, unknown>>;
 }
 
+const MAX_STORED_OBSERVATIONS = 32;
+const MAX_STORED_IMAGE_BASE64_CHARS = 64 * 1024 * 1024;
+
 export class SetOfMarksObservationStore {
   private readonly observations = new Map<string, StoredObservation>();
+  private retainedImageBase64Chars = 0;
+  private expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
-  public get(observationId: string): StoredObservation | undefined { return this.observations.get(observationId); }
-  public set(observation: StoredObservation): void { this.observations.set(observation.observationId, observation); }
-  public delete(observationId: string): void { this.observations.delete(observationId); }
+  public constructor(private readonly now: () => number = Date.now) {}
+
+  public get(observationId: string): StoredObservation | undefined {
+    const observation = this.observations.get(observationId);
+    if (observation !== undefined && this.now() >= observation.expiresAtMs) {
+      this.delete(observationId);
+      return undefined;
+    }
+    return observation;
+  }
+
+  public set(observation: StoredObservation): void {
+    this.remove(observation.observationId);
+    this.observations.set(observation.observationId, observation);
+    this.retainedImageBase64Chars += observation.image.data_base64.length;
+    this.pruneExpired(this.now());
+    while (this.observations.size > MAX_STORED_OBSERVATIONS || this.retainedImageBase64Chars > MAX_STORED_IMAGE_BASE64_CHARS) {
+      const oldestId = this.observations.keys().next().value;
+      if (typeof oldestId !== 'string') break;
+      this.remove(oldestId);
+    }
+    this.scheduleExpiry();
+  }
+
+  public delete(observationId: string): void {
+    if (this.remove(observationId)) this.scheduleExpiry();
+  }
+
   public pruneExpired(now: number): void {
-    for (const [id, observation] of this.observations) if (now >= observation.expiresAtMs) this.observations.delete(id);
+    for (const [id, observation] of this.observations) {
+      if (now >= observation.expiresAtMs) this.remove(id);
+    }
+    this.scheduleExpiry();
+  }
+
+  private remove(observationId: string): boolean {
+    const observation = this.observations.get(observationId);
+    if (observation === undefined) return false;
+    this.observations.delete(observationId);
+    this.retainedImageBase64Chars = Math.max(0, this.retainedImageBase64Chars - observation.image.data_base64.length);
+    return true;
+  }
+
+  private scheduleExpiry(): void {
+    if (this.expiryTimer !== undefined) clearTimeout(this.expiryTimer);
+    this.expiryTimer = undefined;
+    let nearestExpiry = Number.POSITIVE_INFINITY;
+    for (const observation of this.observations.values()) nearestExpiry = Math.min(nearestExpiry, observation.expiresAtMs);
+    if (!Number.isFinite(nearestExpiry)) return;
+    const delayMs = Math.max(0, Math.min(2_147_483_647, nearestExpiry - this.now()));
+    const timer = setTimeout(() => {
+      this.expiryTimer = undefined;
+      this.pruneExpired(this.now());
+    }, delayMs);
+    timer.unref?.();
+    this.expiryTimer = timer;
   }
 }
 
@@ -75,7 +131,7 @@ export class SetOfMarksService {
     this.now = options.now ?? Date.now;
     this.defaultTtlSeconds = clamp(options.defaultTtlSeconds ?? 120, 1, 300);
     this.maxTtlSeconds = clamp(options.maxTtlSeconds ?? 300, this.defaultTtlSeconds, 300);
-    this.store = options.store ?? new SetOfMarksObservationStore();
+    this.store = options.store ?? new SetOfMarksObservationStore(this.now);
     this.ownerKey = options.ownerKey?.trim() || 'local';
   }
 

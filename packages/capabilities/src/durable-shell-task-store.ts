@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -190,8 +190,11 @@ export class DurableShellTaskStore {
     const snapshots: Record<string, unknown>[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const snapshot = await this.snapshot(entry.name, undefined, owner);
-      if (snapshot.ok) snapshots.push(snapshot.value);
+      const metadata = await this.readMetadata(entry.name);
+      if (!metadata.ok) continue;
+      if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) continue;
+      const reconciled = await this.reconcile(metadata.value);
+      snapshots.push(await this.snapshotFromMetadata(reconciled, undefined, false));
     }
     return snapshots.sort((left, right) => String(right.started_at ?? '').localeCompare(String(left.started_at ?? '')));
   }
@@ -309,8 +312,19 @@ export class DurableShellTaskStore {
   }
 
   private async activeTaskCount(): Promise<number> {
-    const tasks = await this.list();
-    return tasks.filter((task) => task.state === 'running' || task.state === 'termination_unverified').length;
+    await mkdir(this.rootDirectory, { recursive: true });
+    const entries = await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []);
+    let activeTasks = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const metadata = await this.readMetadata(entry.name);
+      if (!metadata.ok) continue;
+      const reconciled = await this.reconcile(metadata.value);
+      if (reconciled.state !== 'running' && reconciled.state !== 'termination_unverified') continue;
+      activeTasks += 1;
+      if (activeTasks >= this.maxConcurrentTasks) break;
+    }
+    return activeTasks;
   }
 
   private async reconcile(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
@@ -371,10 +385,10 @@ export class DurableShellTaskStore {
     return current;
   }
 
-  private async snapshotFromMetadata(metadata: DurableTaskMetadata, tailLines?: number): Promise<Record<string, unknown>> {
+  private async snapshotFromMetadata(metadata: DurableTaskMetadata, tailLines?: number, includeOutput = true): Promise<Record<string, unknown>> {
     const taskDirectory = this.taskDirectory(metadata.task_id);
-    const stdout = metadata.include_stdout ? await readBoundedText(path.join(taskDirectory, STDOUT_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
-    const stderr = metadata.include_stderr ? await readBoundedText(path.join(taskDirectory, STDERR_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
+    const stdout = includeOutput && metadata.include_stdout ? await readBoundedText(path.join(taskDirectory, STDOUT_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
+    const stderr = includeOutput && metadata.include_stderr ? await readBoundedText(path.join(taskDirectory, STDERR_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
     return {
       task_id: metadata.task_id,
       state: metadata.state,
@@ -525,12 +539,24 @@ function isTerminalValue(value: unknown): value is DurableShellTaskState {
 }
 
 async function readBoundedText(filename: string, maxBytes: number, tailLines?: number): Promise<string> {
+  const boundedBytes = Number.isFinite(maxBytes)
+    ? Math.max(0, Math.min(Math.floor(maxBytes), 8 * 1024 * 1024))
+    : 0;
+  if (boundedBytes === 0) return '';
   let value = '';
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const buffer = await readFile(filename);
-    value = buffer.subarray(0, maxBytes).toString('utf8');
+    handle = await open(filename, 'r');
+    const fileSize = (await handle.stat()).size;
+    const bytesToRead = Math.min(boundedBytes, Math.max(0, fileSize));
+    if (bytesToRead === 0) return '';
+    const buffer = Buffer.allocUnsafe(bytesToRead);
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+    value = buffer.subarray(0, bytesRead).toString('utf8');
   } catch {
     return '';
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
   value = redactText(value);
   if (tailLines === undefined || tailLines < 1) return tailLines === 0 ? '' : value;
