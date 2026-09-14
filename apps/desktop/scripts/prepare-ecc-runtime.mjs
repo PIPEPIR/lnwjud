@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { stdout } from 'node:process';
+import { execPath, stdout } from 'node:process';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
 
@@ -49,7 +49,7 @@ await build({
 });
 
 const upstreamScannerVersionResult = await execFileAsync(
-  process.execPath,
+  execPath,
   [scannerRuntimeBundlePath, '--version'],
   { windowsHide: true, maxBuffer: 1024 * 1024 },
 );
@@ -61,7 +61,7 @@ const scannerWrapper = [
   `const PINNED_AGENTSHIELD_VERSION = ${JSON.stringify(EXPECTED_SCANNER_VERSION)};`,
   'const args = process.argv.slice(2);',
   "if (args.length === 1 && (args[0] === '--version' || args[0] === '-V')) {",
-  "  process.stdout.write(\`${PINNED_AGENTSHIELD_VERSION}\\n\`);",
+  "  process.stdout.write(PINNED_AGENTSHIELD_VERSION + '\\n');",
   '} else {',
   "  require('./.lnwjud-agentshield-runtime.cjs');",
   '}',
@@ -70,7 +70,7 @@ const scannerWrapper = [
 await writeFile(scannerBundlePath, scannerWrapper, 'utf8');
 
 const normalizedScannerVersionResult = await execFileAsync(
-  process.execPath,
+  execPath,
   [scannerBundlePath, '--version'],
   { windowsHide: true, maxBuffer: 1024 * 1024 },
 );
@@ -82,7 +82,7 @@ if (scannerCliVersion !== EXPECTED_SCANNER_VERSION) {
 }
 
 const scannerHelpResult = await execFileAsync(
-  process.execPath,
+  execPath,
   [scannerBundlePath, '--help'],
   { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
 );
