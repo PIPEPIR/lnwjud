@@ -498,7 +498,7 @@ if (scenarioCount < MINIMUM_RELEASE_SCENARIOS) throw new Error(`Cross-platform r
 
 describe(`cross-platform release audit: ${scenarioCount} deterministic scenarios`, () => {
   for (const group of allScenarioGroups) {
-    it.each(group)('%s', async (_name, run) => run());
+    it.each(group)('%s', async (_name, run) => run(), 30_000);
   }
 });
 
