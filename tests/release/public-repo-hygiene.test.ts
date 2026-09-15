@@ -76,7 +76,7 @@ describe('public repository hygiene', () => {
     const version = rootPackage.version as string;
 
     expect(readme).toContain(`## Current version: v${version}`);
-    expect(readme).toContain(`\`v${version}\` is the current source/release-candidate version.`);
+    expect(readme).toContain(`\`v${version}\` is the current public release line.`);
     expect(expandedReadme).toContain(`## Current version: v${version}`);
     expect(packagingWindows).toContain(`lnwjud-Setup-${version}.exe`);
     expect(packagingWindows).toContain(`lnwjud-Portable-${version}.exe`);
