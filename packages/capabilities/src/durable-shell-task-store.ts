@@ -70,6 +70,7 @@ const WORKER_PID_FILENAME = 'worker.pid';
 const WORKER_STARTED_FILENAME = 'worker.started';
 const METADATA_READ_RETRIES = 4;
 const PROCESS_EXIT_RECONCILE_DELAY_MS = 75;
+const PROCESS_EXIT_FINALIZATION_GRACE_MS = 1_000;
 const PROCESS_HANDLE_RELEASE_GRACE_MS = 150;
 const PROCESS_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
 // Host process identity probes start a second PowerShell/`ps` process. Under
@@ -386,6 +387,19 @@ export class DurableShellTaskStore {
       }
     }
     if (current.state === 'termination_unverified') return current;
+
+    // Once both tracked processes are gone, the worker may still be completing its
+    // final atomic metadata rename. This window is observable on busy Windows CI:
+    // declaring failure after a single 75 ms refresh can overwrite a legitimate
+    // completion that is already being persisted. Poll only for terminal metadata
+    // for a short bounded grace period; a genuinely crashed worker still fails closed.
+    const finalizationDeadline = Date.now() + PROCESS_EXIT_FINALIZATION_GRACE_MS;
+    while (Date.now() < finalizationDeadline) {
+      await delay(Math.min(PROCESS_EXIT_RECONCILE_DELAY_MS, Math.max(1, finalizationDeadline - Date.now())));
+      const finalizationRefresh = await this.readMetadata(current.task_id);
+      if (finalizationRefresh.ok && isTerminal(finalizationRefresh.value.state)) return finalizationRefresh.value;
+    }
+
     current.state = 'failed';
     current.exit_code = current.exit_code ?? -1;
     current.error = current.error ?? 'Durable task worker exited before recording a final state';
