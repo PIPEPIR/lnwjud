@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/workspace",
-  "version": "4.70.1",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
   "exports": {

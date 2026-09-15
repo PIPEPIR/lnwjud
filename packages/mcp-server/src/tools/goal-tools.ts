@@ -28,6 +28,27 @@ const stepUpdate = z.object({
   status: stepStatus,
   summary: z.string().max(1024).optional(),
 }).strict();
+const fullPlanStep = z.object({
+  id: z.string().min(1).max(128),
+  title: z.string().min(1).max(512),
+  status: stepStatus,
+  summary: z.string().max(1024).optional(),
+}).strict();
+const acceptanceCriterion = z.object({
+  id: z.string().min(1).max(128),
+  title: z.string().min(1).max(512),
+}).strict();
+const acceptanceUpdate = z.object({
+  criterionId: z.string().min(1).max(128),
+  status: z.enum(['pending', 'completed', 'blocked']),
+  evidence: z.array(evidence).max(20).optional(),
+}).strict();
+const iterationPolicy = z.object({
+  mode: z.enum(['outcome', 'iterate']),
+  maxIterations: z.number().int().min(1).max(100).optional(),
+  stopOnNoNewEvidence: z.boolean().optional(),
+}).strict();
+const deliveryState = z.enum(['reserved', 'attempted_unresolved', 'dispatched_unresolved', 'host_confirmed', 'completed', 'cancelled', 'retired']);
 const trackedTask = z.object({
   taskId: z.string().min(1).max(256),
   provider: z.enum(['process', 'codex', 'shell']),
@@ -40,6 +61,8 @@ const runGoalSchema = z.object({
   goalKey,
   objective: z.string().min(1).max(4096).optional(),
   plan: plan.optional(),
+  acceptanceCriteria: z.array(acceptanceCriterion).max(50).optional(),
+  iterationPolicy: iterationPolicy.optional(),
   ponytailMode: ponytailMode.optional(),
   leaseSeconds: z.number().int().min(MIN_GOAL_LEASE_SECONDS).max(MAX_GOAL_LEASE_SECONDS).default(DEFAULT_GOAL_LEASE_SECONDS),
   scheduledContinuation: z.enum(['auto', 'off']).default('auto'),
@@ -54,6 +77,7 @@ const checkpointGoalSchema = z.object({
   goalId,
   leaseToken,
   expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0).optional(),
   currentPhase: z.string().min(1).max(256),
   summary: z.string().min(1).max(2048),
   stepUpdates: z.array(stepUpdate).max(100),
@@ -69,6 +93,68 @@ const checkpointGoalSchema = z.object({
 }).refine((value) => value.activeTaskIds === undefined || value.trackedTasks === undefined || value.activeTaskIds.length === 0, {
   message: 'Use trackedTasks or activeTaskIds, not both',
 });
+
+const updateGoalPlanSchema = z.object({
+  goalId,
+  leaseToken,
+  expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0).optional(),
+  steps: z.array(fullPlanStep).max(100),
+  summary: z.string().max(2048).optional(),
+}).strict();
+
+const updateGoalAcceptanceSchema = z.object({
+  goalId,
+  leaseToken,
+  expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0).optional(),
+  updates: z.array(acceptanceUpdate).max(50),
+  summary: z.string().max(2048).optional(),
+}).strict();
+
+const reviseGoalIntentSchema = z.object({
+  goalId,
+  leaseToken,
+  expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0),
+  steering: z.string().min(1).max(1024),
+  nextAction: z.string().max(1024).optional(),
+}).strict();
+
+const createContextCapsuleSchema = z.object({
+  goalId,
+  leaseToken,
+  expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0),
+  userSteering: z.array(z.string().min(1).max(1024)).max(50).optional(),
+  completedWork: z.array(z.string().min(1).max(1024)).max(100).optional(),
+  decisions: z.array(z.string().min(1).max(1024)).max(100).optional(),
+  validation: z.array(evidence).max(20).optional(),
+  changedFiles: z.array(z.string().min(1).max(1024)).max(100).optional(),
+  artifacts: z.array(evidence).max(20).optional(),
+}).strict();
+
+const getContextCapsuleSchema = z.object({ capsuleId: z.string().min(1).max(128) }).strict();
+const listContextCapsulesSchema = z.object({ goalId, limit: z.number().int().min(1).max(100).default(20) }).strict();
+const recordDeliveryReceiptSchema = z.object({
+  receiptId: z.string().min(1).max(128),
+  goalId,
+  channel: z.string().min(1).max(128),
+  state: deliveryState,
+  basedOnUserIntentRevision: z.number().int().min(0),
+  externalId: z.string().min(1).max(512).optional(),
+  detail: z.string().max(2048).optional(),
+}).strict();
+const listDeliveryReceiptsSchema = z.object({ goalId, limit: z.number().int().min(1).max(100).default(20) }).strict();
+const advanceGoalIterationSchema = z.object({
+  goalId,
+  leaseToken,
+  expectedRevision: z.number().int().min(0),
+  expectedUserIntentRevision: z.number().int().min(0),
+  evidenceAdded: z.boolean(),
+  nextAction: z.string().min(1).max(1024),
+}).strict();
+const contextPressureSchema = z.object({ goalId }).strict();
 
 const finishGoalSchema = z.object({
   goalId,
@@ -103,7 +189,12 @@ const listGoalsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 }).strict();
 
-export const GOAL_TOOL_NAMES = ['run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals'] as const;
+export const GOAL_TOOL_NAMES = [
+  'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+  'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure',
+  'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
+  'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
+] as const;
 
 export function goalTools(context: McpToolContext): McpToolDefinition[] {
   return [
@@ -122,6 +213,14 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
           leaseSeconds: input.leaseSeconds,
           ...(input.objective === undefined ? {} : { objective: input.objective }),
           ...(input.plan === undefined ? {} : { plan: input.plan }),
+          ...(input.acceptanceCriteria === undefined ? {} : { acceptanceCriteria: input.acceptanceCriteria }),
+          ...(input.iterationPolicy === undefined ? {} : {
+            iterationPolicy: {
+              mode: input.iterationPolicy.mode,
+              ...(input.iterationPolicy.maxIterations === undefined ? {} : { maxIterations: input.iterationPolicy.maxIterations }),
+              ...(input.iterationPolicy.stopOnNoNewEvidence === undefined ? {} : { stopOnNoNewEvidence: input.iterationPolicy.stopOnNoNewEvidence }),
+            },
+          }),
           ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         });
         if (!result.ok) return result;
@@ -195,6 +294,171 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
       handler: async (input) => context.services.goals?.getGoal(context.actor, input) ?? missingService(),
     }),
     defineTool({
+      name: 'get_goal_plan',
+      description: 'Read the user-facing plan projection, acceptance criteria, intent revision, and bounded-iteration policy from authoritative durable goal state. This is a projection, not a second workflow engine.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: getGoalSchema,
+      handler: async (input) => {
+        const result = await context.services.goals?.getGoal(context.actor, input) ?? missingService();
+        if (!result.ok) return result;
+        return ok({
+          goalId: result.value.goalId, goalKey: result.value.goalKey, revision: result.value.revision,
+          userIntentRevision: result.value.userIntentRevision, currentPhase: result.value.currentPhase,
+          plan: result.value.plan, acceptanceCriteria: result.value.acceptanceCriteria,
+          iterationPolicy: result.value.iterationPolicy,
+          ...(result.value.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: result.value.currentContextCapsuleId }),
+          nextAction: result.value.nextAction, blockers: result.value.blockers,
+        });
+      },
+    }),
+    defineTool({
+      name: 'update_goal_plan',
+      description: 'Atomically replace the user-facing durable goal plan through the current lease and revision fence. It only updates plan state; it does not execute plan steps by itself.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: updateGoalPlanSchema,
+      handler: async (input) => context.services.goals?.updateGoalPlan(context.actor, {
+        goalId: input.goalId,
+        leaseToken: input.leaseToken,
+        expectedRevision: input.expectedRevision,
+        ...(input.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: input.expectedUserIntentRevision }),
+        steps: input.steps.map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+          ...(step.summary === undefined ? {} : { summary: step.summary }),
+        })),
+        ...(input.summary === undefined ? {} : { summary: input.summary }),
+      }) ?? missingService(),
+    }),
+    defineTool({
+      name: 'update_goal_acceptance',
+      description: 'Update explicit durable acceptance criteria with evidence. finish_goal(status=completed) remains blocked until every criterion is completed.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: updateGoalAcceptanceSchema,
+      handler: async (input) => context.services.goals?.updateGoalAcceptance(context.actor, {
+        goalId: input.goalId,
+        leaseToken: input.leaseToken,
+        expectedRevision: input.expectedRevision,
+        ...(input.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: input.expectedUserIntentRevision }),
+        updates: input.updates.map((update) => ({
+          criterionId: update.criterionId,
+          status: update.status,
+          ...(update.evidence === undefined ? {} : { evidence: update.evidence }),
+        })),
+        ...(input.summary === undefined ? {} : { summary: input.summary }),
+      }) ?? missingService(),
+    }),
+    defineTool({
+      name: 'revise_goal_intent',
+      description: 'Record accepted newer user steering by incrementing userIntentRevision under the current lease. Older pending delivery receipts are retired so stale generated actions cannot outrank newer user instructions.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: reviseGoalIntentSchema,
+      handler: async (input) => context.services.goals?.reviseGoalIntent(context.actor, {
+        goalId: input.goalId,
+        leaseToken: input.leaseToken,
+        expectedRevision: input.expectedRevision,
+        expectedUserIntentRevision: input.expectedUserIntentRevision,
+        steering: input.steering,
+        ...(input.nextAction === undefined ? {} : { nextAction: input.nextAction }),
+      }) ?? missingService(),
+    }),
+    defineTool({
+      name: 'create_context_capsule',
+      description: 'Create and publish a bounded immutable context capsule from authoritative durable goal state for compact/resume or handoff. Stores decisions/results, not private chain-of-thought, and never opens, clicks, types into, or creates a ChatGPT browser conversation.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: createContextCapsuleSchema,
+      handler: async (input) => context.services.goals?.createContextCapsule(context.actor, {
+        goalId: input.goalId,
+        leaseToken: input.leaseToken,
+        expectedRevision: input.expectedRevision,
+        expectedUserIntentRevision: input.expectedUserIntentRevision,
+        ...(input.userSteering === undefined ? {} : { userSteering: input.userSteering }),
+        ...(input.completedWork === undefined ? {} : { completedWork: input.completedWork }),
+        ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
+        ...(input.validation === undefined ? {} : { validation: input.validation }),
+        ...(input.changedFiles === undefined ? {} : { changedFiles: input.changedFiles }),
+        ...(input.artifacts === undefined ? {} : { artifacts: input.artifacts }),
+      }) ?? missingService(),
+    }),
+    defineTool({
+      name: 'get_context_capsule',
+      description: 'Read one immutable durable context capsule by ID.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: getContextCapsuleSchema,
+      handler: async (input) => context.services.goals?.getContextCapsule(context.actor, input.capsuleId) ?? missingService(),
+    }),
+    defineTool({
+      name: 'list_context_capsules',
+      description: 'List bounded context-capsule lineage for one durable goal.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: listContextCapsulesSchema,
+      handler: async (input) => context.services.goals?.listContextCapsules(context.actor, input.goalId, input.limit) ?? missingService(),
+    }),
+    defineTool({
+      name: 'context_pressure',
+      description: 'Estimate local durable-context pressure from the goal snapshot and latest capsule. This never claims exact ChatGPT/provider context usage when the host does not expose it.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: contextPressureSchema,
+      handler: async (input) => {
+        const goals = context.services.goals;
+        if (goals === undefined) return missingService();
+        const result = await goals.getGoal(context.actor, { goalId: input.goalId });
+        if (!result.ok) return result;
+        const capsuleResult = await goals.listContextCapsules(context.actor, input.goalId, 1);
+        if (!capsuleResult.ok) return capsuleResult;
+        const snapshotBytes = Buffer.byteLength(JSON.stringify(result.value), 'utf8');
+        const latestCapsule = capsuleResult.value[0];
+        const capsuleBytes = latestCapsule === undefined ? 0 : Buffer.byteLength(JSON.stringify(latestCapsule), 'utf8');
+        const localEstimatedTokens = Math.ceil((snapshotBytes + capsuleBytes) / 4);
+        const status = localEstimatedTokens >= 48_000 ? 'high' : localEstimatedTokens >= 16_000 ? 'medium' : 'low';
+        return ok({
+          status, confidence: 'estimated', localEstimatedTokens, snapshotBytes, capsuleBytes,
+          providerContextTokens: null,
+          recommendation: status === 'high' ? 'create_context_capsule_or_resume_from_latest_capsule' : status === 'medium' ? 'consider_context_capsule_at_next_milestone' : 'continue_normally',
+        });
+      },
+    }),
+    defineTool({
+      name: 'record_delivery_receipt',
+      description: 'Record or advance a durable dispatch receipt with explicit ambiguous-delivery states. Blind retries are rejected by lifecycle/state and newer user intent can retire stale deliveries.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: recordDeliveryReceiptSchema,
+      handler: async (input) => context.services.goals?.recordDeliveryReceipt(context.actor, {
+        receiptId: input.receiptId,
+        goalId: input.goalId,
+        channel: input.channel,
+        state: input.state,
+        basedOnUserIntentRevision: input.basedOnUserIntentRevision,
+        ...(input.externalId === undefined ? {} : { externalId: input.externalId }),
+        ...(input.detail === undefined ? {} : { detail: input.detail }),
+      }) ?? missingService(),
+    }),
+    defineTool({
+      name: 'list_delivery_receipts',
+      description: 'List bounded durable dispatch receipts for a goal.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: listDeliveryReceiptsSchema,
+      handler: async (input) => context.services.goals?.listDeliveryReceipts(context.actor, input.goalId, input.limit) ?? missingService(),
+    }),
+    defineTool({
+      name: 'advance_goal_iteration',
+      description: 'Advance one bounded review/improvement iteration under the durable goal lease. It never sends browser messages or creates an autonomous ChatGPT UI loop and cannot exceed maxIterations.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: advanceGoalIterationSchema,
+      handler: async (input) => context.services.goals?.advanceGoalIteration(context.actor, input) ?? missingService(),
+    }),
+    defineTool({
       name: 'checkpoint_goal',
       description: 'Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. A checkpoint records durable progress only; it is not a turn boundary or permission to yield, and it does not create a new Scheduled Task. After an ordinary checkpoint keep useful work moving on the current lease. A transient task/status/log/result observation failure must be retried or re-resolved in the same turn, and a tracked blocking job that becomes terminal must have its terminal result inspected before handoff. Before yielding an active automatic-continuation goal, ensure exactly one confirmed Native ChatGPT hourly recurring watchdog exists with cloud execution requested. Reuse the same nativeTaskId across checkpoints and ordinary hourly wakes; never create a per-wake successor and never retime the recurring cadence merely because a checkpoint changed. Historical v4.52 one-time rows keep their compatibility behavior until they become historical, and one-time plus recurring watchdogs must never overlap for the same goal. A real native task ID is required for confirmed coverage, while execution mode may remain unverified when the host does not expose it. At the actual turn boundary, after confirmed watchdog coverage and the final durable state are recorded, use one final checkpoint with releaseLease=true and then perform no further mutation. Never wait for the user to type continue/ทำต่อ.',
       permission: 'WRITE',
@@ -204,6 +468,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
         goalId: input.goalId,
         leaseToken: input.leaseToken,
         expectedRevision: input.expectedRevision,
+        ...(input.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: input.expectedUserIntentRevision }),
         currentPhase: input.currentPhase,
         summary: input.summary,
         stepUpdates: input.stepUpdates.map((update) => ({

@@ -14,6 +14,14 @@ import {
   type FinishGoalRecordRequest,
   type GoalCheckpointRecord,
   type GoalEvidence,
+  type GoalAcceptanceCriterion,
+  type GoalContextCapsulePayload,
+  type GoalContextCapsuleRecord,
+  type GoalDeliveryReceipt,
+  type GoalDeliveryState,
+  type GoalIterationPolicy,
+  type CreateGoalContextCapsuleRecordRequest,
+  type RecordGoalDeliveryReceiptRequest,
   type GoalPlan,
   type GoalPlanStep,
   type GoalPonytailMode,
@@ -55,6 +63,10 @@ interface GoalRow {
   readonly owner_client_id: string;
   readonly objective: string;
   readonly plan_json: string;
+  readonly acceptance_criteria_json: string;
+  readonly user_intent_revision: number;
+  readonly iteration_policy_json: string;
+  readonly current_context_capsule_id: string | null;
   readonly status: string;
   readonly revision: number;
   readonly current_phase: string;
@@ -91,6 +103,28 @@ interface CheckpointRow {
   readonly active_task_ids_json: string;
   readonly tracked_tasks_json: string | null;
   readonly created_at: string;
+}
+
+interface GoalContextCapsuleRow {
+  readonly id: string;
+  readonly goal_id: string;
+  readonly source_goal_revision: number;
+  readonly source_user_intent_revision: number;
+  readonly previous_capsule_id: string | null;
+  readonly payload_json: string;
+  readonly created_at: string;
+}
+
+interface GoalDeliveryReceiptRow {
+  readonly id: string;
+  readonly goal_id: string;
+  readonly channel: string;
+  readonly state: string;
+  readonly based_on_user_intent_revision: number;
+  readonly external_id: string | null;
+  readonly detail: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 interface ScheduledContinuationRow {
@@ -157,11 +191,12 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         const leaseExpiresAt = addSeconds(request.now, request.leaseSeconds);
         this.database.connection.prepare(`
           INSERT INTO goals (
-            id, workspace_id, goal_key, owner_client_id, objective, plan_json, status, revision,
-            current_phase, next_action, blockers_json, active_task_ids_json, tracked_tasks_json, ponytail_mode,
+            id, workspace_id, goal_key, owner_client_id, objective, plan_json,
+            acceptance_criteria_json, user_intent_revision, iteration_policy_json, current_context_capsule_id,
+            status, revision, current_phase, next_action, blockers_json, active_task_ids_json, tracked_tasks_json, ponytail_mode,
             lease_owner_client_id, lease_owner_session_id, lease_token_hash, lease_duration_seconds, lease_generation, lease_activity_seq, lease_heartbeat_at, lease_expires_at,
             created_at, updated_at, terminal_summary, terminal_evidence_json, terminal_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, 'created', '', '[]', '[]', '[]', ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, NULL, NULL)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', 0, 'created', '', '[]', '[]', '[]', ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, NULL, NULL)
         `).run(
           request.goalId,
           request.workspaceId,
@@ -169,6 +204,8 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           request.ownerClientId,
           request.objective,
           JSON.stringify(request.plan),
+          JSON.stringify(request.acceptanceCriteria ?? []),
+          JSON.stringify(request.iterationPolicy ?? defaultGoalIterationPolicy()),
           request.ponytailMode ?? null,
           request.ownerClientId,
           request.ownerSessionId,
@@ -189,6 +226,12 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       }
       if (request.plan !== undefined && JSON.stringify(request.plan) !== JSON.stringify(existing.plan)) {
         throw new GoalStateError('conflict', 'Existing goal plan does not match the requested plan');
+      }
+      if (request.acceptanceCriteria !== undefined && JSON.stringify(request.acceptanceCriteria) !== JSON.stringify(existing.acceptanceCriteria)) {
+        throw new GoalStateError('conflict', 'Existing goal acceptance criteria do not match the requested criteria');
+      }
+      if (request.iterationPolicy !== undefined && JSON.stringify(request.iterationPolicy) !== JSON.stringify(existing.iterationPolicy)) {
+        throw new GoalStateError('conflict', 'Existing goal iteration policy does not match the requested policy');
       }
       if (existing.status !== 'active') return { goal: existing, acquired: false };
 
@@ -342,6 +385,18 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       const current = this.requireById(request.goalId);
       this.assertOwner(current, request.ownerClientId);
       this.assertMutableLease(current, request.ownerClientId, request.ownerSessionId, request.leaseTokenHash, request.expectedRevision, request.now);
+      if (request.expectedUserIntentRevision !== undefined && request.expectedUserIntentRevision !== current.userIntentRevision) {
+        throw new GoalStateError('conflict', 'Goal user intent changed concurrently');
+      }
+      const acceptanceCriteria = request.acceptanceCriteria ?? current.acceptanceCriteria;
+      const userIntentRevision = request.userIntentRevision ?? current.userIntentRevision;
+      if (!Number.isInteger(userIntentRevision) || userIntentRevision < current.userIntentRevision || userIntentRevision > current.userIntentRevision + 1) {
+        throw new GoalStateError('conflict', 'Goal user intent revision must stay unchanged or advance by exactly one');
+      }
+      const iterationPolicy = request.iterationPolicy ?? current.iterationPolicy;
+      const currentContextCapsuleId = request.currentContextCapsuleId === undefined
+        ? current.currentContextCapsuleId ?? null
+        : request.currentContextCapsuleId;
       const leaseDurationSeconds = current.leaseDurationSeconds;
       if (leaseDurationSeconds === undefined) throw corrupt('Active goal lease duration is missing');
       const revision = current.revision + 1;
@@ -356,12 +411,17 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           : minIso(normalLeaseExpiresAt, liveContinuation.pending_due_at ?? liveContinuation.due_at);
       const changed = this.database.connection.prepare(`
         UPDATE goals
-        SET plan_json = ?, revision = ?, current_phase = ?, next_action = ?, blockers_json = ?, active_task_ids_json = ?, tracked_tasks_json = ?, ponytail_mode = ?,
+        SET plan_json = ?, acceptance_criteria_json = ?, user_intent_revision = ?, iteration_policy_json = ?, current_context_capsule_id = ?,
+            revision = ?, current_phase = ?, next_action = ?, blockers_json = ?, active_task_ids_json = ?, tracked_tasks_json = ?, ponytail_mode = ?,
             lease_owner_client_id = ?, lease_owner_session_id = ?, lease_token_hash = ?, lease_duration_seconds = ?, lease_heartbeat_at = ?, lease_expires_at = ?,
             lease_activity_seq = lease_activity_seq + 1, updated_at = ?
         WHERE id = ? AND revision = ? AND lease_token_hash = ? AND status = 'active'
       `).run(
         JSON.stringify(request.plan),
+        JSON.stringify(acceptanceCriteria),
+        userIntentRevision,
+        JSON.stringify(iterationPolicy),
+        currentContextCapsuleId,
         revision,
         request.currentPhase,
         request.nextAction,
@@ -581,6 +641,105 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       });
       return this.requireById(request.goalId);
     });
+  }
+
+  public async createContextCapsule(request: CreateGoalContextCapsuleRecordRequest): Promise<GoalContextCapsuleRecord> {
+    return this.transaction(() => {
+      const goal = this.requireById(request.goalId);
+      if (goal.revision !== request.sourceGoalRevision) throw new GoalStateError('conflict', 'Context capsule source goal revision is stale');
+      if (goal.userIntentRevision !== request.sourceUserIntentRevision) throw new GoalStateError('conflict', 'Context capsule source user intent revision is stale');
+      if (request.previousCapsuleId !== undefined) {
+        const previous = this.selectContextCapsule(request.previousCapsuleId);
+        if (previous === undefined || previous.goal_id !== request.goalId) throw new GoalStateError('conflict', 'Context capsule lineage is invalid');
+      }
+      try {
+        this.database.connection.prepare(`
+          INSERT INTO goal_context_capsules (
+            id, goal_id, source_goal_revision, source_user_intent_revision, previous_capsule_id, payload_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          request.id,
+          request.goalId,
+          request.sourceGoalRevision,
+          request.sourceUserIntentRevision,
+          request.previousCapsuleId ?? null,
+          JSON.stringify(request.payload),
+          request.createdAt,
+        );
+      } catch (error: unknown) {
+        if (error instanceof Error && /UNIQUE|PRIMARY KEY/i.test(error.message)) throw new GoalStateError('conflict', 'Context capsule already exists');
+        throw error;
+      }
+      const row = this.selectContextCapsule(request.id);
+      if (row === undefined) throw corrupt('Context capsule insert was not readable');
+      return this.toContextCapsule(row);
+    });
+  }
+
+  public async getContextCapsule(capsuleId: string): Promise<GoalContextCapsuleRecord | null> {
+    const row = this.selectContextCapsule(capsuleId);
+    return row === undefined ? null : this.toContextCapsule(row);
+  }
+
+  public async listContextCapsules(goalId: string, limit: number): Promise<readonly GoalContextCapsuleRecord[]> {
+    const rows = this.database.connection.prepare(
+      'SELECT * FROM goal_context_capsules WHERE goal_id = ? ORDER BY created_at DESC LIMIT ?',
+    ).all(goalId, Math.max(1, Math.min(100, Math.trunc(limit))));
+    return rows.map((row) => this.toContextCapsule(this.requireContextCapsuleRow(row)));
+  }
+
+  public async recordDeliveryReceipt(request: RecordGoalDeliveryReceiptRequest): Promise<GoalDeliveryReceipt> {
+    return this.transaction(() => {
+      const goal = this.requireById(request.goalId);
+      const existing = this.selectDeliveryReceipt(request.id);
+      if (existing === undefined) {
+        if (request.state !== 'reserved') throw new GoalStateError('conflict', 'A delivery receipt must begin in reserved state');
+        if (request.basedOnUserIntentRevision !== goal.userIntentRevision) throw new GoalStateError('conflict', 'Delivery receipt is based on stale user intent');
+        this.database.connection.prepare(`
+          INSERT INTO goal_delivery_receipts (
+            id, goal_id, channel, state, based_on_user_intent_revision, external_id, detail, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          request.id,
+          request.goalId,
+          request.channel,
+          request.state,
+          request.basedOnUserIntentRevision,
+          request.externalId ?? null,
+          request.detail ?? null,
+          request.now,
+          request.now,
+        );
+      } else {
+        if (existing.goal_id !== request.goalId || existing.channel !== request.channel || existing.based_on_user_intent_revision !== request.basedOnUserIntentRevision) {
+          throw new GoalStateError('conflict', 'Delivery receipt identity is immutable');
+        }
+        if (!canTransitionDeliveryState(parseDeliveryState(existing.state), request.state)) throw new GoalStateError('conflict', 'Delivery receipt state transition is invalid');
+        if (goal.userIntentRevision !== request.basedOnUserIntentRevision && request.state !== 'retired' && request.state !== 'cancelled') {
+          throw new GoalStateError('conflict', 'Stale delivery can only be retired or cancelled');
+        }
+        this.database.connection.prepare(`
+          UPDATE goal_delivery_receipts
+          SET state = ?, external_id = COALESCE(?, external_id), detail = ?, updated_at = ?
+          WHERE id = ?
+        `).run(request.state, request.externalId ?? null, request.detail ?? null, request.now, request.id);
+      }
+      const row = this.selectDeliveryReceipt(request.id);
+      if (row === undefined) throw corrupt('Delivery receipt write was not readable');
+      return this.toDeliveryReceipt(row);
+    });
+  }
+
+  public async getDeliveryReceipt(receiptId: string): Promise<GoalDeliveryReceipt | null> {
+    const row = this.selectDeliveryReceipt(receiptId);
+    return row === undefined ? null : this.toDeliveryReceipt(row);
+  }
+
+  public async listDeliveryReceipts(goalId: string, limit: number): Promise<readonly GoalDeliveryReceipt[]> {
+    const rows = this.database.connection.prepare(
+      'SELECT * FROM goal_delivery_receipts WHERE goal_id = ? ORDER BY updated_at DESC LIMIT ?',
+    ).all(goalId, Math.max(1, Math.min(100, Math.trunc(limit))));
+    return rows.map((row) => this.toDeliveryReceipt(this.requireDeliveryReceiptRow(row)));
   }
 
   public async prepareScheduledContinuation(
@@ -2130,9 +2289,72 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     return row === undefined ? undefined : this.requireGoalRow(row);
   }
 
+  private selectContextCapsule(capsuleId: string): GoalContextCapsuleRow | undefined {
+    const row = this.database.connection.prepare('SELECT * FROM goal_context_capsules WHERE id = ?').get(capsuleId);
+    return row === undefined ? undefined : this.requireContextCapsuleRow(row);
+  }
+
+  private selectDeliveryReceipt(receiptId: string): GoalDeliveryReceiptRow | undefined {
+    const row = this.database.connection.prepare('SELECT * FROM goal_delivery_receipts WHERE id = ?').get(receiptId);
+    return row === undefined ? undefined : this.requireDeliveryReceiptRow(row);
+  }
+
+  private toContextCapsule(row: GoalContextCapsuleRow): GoalContextCapsuleRecord {
+    validateIso(row.created_at, 'context capsule created_at');
+    if (!Number.isInteger(row.source_goal_revision) || row.source_goal_revision < 0) throw corrupt('Context capsule goal revision is invalid');
+    if (!Number.isInteger(row.source_user_intent_revision) || row.source_user_intent_revision < 0) throw corrupt('Context capsule intent revision is invalid');
+    return {
+      id: row.id,
+      goalId: row.goal_id,
+      sourceGoalRevision: row.source_goal_revision,
+      sourceUserIntentRevision: row.source_user_intent_revision,
+      ...(row.previous_capsule_id === null ? {} : { previousCapsuleId: row.previous_capsule_id }),
+      payload: parseContextCapsulePayload(row.payload_json),
+      createdAt: row.created_at,
+    };
+  }
+
+  private toDeliveryReceipt(row: GoalDeliveryReceiptRow): GoalDeliveryReceipt {
+    validateIso(row.created_at, 'delivery receipt created_at');
+    validateIso(row.updated_at, 'delivery receipt updated_at');
+    if (!Number.isInteger(row.based_on_user_intent_revision) || row.based_on_user_intent_revision < 0) throw corrupt('Delivery receipt intent revision is invalid');
+    return {
+      id: row.id,
+      goalId: row.goal_id,
+      channel: row.channel,
+      state: parseDeliveryState(row.state),
+      basedOnUserIntentRevision: row.based_on_user_intent_revision,
+      ...(row.external_id === null ? {} : { externalId: row.external_id }),
+      ...(row.detail === null ? {} : { detail: row.detail }),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private requireContextCapsuleRow(value: unknown): GoalContextCapsuleRow {
+    if (!isRecord(value)) throw corrupt('Context capsule row is invalid');
+    const strings = ['id','goal_id','payload_json','created_at'];
+    if (!strings.every((key) => typeof value[key] === 'string')) throw corrupt('Context capsule row fields are invalid');
+    if (value.previous_capsule_id !== null && typeof value.previous_capsule_id !== 'string') throw corrupt('Context capsule previous id is invalid');
+    if (typeof value.source_goal_revision !== 'number' || typeof value.source_user_intent_revision !== 'number') throw corrupt('Context capsule revisions are invalid');
+    return value as unknown as GoalContextCapsuleRow;
+  }
+
+  private requireDeliveryReceiptRow(value: unknown): GoalDeliveryReceiptRow {
+    if (!isRecord(value)) throw corrupt('Delivery receipt row is invalid');
+    const strings = ['id','goal_id','channel','state','created_at','updated_at'];
+    if (!strings.every((key) => typeof value[key] === 'string')) throw corrupt('Delivery receipt row fields are invalid');
+    if (value.external_id !== null && typeof value.external_id !== 'string') throw corrupt('Delivery receipt external id is invalid');
+    if (value.detail !== null && typeof value.detail !== 'string') throw corrupt('Delivery receipt detail is invalid');
+    if (typeof value.based_on_user_intent_revision !== 'number') throw corrupt('Delivery receipt intent revision is invalid');
+    return value as unknown as GoalDeliveryReceiptRow;
+  }
+
   private toGoalRecord(row: GoalRow): GoalRecord {
     const status = parseGoalStatus(row.status);
     const plan = parsePlan(row.plan_json);
+    const acceptanceCriteria = parseAcceptanceCriteria(row.acceptance_criteria_json);
+    const iterationPolicy = parseIterationPolicy(row.iteration_policy_json);
     const blockers = parseStringArray(row.blockers_json, 'goal blockers');
     const trackedTasks = parseTrackedTasks(row.tracked_tasks_json, row.active_task_ids_json, 'goal tracked tasks');
     const activeTaskIds = blockingTaskIds(trackedTasks);
@@ -2142,6 +2364,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     ).all(row.id).map((value) => this.toCheckpoint(this.requireCheckpointRow(value)));
 
     if (!Number.isInteger(row.revision) || row.revision < 0) throw corrupt('Goal revision is invalid');
+    if (!Number.isInteger(row.user_intent_revision) || row.user_intent_revision < 0) throw corrupt('Goal user intent revision is invalid');
     if (checkpoints.length !== row.revision) throw corrupt('Goal checkpoint history does not match the current revision');
     checkpoints.forEach((checkpoint, index) => {
       if (checkpoint.revision !== index + 1) throw corrupt('Goal checkpoint revisions are not contiguous');
@@ -2158,6 +2381,10 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       ownerClientId: row.owner_client_id,
       objective: row.objective,
       plan,
+      acceptanceCriteria,
+      userIntentRevision: row.user_intent_revision,
+      iterationPolicy,
+      ...(row.current_context_capsule_id === null ? {} : { currentContextCapsuleId: row.current_context_capsule_id }),
       status,
       revision: row.revision,
       currentPhase: row.current_phase,
@@ -2204,9 +2431,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
 
   private requireGoalRow(value: unknown): GoalRow {
     if (!isRecord(value)) throw corrupt('Goal row is invalid');
-    const requiredStrings = ['id','workspace_id','goal_key','owner_client_id','objective','plan_json','status','current_phase','next_action','blockers_json','active_task_ids_json','created_at','updated_at'];
-    if (!requiredStrings.every((key) => typeof value[key] === 'string') || typeof value.revision !== 'number') throw corrupt('Goal row fields are invalid');
-    const nullableStrings = ['tracked_tasks_json','ponytail_mode','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
+    const requiredStrings = ['id','workspace_id','goal_key','owner_client_id','objective','plan_json','acceptance_criteria_json','iteration_policy_json','status','current_phase','next_action','blockers_json','active_task_ids_json','created_at','updated_at'];
+    if (!requiredStrings.every((key) => typeof value[key] === 'string') || typeof value.revision !== 'number' || typeof value.user_intent_revision !== 'number') throw corrupt('Goal row fields are invalid');
+    const nullableStrings = ['current_context_capsule_id','tracked_tasks_json','ponytail_mode','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
     if (!nullableStrings.every((key) => value[key] === null || typeof value[key] === 'string')) throw corrupt('Goal nullable fields are invalid');
     if (value.lease_duration_seconds !== null && typeof value.lease_duration_seconds !== 'number') throw corrupt('Goal lease duration is invalid');
     if (typeof value.lease_generation !== 'number' || !Number.isInteger(value.lease_generation) || value.lease_generation < 0) throw corrupt('Goal lease generation is invalid');
@@ -2573,6 +2800,13 @@ function assertCompletionReady(goal: GoalRecord, status: FinishGoalRecordRequest
       `Goal cannot be completed while plan steps remain unfinished: ${unfinishedSteps.map((step) => step.id).join(', ')}`,
     );
   }
+  const incompleteCriteria = goal.acceptanceCriteria.filter((criterion) => criterion.status !== 'completed');
+  if (incompleteCriteria.length > 0) {
+    throw new GoalStateError(
+      'conflict',
+      `Goal cannot be completed while acceptance criteria remain unfinished: ${incompleteCriteria.map((criterion) => criterion.id).join(', ')}`,
+    );
+  }
   if (goal.blockers.length > 0) throw new GoalStateError('conflict', 'Goal cannot be completed while durable blockers remain');
   if (goal.activeTaskIds.length > 0) throw new GoalStateError('conflict', 'Goal cannot be completed while blocking tasks remain tracked');
 }
@@ -2698,6 +2932,89 @@ function parsePlanStep(value: unknown): GoalPlanStep {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string' || !isStepStatus(value.status)) throw corrupt('Goal plan step is invalid');
   if (value.summary !== undefined && typeof value.summary !== 'string') throw corrupt('Goal plan step summary is invalid');
   return { id: value.id, title: value.title, status: value.status, ...(value.summary === undefined ? {} : { summary: value.summary }) };
+}
+
+function defaultGoalIterationPolicy(): GoalIterationPolicy {
+  return { mode: 'outcome', maxIterations: 1, currentIteration: 0, stopOnNoNewEvidence: true };
+}
+
+function parseAcceptanceCriteria(serialized: string): readonly GoalAcceptanceCriterion[] {
+  const value = parseJson(serialized, 'goal acceptance criteria');
+  if (!Array.isArray(value)) throw corrupt('Goal acceptance criteria are invalid');
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.title !== 'string' || !isAcceptanceStatus(entry.status)) {
+      throw corrupt('Goal acceptance criterion is invalid');
+    }
+    const evidence = entry.evidence === undefined ? undefined : parseEvidenceValue(entry.evidence, 'goal acceptance evidence');
+    return { id: entry.id, title: entry.title, status: entry.status, ...(evidence === undefined ? {} : { evidence }) };
+  });
+}
+
+function parseIterationPolicy(serialized: string): GoalIterationPolicy {
+  const value = parseJson(serialized, 'goal iteration policy');
+  if (!isRecord(value) || (value.mode !== 'outcome' && value.mode !== 'iterate')) throw corrupt('Goal iteration policy is invalid');
+  if (!Number.isInteger(value.maxIterations) || Number(value.maxIterations) < 1 || Number(value.maxIterations) > 100) throw corrupt('Goal maxIterations is invalid');
+  if (!Number.isInteger(value.currentIteration) || Number(value.currentIteration) < 0 || Number(value.currentIteration) > Number(value.maxIterations)) throw corrupt('Goal currentIteration is invalid');
+  if (typeof value.stopOnNoNewEvidence !== 'boolean') throw corrupt('Goal stopOnNoNewEvidence is invalid');
+  return {
+    mode: value.mode,
+    maxIterations: Number(value.maxIterations),
+    currentIteration: Number(value.currentIteration),
+    stopOnNoNewEvidence: value.stopOnNoNewEvidence,
+  };
+}
+
+function parseEvidenceValue(value: unknown, label: string): readonly GoalEvidence[] {
+  if (!Array.isArray(value)) throw corrupt(`${label} is invalid`);
+  return value.map((entry) => {
+    if (!isRecord(entry) || !isEvidenceKind(entry.kind) || typeof entry.value !== 'string') throw corrupt(`${label} entry is invalid`);
+    return { kind: entry.kind, value: entry.value };
+  });
+}
+
+function isAcceptanceStatus(value: unknown): value is GoalAcceptanceCriterion['status'] {
+  return value === 'pending' || value === 'completed' || value === 'blocked';
+}
+
+function parseContextCapsulePayload(serialized: string): GoalContextCapsulePayload {
+  const value = parseJson(serialized, 'context capsule payload');
+  if (!isRecord(value)) throw corrupt('Context capsule payload is invalid');
+  const requiredStrings = ['objective','currentPhase','nextAction'];
+  if (!requiredStrings.every((key) => typeof value[key] === 'string')) throw corrupt('Context capsule string fields are invalid');
+  return {
+    objective: value.objective as string,
+    userSteering: parseStringArrayValue(value.userSteering, 'context capsule user steering'),
+    currentPhase: value.currentPhase as string,
+    plan: parsePlan(JSON.stringify(value.plan)),
+    acceptanceCriteria: parseAcceptanceCriteria(JSON.stringify(value.acceptanceCriteria)),
+    completedWork: parseStringArrayValue(value.completedWork, 'context capsule completed work'),
+    remainingWork: parseStringArrayValue(value.remainingWork, 'context capsule remaining work'),
+    decisions: parseStringArrayValue(value.decisions, 'context capsule decisions'),
+    validation: parseEvidenceValue(value.validation, 'context capsule validation'),
+    changedFiles: parseStringArrayValue(value.changedFiles, 'context capsule changed files'),
+    artifacts: parseEvidenceValue(value.artifacts, 'context capsule artifacts'),
+    blockers: parseStringArrayValue(value.blockers, 'context capsule blockers'),
+    nextAction: value.nextAction as string,
+  };
+}
+
+function parseStringArrayValue(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) throw corrupt(`${label} is invalid`);
+  return value;
+}
+
+function parseDeliveryState(value: unknown): GoalDeliveryState {
+  if (value === 'reserved' || value === 'attempted_unresolved' || value === 'dispatched_unresolved' || value === 'host_confirmed' || value === 'completed' || value === 'cancelled' || value === 'retired') return value;
+  throw corrupt('Delivery receipt state is invalid');
+}
+
+function canTransitionDeliveryState(current: GoalDeliveryState, next: GoalDeliveryState): boolean {
+  if (current === next) return true;
+  if (current === 'reserved') return next === 'attempted_unresolved' || next === 'cancelled' || next === 'retired';
+  if (current === 'attempted_unresolved') return next === 'dispatched_unresolved' || next === 'host_confirmed' || next === 'cancelled' || next === 'retired';
+  if (current === 'dispatched_unresolved') return next === 'host_confirmed' || next === 'cancelled' || next === 'retired';
+  if (current === 'host_confirmed') return next === 'completed' || next === 'cancelled' || next === 'retired';
+  return false;
 }
 
 function parseStepUpdates(serialized: string): readonly GoalStepUpdate[] {

@@ -50,7 +50,7 @@ const unavailable = (
 ): ToolRuntimeFixture => ({ input, evidence: { kind: 'truthful_unavailable', unavailableStatus } });
 
 /**
- * Safe parse-valid inputs and expected delivery evidence for the 93 core tools.
+ * Safe parse-valid inputs and expected delivery evidence for the 106 core tools.
  * These are non-production fixtures: they use controlled workspace IDs, dry-run
  * inputs where available, and never point at a real user path.
  */
@@ -142,6 +142,34 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   verify_incremental: service({ workspaceId, userConfirmed: true }, 'git.status'),
   run_goal: service({ workspaceId, goalKey: 'smoke-goal', objective: 'Smoke durable goal contract' }, 'goals.runGoal'),
   get_goal: service({ goalId: 'goal-1' }, 'goals.getGoal'),
+  get_goal_plan: service({ goalId: 'goal-1' }, 'goals.getGoal'),
+  update_goal_plan: service({
+    goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, expectedUserIntentRevision: 0,
+    steps: [{ id: 'smoke', title: 'Smoke plan', status: 'in_progress' }], summary: 'smoke plan update',
+  }, 'goals.updateGoalPlan'),
+  update_goal_acceptance: service({
+    goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, expectedUserIntentRevision: 0,
+    updates: [{ criterionId: 'verified', status: 'completed', evidence: [{ kind: 'note', value: 'smoke' }] }],
+  }, 'goals.updateGoalAcceptance'),
+  revise_goal_intent: service({
+    goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, expectedUserIntentRevision: 0,
+    steering: 'Use the latest smoke intent.', nextAction: 'continue smoke',
+  }, 'goals.reviseGoalIntent'),
+  create_context_capsule: service({
+    goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, expectedUserIntentRevision: 0,
+    decisions: ['Native host continuation only.'], validation: [{ kind: 'note', value: 'smoke' }],
+  }, 'goals.createContextCapsule'),
+  get_context_capsule: service({ capsuleId: 'capsule-1' }, 'goals.getContextCapsule'),
+  list_context_capsules: service({ goalId: 'goal-1', limit: 1 }, 'goals.listContextCapsules'),
+  context_pressure: service({ goalId: 'goal-1' }, 'goals.getGoal'),
+  record_delivery_receipt: service({
+    receiptId: 'receipt-1', goalId: 'goal-1', channel: 'native-host', state: 'reserved', basedOnUserIntentRevision: 0,
+  }, 'goals.recordDeliveryReceipt'),
+  list_delivery_receipts: service({ goalId: 'goal-1', limit: 1 }, 'goals.listDeliveryReceipts'),
+  advance_goal_iteration: service({
+    goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, expectedUserIntentRevision: 0,
+    evidenceAdded: true, nextAction: 'continue bounded smoke iteration',
+  }, 'goals.advanceGoalIteration'),
   checkpoint_goal: service({
     goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, currentPhase: 'smoke', summary: 'smoke',
     stepUpdates: [], nextAction: '', blockers: [], evidence: [], activeTaskIds: [],

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>242 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, ECC integration, and extensibility; 235 are advertised by default and all 242 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 246 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-242%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-253%20tools-6f42c1" />
 </p>
 
 <h2 align="center">Download lnwjud</h2>
@@ -51,11 +51,22 @@
 
 ---
 
-## Current version: v4.70.1
+## Current development version: v5.0.0
 
-`v4.70.1` is the current release version. The platform cards above link straight to the primary release assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only.
+`v4.70.1` remains the current public release version. The platform cards above intentionally continue to link to published v4.70.1 assets while v5.0.0 is validated on `dev`; development artifacts remain testing-only until a later explicit release.
 
-### What's new in v4.70.1
+### What's new in v5.0.0
+
+- **Durable Goal Plan + acceptance:** authoritative goal state now exposes a user-facing plan projection, explicit acceptance criteria/evidence, and completion gates instead of treating prose checkpoints as the finish line.
+- **Newest user intent wins:** `userIntentRevision` fences stale generated work, while durable delivery receipts track reserved, attempted, ambiguous-dispatch, confirmed, completed, cancelled, and retired states without blind replay.
+- **Context Capsule / compact state:** bounded immutable capsules preserve objective, steering, completed/remaining work, decisions, validation, changed files, artifacts, blockers, and next action without storing private chain-of-thought.
+- **Goal-first handoff:** `session_handoff` uses Durable Goal + the latest Context Capsule first, then Git/workspace state and only then the optional legacy phase tracker.
+- **Native-only ChatGPT continuation:** compact/resume state never clicks, types into, scrapes, or creates ChatGPT browser conversations. Long-running continuation stays on supported Native ChatGPT Scheduled Tasks plus local durable state.
+- **Bounded review loops:** iteration has explicit limits and stale-intent fences instead of an unbounded autonomous browser-message loop; context-pressure reporting is explicitly an estimate unless the provider exposes exact usage.
+- **Settings text editing fix:** multiline configuration fields keep newlines while editing, and `LSP Commands — LANGUAGE=COMMAND` accepts incomplete draft text such as `typescript=` before validation/save.
+- **253-tool contract:** the MCP registry contains 253 definitions, advertises 246 by default, and advertises all 253 when Codex delegation plus Agent Swarm are enabled.
+
+### Historical: What's new in v4.70.1
 
 - **Progressive log rendering:** Work Log and Live Logs render bounded batches while scrolling instead of mounting thousands of rows at once; Recovery lists use the same progressive pattern for large histories.
 - **Fresh visible log sessions:** reopening the desktop starts Work Log and file-backed Live Log views from the new session boundary without deleting persisted SQLite audit history or existing log files.
@@ -68,7 +79,7 @@
 - **ECC Memory Vault:** new `ecc_memory_*` tools provide bounded local `ecc.memory.v1` save/search/read/doctor workflows with create-only unreviewed memory, explicit user-scope opt-in, completeness checks, and no automatic promotion into policy.
 - **AgentShield security boundary:** `ecc_security_scan` runs the pinned bundled AgentShield scanner with bounded JSON output and no auto-fix, network expansion, or imported hook/workflow execution.
 - **Packaged ECC provenance:** Windows, macOS, and Linux packaging materialize the pinned ECC runtime and security scanner as verified resources with third-party/license provenance instead of depending on ambient global installs.
-- **242-tool contract:** the MCP registry now contains 242 definitions, advertises 235 by default, and advertises all 242 when Codex delegation plus Agent Swarm are enabled.
+- **Historical v4.70.0 242-tool contract:** that release contained 242 definitions, advertised 235 by default, and advertised all 242 when Codex delegation plus Agent Swarm were enabled.
 
 ### Historical: What's new in v4.62.2
 
@@ -146,7 +157,7 @@ Installed lnwjud keeps per-user runtime data outside your source repository: `%A
 
 ## What can lnwjud do?
 
-lnwjud exposes **242 tool definitions** through one local runtime and MCP gateway. The default advertised set is 235; all 242 are available when Codex delegation plus Agent Swarm is enabled.
+lnwjud exposes **253 tool definitions** through one local runtime and MCP gateway. The default advertised set is 246; all 253 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |

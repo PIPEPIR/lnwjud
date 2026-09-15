@@ -6,6 +6,12 @@ import {
   ok,
   type GoalCheckpointRecord,
   type GoalEvidence,
+  type GoalAcceptanceCriterion,
+  type GoalContextCapsulePayload,
+  type GoalContextCapsuleRecord,
+  type GoalDeliveryReceipt,
+  type GoalDeliveryState,
+  type GoalIterationPolicy,
   type GoalLeaseRecoveryEvidence,
   type GoalReconciliationReason,
   type GoalPlan,
@@ -55,6 +61,14 @@ const MAX_EVIDENCE = 20;
 const MAX_EVIDENCE_VALUE = 1_024;
 const MAX_ACTIVE_TASKS = 50;
 const MAX_TASK_ID = 256;
+const MAX_ACCEPTANCE_CRITERIA = 50;
+const MAX_ACCEPTANCE_ID = 128;
+const MAX_ACCEPTANCE_TITLE = 512;
+const MAX_USER_STEERING = 50;
+const MAX_CONTEXT_ITEMS = 100;
+const MAX_CONTEXT_ITEM = 1_024;
+const MAX_DELIVERY_CHANNEL = 128;
+const MAX_DELIVERY_DETAIL = 2_048;
 
 export interface GoalPlanInputStep {
   readonly id: string;
@@ -65,6 +79,17 @@ export interface GoalPlanInput {
   readonly steps: readonly GoalPlanInputStep[];
 }
 
+export interface GoalAcceptanceInput {
+  readonly id: string;
+  readonly title: string;
+}
+
+export interface GoalIterationPolicyInput {
+  readonly mode: 'outcome' | 'iterate';
+  readonly maxIterations?: number;
+  readonly stopOnNoNewEvidence?: boolean;
+}
+
 export type GoalPonytailModeOverride = 'inherit' | GoalPonytailMode;
 
 export interface RunGoalRequest {
@@ -72,6 +97,8 @@ export interface RunGoalRequest {
   readonly goalKey: string;
   readonly objective?: string;
   readonly plan?: GoalPlanInput;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceInput[];
+  readonly iterationPolicy?: GoalIterationPolicyInput;
   readonly ponytailMode?: GoalPonytailModeOverride;
   readonly leaseSeconds?: number;
 }
@@ -86,6 +113,7 @@ export interface CheckpointGoalRequest {
   readonly goalId: string;
   readonly leaseToken: string;
   readonly expectedRevision: number;
+  readonly expectedUserIntentRevision?: number;
   readonly currentPhase: string;
   readonly summary: string;
   readonly stepUpdates: readonly GoalStepUpdate[];
@@ -96,6 +124,71 @@ export interface CheckpointGoalRequest {
   readonly trackedTasks?: readonly GoalTrackedTask[];
   readonly ponytailMode?: GoalPonytailModeOverride;
   readonly releaseLease?: boolean;
+}
+
+export interface UpdateGoalPlanRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly expectedRevision: number;
+  readonly expectedUserIntentRevision?: number;
+  readonly steps: readonly GoalPlanStep[];
+  readonly summary?: string;
+}
+
+export interface GoalAcceptanceUpdate {
+  readonly criterionId: string;
+  readonly status: GoalAcceptanceCriterion['status'];
+  readonly evidence?: readonly GoalEvidence[];
+}
+
+export interface UpdateGoalAcceptanceRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly expectedRevision: number;
+  readonly expectedUserIntentRevision?: number;
+  readonly updates: readonly GoalAcceptanceUpdate[];
+  readonly summary?: string;
+}
+
+export interface ReviseGoalIntentRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly expectedRevision: number;
+  readonly expectedUserIntentRevision: number;
+  readonly steering: string;
+  readonly nextAction?: string;
+}
+
+export interface CreateGoalContextCapsuleRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly expectedRevision: number;
+  readonly expectedUserIntentRevision: number;
+  readonly userSteering?: readonly string[];
+  readonly completedWork?: readonly string[];
+  readonly decisions?: readonly string[];
+  readonly validation?: readonly GoalEvidence[];
+  readonly changedFiles?: readonly string[];
+  readonly artifacts?: readonly GoalEvidence[];
+}
+
+export interface RecordGoalDeliveryRequest {
+  readonly receiptId: string;
+  readonly goalId: string;
+  readonly channel: string;
+  readonly state: GoalDeliveryState;
+  readonly basedOnUserIntentRevision: number;
+  readonly externalId?: string;
+  readonly detail?: string;
+}
+
+export interface AdvanceGoalIterationRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly expectedRevision: number;
+  readonly expectedUserIntentRevision: number;
+  readonly evidenceAdded: boolean;
+  readonly nextAction: string;
 }
 
 export interface FinishGoalRequest {
@@ -174,6 +267,10 @@ export interface GoalSnapshot {
   readonly revision: number;
   readonly currentPhase: string;
   readonly plan: GoalPlan;
+  readonly acceptanceCriteria: readonly GoalAcceptanceCriterion[];
+  readonly userIntentRevision: number;
+  readonly iterationPolicy: GoalIterationPolicy;
+  readonly currentContextCapsuleId?: string;
   readonly completedSteps: readonly GoalPlanStep[];
   readonly pendingSteps: readonly GoalPlanStep[];
   readonly nextAction: string;
@@ -269,6 +366,8 @@ export class GoalContinuationService {
       const plan = request.plan === undefined
         ? (existing === null ? { steps: [] } : undefined)
         : normalizePlan(request.plan);
+      const acceptanceCriteria = request.acceptanceCriteria === undefined ? undefined : normalizeAcceptanceCriteria(request.acceptanceCriteria);
+      const iterationPolicy = request.iterationPolicy === undefined ? undefined : normalizeIterationPolicyInput(request.iterationPolicy);
       const ponytailMode = request.ponytailMode === undefined ? undefined : normalizeGoalPonytailModeOverride(request.ponytailMode);
       if (existing !== null && ponytailMode !== undefined && ponytailMode !== (existing.ponytailMode ?? 'inherit')) {
         return err(appError('INVALID_INPUT', 'ponytailMode can only change through a leased goal checkpoint'));
@@ -315,6 +414,8 @@ export class GoalContinuationService {
         ownerSessionId: stableOwnerSessionId(actor),
         ...(objective === undefined ? {} : { objective }),
         ...(plan === undefined ? {} : { plan }),
+        ...(acceptanceCriteria === undefined ? {} : { acceptanceCriteria }),
+        ...(iterationPolicy === undefined ? {} : { iterationPolicy }),
         ...(ponytailMode === undefined || ponytailMode === 'inherit' ? {} : { ponytailMode }),
         leaseTokenHash: hashLeaseToken(leaseToken),
         leaseSeconds,
@@ -386,6 +487,7 @@ export class GoalContinuationService {
         ownerSessionId: stableOwnerSessionId(actor),
         leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)),
         expectedRevision: request.expectedRevision,
+        ...(request.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: request.expectedUserIntentRevision }),
         plan: updatedPlan,
         currentPhase: safeText(request.currentPhase, MAX_PHASE, 'currentPhase'),
         summary: safeText(request.summary, MAX_SUMMARY, 'summary'),
@@ -403,6 +505,205 @@ export class GoalContinuationService {
     } catch (error: unknown) {
       return this.mapError(error);
     }
+  }
+
+  public async updateGoalPlan(actor: FileActor, request: UpdateGoalPlanRequest): Promise<Result<GoalSnapshot>> {
+    try {
+      const ownerClientId = stableOwnerClientId(actor);
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      const plan = normalizeFullPlan(request.steps);
+      const stepUpdates = plan.steps.map((step) => ({ stepId: step.id, status: step.status, ...(step.summary === undefined ? {} : { summary: step.summary }) }));
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+      const goal = await this.goals.checkpoint({
+        checkpointId: randomUUID(), goalId, ownerClientId, ownerSessionId: stableOwnerSessionId(actor),
+        leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)), expectedRevision: request.expectedRevision,
+        ...(request.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: request.expectedUserIntentRevision }),
+        plan, currentPhase: current.currentPhase,
+        summary: safeText(request.summary ?? 'Goal plan updated', MAX_SUMMARY, 'summary'), stepUpdates,
+        nextAction: nextActionFromPlan(plan), blockers: current.blockers, evidence: [], activeTaskIds: blockingTaskIds(trackedTasks), trackedTasks,
+        ponytailMode: current.ponytailMode ?? null, releaseLease: false, now: this.now().toISOString(),
+      });
+      return ok(toSnapshot(goal));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async updateGoalAcceptance(actor: FileActor, request: UpdateGoalAcceptanceRequest): Promise<Result<GoalSnapshot>> {
+    try {
+      const ownerClientId = stableOwnerClientId(actor);
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      const acceptanceCriteria = applyAcceptanceUpdates(current.acceptanceCriteria, request.updates);
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+      const goal = await this.goals.checkpoint({
+        checkpointId: randomUUID(), goalId, ownerClientId, ownerSessionId: stableOwnerSessionId(actor),
+        leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)), expectedRevision: request.expectedRevision,
+        ...(request.expectedUserIntentRevision === undefined ? {} : { expectedUserIntentRevision: request.expectedUserIntentRevision }),
+        plan: current.plan, acceptanceCriteria, currentPhase: current.currentPhase,
+        summary: safeText(request.summary ?? 'Goal acceptance criteria updated', MAX_SUMMARY, 'summary'), stepUpdates: [],
+        nextAction: current.nextAction, blockers: current.blockers, evidence: [], activeTaskIds: blockingTaskIds(trackedTasks), trackedTasks,
+        ponytailMode: current.ponytailMode ?? null, releaseLease: false, now: this.now().toISOString(),
+      });
+      return ok(toSnapshot(goal));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async reviseGoalIntent(actor: FileActor, request: ReviseGoalIntentRequest): Promise<Result<GoalSnapshot>> {
+    try {
+      const ownerClientId = stableOwnerClientId(actor);
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      if (request.expectedUserIntentRevision !== current.userIntentRevision) return err(appError('INVALID_INPUT', 'Goal user intent revision is stale'));
+      const steering = safeText(request.steering, MAX_CONTEXT_ITEM, 'steering');
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+      const now = this.now().toISOString();
+      const goal = await this.goals.checkpoint({
+        checkpointId: randomUUID(), goalId, ownerClientId, ownerSessionId: stableOwnerSessionId(actor),
+        leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)), expectedRevision: request.expectedRevision,
+        expectedUserIntentRevision: request.expectedUserIntentRevision, userIntentRevision: current.userIntentRevision + 1,
+        plan: current.plan, currentPhase: current.currentPhase,
+        summary: `User steering accepted: ${steering}`,
+        stepUpdates: [], nextAction: safeText(request.nextAction ?? current.nextAction, MAX_NEXT_ACTION, 'nextAction', true),
+        blockers: current.blockers, evidence: [{ kind: 'note', value: steering }], activeTaskIds: blockingTaskIds(trackedTasks), trackedTasks,
+        ponytailMode: current.ponytailMode ?? null, releaseLease: false, now,
+      });
+      if (this.goals.listDeliveryReceipts !== undefined && this.goals.recordDeliveryReceipt !== undefined) {
+        const receipts = await this.goals.listDeliveryReceipts(goalId, 100);
+        for (const receipt of receipts) {
+          if (receipt.basedOnUserIntentRevision >= goal.userIntentRevision || isTerminalDeliveryState(receipt.state)) continue;
+          await this.goals.recordDeliveryReceipt({
+            id: receipt.id, goalId, channel: receipt.channel, state: 'retired', basedOnUserIntentRevision: receipt.basedOnUserIntentRevision,
+            ...(receipt.externalId === undefined ? {} : { externalId: receipt.externalId }), detail: 'Retired by newer accepted user intent', now,
+          });
+        }
+      }
+      return ok(toSnapshot(goal));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async createContextCapsule(actor: FileActor, request: CreateGoalContextCapsuleRequest): Promise<Result<{ readonly capsule: GoalContextCapsuleRecord; readonly goal: GoalSnapshot }>> {
+    try {
+      if (this.goals.createContextCapsule === undefined) return err(appError('INTERNAL_ERROR', 'Context capsule storage is unavailable', true));
+      const ownerClientId = stableOwnerClientId(actor);
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      if (request.expectedRevision !== current.revision || request.expectedUserIntentRevision !== current.userIntentRevision) return err(appError('INVALID_INPUT', 'Goal or user intent revision is stale'));
+      assertLeaseSnapshot(current, actor, request.leaseToken, this.now().toISOString());
+      const payload: GoalContextCapsulePayload = {
+        objective: current.objective,
+        userSteering: normalizeStrings(request.userSteering ?? [], MAX_USER_STEERING, MAX_CONTEXT_ITEM, 'userSteering'),
+        currentPhase: current.currentPhase,
+        plan: current.plan,
+        acceptanceCriteria: current.acceptanceCriteria,
+        completedWork: normalizeStrings(request.completedWork ?? current.plan.steps.filter((step) => step.status === 'completed').map((step) => step.summary ?? step.title), MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'completedWork'),
+        remainingWork: current.plan.steps.filter((step) => step.status !== 'completed').map((step) => step.title),
+        decisions: normalizeStrings(request.decisions ?? [], MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'decisions'),
+        validation: normalizeEvidence(request.validation ?? []),
+        changedFiles: normalizeStrings(request.changedFiles ?? [], MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'changedFiles'),
+        artifacts: normalizeEvidence(request.artifacts ?? []),
+        blockers: current.blockers,
+        nextAction: current.nextAction || nextActionFromPlan(current.plan),
+      };
+      validateContextCapsuleQuality(payload);
+      const capsule = await this.goals.createContextCapsule({
+        id: randomUUID(), goalId, sourceGoalRevision: current.revision, sourceUserIntentRevision: current.userIntentRevision,
+        ...(current.currentContextCapsuleId === undefined ? {} : { previousCapsuleId: current.currentContextCapsuleId }), payload, createdAt: this.now().toISOString(),
+      });
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+      const linked = await this.goals.checkpoint({
+        checkpointId: randomUUID(), goalId, ownerClientId, ownerSessionId: stableOwnerSessionId(actor),
+        leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)), expectedRevision: current.revision,
+        expectedUserIntentRevision: current.userIntentRevision, currentContextCapsuleId: capsule.id,
+        plan: current.plan, currentPhase: current.currentPhase, summary: 'Published bounded context capsule', stepUpdates: [],
+        nextAction: current.nextAction, blockers: current.blockers, evidence: [{ kind: 'note', value: `context-capsule:${capsule.id}` }],
+        activeTaskIds: blockingTaskIds(trackedTasks), trackedTasks, ponytailMode: current.ponytailMode ?? null, releaseLease: false, now: this.now().toISOString(),
+      });
+      return ok({ capsule, goal: toSnapshot(linked) });
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async getContextCapsule(actor: FileActor, capsuleId: string): Promise<Result<GoalContextCapsuleRecord | null>> {
+    try {
+      if (this.goals.getContextCapsule === undefined) return err(appError('INTERNAL_ERROR', 'Context capsule storage is unavailable', true));
+      const capsule = await this.goals.getContextCapsule(requiredBounded(capsuleId, 'capsuleId', 128));
+      if (capsule === null) return ok(null);
+      const goal = await this.goals.getById(capsule.goalId);
+      if (goal === null || goal.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Context capsule belongs to another client'));
+      return ok(capsule);
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async listContextCapsules(actor: FileActor, goalId: string, limit = 20): Promise<Result<readonly GoalContextCapsuleRecord[]>> {
+    try {
+      if (this.goals.listContextCapsules === undefined) return err(appError('INTERNAL_ERROR', 'Context capsule storage is unavailable', true));
+      const current = await this.goals.getById(requiredBounded(goalId, 'goalId', 128));
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      return ok(await this.goals.listContextCapsules(current.id, Math.max(1, Math.min(100, Math.trunc(limit)))));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async recordDeliveryReceipt(actor: FileActor, request: RecordGoalDeliveryRequest): Promise<Result<GoalDeliveryReceipt>> {
+    try {
+      if (this.goals.recordDeliveryReceipt === undefined) return err(appError('INTERNAL_ERROR', 'Delivery receipt storage is unavailable', true));
+      const current = await this.goals.getById(requiredBounded(request.goalId, 'goalId', 128));
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      return ok(await this.goals.recordDeliveryReceipt({
+        id: requiredBounded(request.receiptId, 'receiptId', 128), goalId: current.id,
+        channel: requiredBounded(request.channel, 'channel', MAX_DELIVERY_CHANNEL), state: request.state,
+        basedOnUserIntentRevision: request.basedOnUserIntentRevision,
+        ...(request.externalId === undefined ? {} : { externalId: requiredBounded(request.externalId, 'externalId', 512) }),
+        ...(request.detail === undefined ? {} : { detail: safeText(request.detail, MAX_DELIVERY_DETAIL, 'detail', true) }),
+        now: this.now().toISOString(),
+      }));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async listDeliveryReceipts(actor: FileActor, goalId: string, limit = 20): Promise<Result<readonly GoalDeliveryReceipt[]>> {
+    try {
+      if (this.goals.listDeliveryReceipts === undefined) return err(appError('INTERNAL_ERROR', 'Delivery receipt storage is unavailable', true));
+      const current = await this.goals.getById(requiredBounded(goalId, 'goalId', 128));
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      return ok(await this.goals.listDeliveryReceipts(current.id, Math.max(1, Math.min(100, Math.trunc(limit)))));
+    } catch (error: unknown) { return this.mapError(error); }
+  }
+
+  public async advanceGoalIteration(actor: FileActor, request: AdvanceGoalIterationRequest): Promise<Result<GoalSnapshot>> {
+    try {
+      const ownerClientId = stableOwnerClientId(actor);
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      if (request.expectedUserIntentRevision !== current.userIntentRevision) return err(appError('INVALID_INPUT', 'Goal user intent revision is stale'));
+      if (current.iterationPolicy.mode !== 'iterate') return err(appError('INVALID_INPUT', 'Goal iteration mode is not enabled'));
+      const stopForNoEvidence = current.iterationPolicy.stopOnNoNewEvidence && !request.evidenceAdded;
+      if (!stopForNoEvidence && current.iterationPolicy.currentIteration >= current.iterationPolicy.maxIterations) return err(appError('INVALID_INPUT', 'Goal iteration limit has been reached'));
+      const iterationPolicy: GoalIterationPolicy = stopForNoEvidence
+        ? { ...current.iterationPolicy, mode: 'outcome' }
+        : { ...current.iterationPolicy, currentIteration: current.iterationPolicy.currentIteration + 1 };
+      const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+      const goal = await this.goals.checkpoint({
+        checkpointId: randomUUID(), goalId, ownerClientId, ownerSessionId: stableOwnerSessionId(actor),
+        leaseTokenHash: hashLeaseToken(requiredBounded(request.leaseToken, 'leaseToken', 256)), expectedRevision: request.expectedRevision,
+        expectedUserIntentRevision: request.expectedUserIntentRevision, iterationPolicy,
+        plan: current.plan, currentPhase: stopForNoEvidence ? current.currentPhase : `iteration-${iterationPolicy.currentIteration}`,
+        summary: stopForNoEvidence ? 'Iteration stopped because no new evidence was produced' : `Started bounded iteration ${iterationPolicy.currentIteration}/${iterationPolicy.maxIterations}`,
+        stepUpdates: [], nextAction: safeText(request.nextAction, MAX_NEXT_ACTION, 'nextAction'), blockers: current.blockers, evidence: [],
+        activeTaskIds: blockingTaskIds(trackedTasks), trackedTasks, ponytailMode: current.ponytailMode ?? null, releaseLease: false, now: this.now().toISOString(),
+      });
+      return ok(toSnapshot(goal));
+    } catch (error: unknown) { return this.mapError(error); }
   }
 
   public async finishGoal(actor: FileActor, request: FinishGoalRequest): Promise<Result<FinishGoalResult>> {
@@ -797,6 +1098,10 @@ function toRunSnapshot(goal: GoalRecord): Omit<RunGoalResult, 'acquired' | 'leas
     revision: snapshot.revision,
     currentPhase: snapshot.currentPhase,
     plan: snapshot.plan,
+    acceptanceCriteria: snapshot.acceptanceCriteria,
+    userIntentRevision: snapshot.userIntentRevision,
+    iterationPolicy: snapshot.iterationPolicy,
+    ...(snapshot.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: snapshot.currentContextCapsuleId }),
     completedSteps: snapshot.completedSteps,
     pendingSteps: snapshot.pendingSteps,
     nextAction: snapshot.nextAction,
@@ -821,6 +1126,10 @@ function toSnapshot(goal: GoalRecord): GoalSnapshot {
     revision: goal.revision,
     currentPhase: goal.currentPhase,
     plan: goal.plan,
+    acceptanceCriteria: goal.acceptanceCriteria,
+    userIntentRevision: goal.userIntentRevision,
+    iterationPolicy: goal.iterationPolicy,
+    ...(goal.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: goal.currentContextCapsuleId }),
     completedSteps: goal.plan.steps.filter((step) => step.status === 'completed'),
     pendingSteps: goal.plan.steps.filter((step) => step.status !== 'completed'),
     nextAction: goal.nextAction || nextActionFromPlan(goal.plan),
@@ -850,6 +1159,65 @@ function normalizePlan(input: GoalPlanInput): GoalPlan {
     return { id, title: safeText(step.title, MAX_STEP_TITLE, 'step title'), status: 'pending' };
   });
   return { steps };
+}
+
+function normalizeAcceptanceCriteria(input: readonly GoalAcceptanceInput[]): readonly GoalAcceptanceCriterion[] {
+  if (!Array.isArray(input) || input.length > MAX_ACCEPTANCE_CRITERIA) throw new Error('acceptanceCriteria are invalid');
+  const ids = new Set<string>();
+  return input.map((criterion) => {
+    const id = requiredBounded(criterion.id, 'acceptance criterion id', MAX_ACCEPTANCE_ID);
+    if (ids.has(id)) throw new Error('acceptance criterion ids must be unique');
+    ids.add(id);
+    return { id, title: safeText(criterion.title, MAX_ACCEPTANCE_TITLE, 'acceptance criterion title'), status: 'pending' as const };
+  });
+}
+
+function normalizeIterationPolicyInput(input: GoalIterationPolicyInput): GoalIterationPolicy {
+  if (input.mode !== 'outcome' && input.mode !== 'iterate') throw new Error('iteration mode is invalid');
+  const maxIterations = input.mode === 'outcome' ? 1 : (input.maxIterations ?? 3);
+  if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 100) throw new Error('maxIterations must be between 1 and 100');
+  return { mode: input.mode, maxIterations, currentIteration: 0, stopOnNoNewEvidence: input.stopOnNoNewEvidence ?? true };
+}
+
+function normalizeFullPlan(stepsInput: readonly GoalPlanStep[]): GoalPlan {
+  if (!Array.isArray(stepsInput) || stepsInput.length > MAX_STEPS) throw new Error('plan steps are invalid');
+  const ids = new Set<string>();
+  let inProgress = 0;
+  const steps = stepsInput.map((step): GoalPlanStep => {
+    const id = requiredBounded(step.id, 'step id', MAX_STEP_ID);
+    if (ids.has(id)) throw new Error('plan step ids must be unique');
+    ids.add(id);
+    if (!isStepStatus(step.status)) throw new Error('Goal step status is invalid');
+    if (step.status === 'in_progress') inProgress += 1;
+    return {
+      id,
+      title: safeText(step.title, MAX_STEP_TITLE, 'step title'),
+      status: step.status,
+      ...(step.summary === undefined ? {} : { summary: safeText(step.summary, MAX_STEP_SUMMARY, 'step summary', true) }),
+    };
+  });
+  if (inProgress > 1) throw new Error('Only one goal plan step may be in_progress');
+  return { steps };
+}
+
+function applyAcceptanceUpdates(criteria: readonly GoalAcceptanceCriterion[], updates: readonly GoalAcceptanceUpdate[]): readonly GoalAcceptanceCriterion[] {
+  if (!Array.isArray(updates) || updates.length > MAX_ACCEPTANCE_CRITERIA) throw new Error('acceptance updates are invalid');
+  const known = new Set(criteria.map((criterion) => criterion.id));
+  const seen = new Set<string>();
+  const byId = new Map<string, GoalAcceptanceUpdate>();
+  for (const update of updates) {
+    const criterionId = requiredBounded(update.criterionId, 'criterionId', MAX_ACCEPTANCE_ID);
+    if (!known.has(criterionId)) throw new Error(`Unknown acceptance criterion: ${criterionId}`);
+    if (seen.has(criterionId)) throw new Error(`Duplicate acceptance criterion update: ${criterionId}`);
+    seen.add(criterionId);
+    if (update.status !== 'pending' && update.status !== 'completed' && update.status !== 'blocked') throw new Error('Acceptance criterion status is invalid');
+    byId.set(criterionId, { criterionId, status: update.status, ...(update.evidence === undefined ? {} : { evidence: normalizeEvidence(update.evidence) }) });
+  }
+  return criteria.map((criterion) => {
+    const update = byId.get(criterion.id);
+    if (update === undefined) return criterion;
+    return { ...criterion, status: update.status, ...(update.evidence === undefined ? {} : { evidence: update.evidence }) };
+  });
 }
 
 function normalizeStepUpdates(updates: readonly GoalStepUpdate[], plan: GoalPlan): readonly GoalStepUpdate[] {
@@ -935,6 +1303,27 @@ function legacyTrackedTask(taskId: string): GoalTrackedTask {
 
 function legacyTrackedTasks(taskIds: readonly string[]): readonly GoalTrackedTask[] {
   return taskIds.map((taskId) => legacyTrackedTask(taskId));
+}
+
+function isTerminalDeliveryState(state: GoalDeliveryState): boolean {
+  return state === 'completed' || state === 'cancelled' || state === 'retired';
+}
+
+function assertLeaseSnapshot(goal: GoalRecord, actor: FileActor, leaseToken: string, now: string): void {
+  if (goal.status !== 'active') throw new GoalStateError('terminal', 'Goal is already terminal');
+  if (
+    goal.leaseOwnerClientId !== stableOwnerClientId(actor)
+    || goal.leaseOwnerSessionId !== stableOwnerSessionId(actor)
+    || goal.leaseTokenHash !== hashLeaseToken(requiredBounded(leaseToken, 'leaseToken', 256))
+  ) throw new GoalStateError('lease_invalid', 'Goal lease token or session is invalid');
+  if (goal.leaseExpiresAt === undefined || Date.parse(goal.leaseExpiresAt) <= Date.parse(now)) throw new GoalStateError('lease_invalid', 'Goal lease has expired');
+}
+
+function validateContextCapsuleQuality(payload: GoalContextCapsulePayload): void {
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > 64_000) throw new Error('Context capsule exceeds the 64 KB bounded payload limit');
+  const taskSignalCount = payload.plan.steps.length + payload.completedWork.length + payload.remainingWork.length + payload.decisions.length + payload.validation.length;
+  if (taskSignalCount >= 10 && serialized.length < 500) throw new Error('Context capsule is too small for the amount of task state it claims to summarize');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -18,7 +18,12 @@ describe('durable goal MCP tools', () => {
   it('publishes typed schemas and safe permission annotations', () => {
     const context = { actor, contextEconomy: new ContextEconomyRuntime(), services: {} } as McpToolContext;
     const byName = new Map(goalTools(context).map((entry) => [entry.name, entry]));
-    expect([...byName.keys()]).toEqual(['run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals']);
+    expect([...byName.keys()]).toEqual([
+      'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+      'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure',
+      'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
+      'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
+    ]);
     expect(byName.get('run_goal')).toMatchObject({ permission: 'WRITE', annotations: { readOnlyHint: false, destructiveHint: false } });
     expect(byName.get('get_goal')).toMatchObject({ permission: 'READ', annotations: { readOnlyHint: true, destructiveHint: false } });
     expect(byName.get('list_goals')).toMatchObject({ permission: 'READ', annotations: { readOnlyHint: true, destructiveHint: false } });
@@ -403,17 +408,31 @@ describe('durable goal MCP tools', () => {
     expect(events.find((entry) => entry.toolName === 'checkpoint_goal')?.targetSummary).toContain('goal-1');
   });
 
-  it('registers the seven tools in the public registry/catalog with typed schemas', () => {
+  it('registers the durable goal orchestration tools in the public registry/catalog with typed schemas', () => {
     const registry = new ToolRegistry({}, actor);
     const names = registry.list().map((entry) => entry.name);
-    for (const name of ['run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals']) expect(names).toContain(name);
+    for (const name of [
+      'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+      'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure',
+      'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
+      'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
+    ]) expect(names).toContain(name);
     const runSchema = registry.describeSchema('run_goal');
     const checkpointSchema = registry.describeSchema('checkpoint_goal');
+    const planSchema = registry.describeSchema('update_goal_plan');
+    const capsuleSchema = registry.describeSchema('create_context_capsule');
     expect(JSON.stringify(runSchema)).toContain('goalKey');
-    expect(JSON.stringify(runSchema)).toContain('leaseSeconds');
+    expect(JSON.stringify(runSchema)).toContain('acceptanceCriteria');
+    expect(JSON.stringify(runSchema)).toContain('iterationPolicy');
     expect(JSON.stringify(runSchema)).toContain('scheduledContinuation');
     expect(JSON.stringify(checkpointSchema)).toContain('expectedRevision');
+    expect(JSON.stringify(checkpointSchema)).toContain('expectedUserIntentRevision');
     expect(JSON.stringify(checkpointSchema)).toContain('releaseLease');
+    expect(JSON.stringify(planSchema)).toContain('steps');
+    expect(JSON.stringify(capsuleSchema)).toContain('expectedUserIntentRevision');
+    const context = { actor, contextEconomy: new ContextEconomyRuntime(), services: {} } as McpToolContext;
+    expect(tool(context, 'create_context_capsule').description).toContain('never opens, clicks, types into, or creates a ChatGPT browser conversation');
+    expect(tool(context, 'advance_goal_iteration').description).toContain('never sends browser messages');
     const runJsonSchema = registry.describeInputJsonSchema('run_goal');
     expect(runJsonSchema).toMatchObject({ type: 'object' });
     expect(JSON.stringify(runJsonSchema)).toContain('goalKey');
