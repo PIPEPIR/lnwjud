@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
 import { LogHub } from '../src/main/log-hub.js';
 import {
   buildIncidentReport, selectRelevantProcesses,
@@ -12,6 +13,7 @@ import {
 
 const healthyTunnel = { state: 'running' as const, source: 'desktop' as const, message: null, health: { state: 'live' as const, message: 'tunnel health endpoint live' } };
 const timestamp = (sequence: number): string => new Date(Date.UTC(2026, 7, 20, 0, 0, sequence)).toISOString();
+const localTimestamp = (sequence: number): string => formatOffsetIsoTimestamp(timestamp(sequence), 'Asia/Bangkok');
 type StartedLine = { readonly id: number; readonly source: 'mcp'; readonly text: string; readonly timestamp: string; readonly correlation: { readonly kind: 'mcp'; readonly phase: 'started'; readonly callId: string; readonly toolName: string; readonly resultCode: null } };
 type CompletedLine = { readonly id: number; readonly source: 'mcp'; readonly text: string; readonly timestamp: string; readonly correlation: { readonly kind: 'mcp'; readonly phase: 'completed'; readonly callId: string; readonly toolName: string; resultCode: 'SUCCESS' | 'FAILED' } };
 const started = (callId: string, toolName = 'read_file', sequence = 1): StartedLine => ({ id: sequence, source: 'mcp', text: 'display text only', timestamp: timestamp(sequence), correlation: { kind: 'mcp', phase: 'started', callId, toolName, resultCode: null } });
@@ -259,8 +261,8 @@ describe('incident correlation and privacy', () => {
 
     const report = await buildIncidentReport(evidence({ logLines: hub.snapshot().lines }));
     expect(report.mcpCalls).toEqual([
-      expect.objectContaining({ callId: 'reused', toolName: 'read_file', completionState: 'success', startedAt: timestamp(1) }),
-      expect.objectContaining({ callId: 'reused', toolName: 'write_file', completionState: 'failure', startedAt: timestamp(3) }),
+      expect.objectContaining({ callId: 'reused', toolName: 'read_file', completionState: 'success', startedAt: localTimestamp(1) }),
+      expect.objectContaining({ callId: 'reused', toolName: 'write_file', completionState: 'failure', startedAt: localTimestamp(3) }),
     ]);
   });
 
@@ -273,7 +275,7 @@ describe('incident correlation and privacy', () => {
 
     const report = await buildIncidentReport(evidence({ logLines: hub.snapshot().lines }));
     expect(report.mcpCalls).toEqual([
-      expect.objectContaining({ callId: 'same-event', startedWithoutCompletion: true, startedAt: timestamp(1) }),
+      expect.objectContaining({ callId: 'same-event', startedWithoutCompletion: true, startedAt: localTimestamp(1) }),
     ]);
   });
 
@@ -286,8 +288,8 @@ describe('incident correlation and privacy', () => {
 
     const report = await buildIncidentReport(evidence({ logLines: hub.snapshot().lines }));
     expect(report.mcpCalls).toEqual([
-      expect.objectContaining({ callId: 'reused', toolName: 'read_file', completionWithoutStart: true, completedAt: timestamp(2) }),
-      expect.objectContaining({ callId: 'reused', toolName: 'write_file', startedWithoutCompletion: true, startedAt: timestamp(3) }),
+      expect.objectContaining({ callId: 'reused', toolName: 'read_file', completionWithoutStart: true, completedAt: localTimestamp(2) }),
+      expect.objectContaining({ callId: 'reused', toolName: 'write_file', startedWithoutCompletion: true, startedAt: localTimestamp(3) }),
     ]);
   });
 
@@ -309,7 +311,42 @@ describe('incident correlation and privacy', () => {
     expect(report.tunnelLogTail).toEqual([
       expect.objectContaining({ lifecycle: 'stdio_stopped' }),
     ]);
-    expect(report.tunnelLogTail[0]).not.toHaveProperty('text');
+    expect(report.tunnelLogTail[0]).toMatchObject({ message: 'stdio process stopped.' });
+  });
+
+  it('exports cross-platform process, restart, OAuth, transport, and local-time diagnostics', async () => {
+    const report = await buildIncidentReport(evidence({
+      runtimeDiagnostics: {
+        process: {
+          currentPid: null, lastPid: 4321, lastProcessStartedAt: '2026-09-15T17:00:00.000Z', lastExitAt: '2026-09-15T17:07:59.000Z',
+          lastExitCode: 1, lastSignal: 'SIGTERM', lastTerminationReason: 'exit', exitMetadataUnavailableReason: null, stderrTail: 'WebSocket closed code 1006 ECONNRESET',
+          lastSpawnError: null, webSocketCloseCode: 1006, httpStatus: 502,
+          networkError: { code: 'ECONNRESET', category: 'connection_reset', message: 'socket reset' },
+        },
+        restart: {
+          consecutiveAttempts: 2, totalAttempts: 4, successCount: 1, failureCount: 3, scheduled: false,
+          lastScheduledAt: '2026-09-15T17:08:00.000Z', lastStartedAt: '2026-09-15T17:08:03.000Z', lastCompletedAt: '2026-09-15T17:08:04.000Z',
+          lastResult: 'failed', lastError: 'ECONNRESET',
+        },
+        auth: {
+          mode: 'oauth', refreshAttemptCount: 3, refreshSuccessCount: 2, refreshFailureCount: 1, cacheHitCount: 7,
+          lastRefreshStartedAt: '2026-09-15T17:07:50.000Z', lastRefreshCompletedAt: '2026-09-15T17:07:51.000Z', lastRefreshResult: 'failure',
+          lastRefreshError: { code: 'ETIMEDOUT', category: 'timeout', message: 'refresh timed out' }, lastCredentialExpiresAt: '2026-09-15T18:00:00.000Z',
+        },
+      },
+      logLines: [{
+        id: 99, source: 'tunnel', timestamp: '2026-09-15T17:07:59.000Z', text: 'WebSocket closed code 1006; HTTP status 502 ECONNRESET',
+        correlation: { kind: 'tunnel', lifecycle: 'transport_stopped' },
+      }],
+    }));
+    expect(report.schemaVersion).toBe(2);
+    expect(report.timeZone).toBe('Asia/Bangkok');
+    expect(report.runtimeDiagnostics?.process).toMatchObject({ lastPid: 4321, lastExitAt: '2026-09-16T00:07:59.000+07:00', lastExitCode: 1, lastSignal: 'SIGTERM' });
+    expect(report.runtimeDiagnostics?.restart).toMatchObject({ totalAttempts: 4, successCount: 1, failureCount: 3, lastResult: 'failed' });
+    expect(report.runtimeDiagnostics?.auth).toMatchObject({ mode: 'oauth', refreshAttemptCount: 3, refreshFailureCount: 1, lastRefreshResult: 'failure' });
+    expect(report.transport).toMatchObject({ webSocketCloseCode: 1006, httpStatus: 502, lastDisconnectAt: '2026-09-16T00:07:59.000+07:00' });
+    expect(report.transport.networkError).toMatchObject({ code: 'ECONNRESET', category: 'connection_reset', timestamp: '2026-09-16T00:07:59.000+07:00' });
+    expect(report.tunnelLogTail[0]).toMatchObject({ timestamp: '2026-09-16T00:07:59.000+07:00', message: expect.stringContaining('WebSocket closed code 1006') });
   });
 
   it('parses bounded tunnel instance and request ids despite malformed lines', () => {
@@ -506,6 +543,6 @@ describe('incident export workflow', () => {
       writeAtomically: async (_path, content) => { saved = content; },
     });
     expect(result).toMatchObject({ exported: true, cancelled: false, classification: 'healthy_or_inconclusive', capturedAt: expect.any(String) });
-    expect(JSON.parse(saved)).toMatchObject({ schemaVersion: 1, classification: 'healthy_or_inconclusive' });
+    expect(JSON.parse(saved)).toMatchObject({ schemaVersion: 2, classification: 'healthy_or_inconclusive', timeZone: 'Asia/Bangkok' });
   });
 });

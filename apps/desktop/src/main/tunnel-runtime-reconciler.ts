@@ -41,6 +41,7 @@ export class TunnelRuntimeReconciler {
   private consecutiveFailures = 0;
   private lastConnectedAt: string | null = null;
   private lastReconnectAt: string | null = null;
+  private lastKnownPid: number | null = null;
   private lastSnapshot: TunnelRuntimeSnapshot | null = null;
 
   public constructor(private readonly options: TunnelRuntimeReconcilerOptions) {}
@@ -104,6 +105,7 @@ export class TunnelRuntimeReconciler {
         healthy: current.healthy,
         ready: current.ready,
         pollHealthy: current.pollHealthy,
+        processPid: current.pid,
         failureClass: 'none',
         errorCode: null,
         message: current.message,
@@ -131,6 +133,7 @@ export class TunnelRuntimeReconciler {
         healthy: connected.healthy,
         ready: connected.ready,
         pollHealthy: connected.pollHealthy,
+        processPid: connected.pid,
         failureClass: 'none',
         errorCode: null,
         message: bindingStale ? 'Rebound the same tunnel ID to the current Desktop MCP endpoint' : connected.message,
@@ -188,6 +191,7 @@ export class TunnelRuntimeReconciler {
       healthy: runtime?.healthy ?? null,
       ready: runtime?.ready ?? null,
       pollHealthy: runtime?.pollHealthy ?? null,
+      processPid: runtime?.pid ?? null,
       failureClass,
       errorCode,
       message,
@@ -204,12 +208,15 @@ export class TunnelRuntimeReconciler {
       readonly healthy: boolean | null;
       readonly ready: boolean | null;
       readonly pollHealthy: boolean | null;
+      readonly processPid?: number | null;
       readonly failureClass: TunnelFailureClass;
       readonly errorCode: string | null;
       readonly message: string | null;
       readonly uiUrl: string | null;
     },
   ): TunnelReconcileResult {
+    const processPid = update.processPid !== null && update.processPid !== undefined && Number.isInteger(update.processPid) && update.processPid > 0 ? update.processPid : null;
+    if (processPid !== null) this.lastKnownPid = processPid;
     const snapshot: TunnelRuntimeSnapshot = {
       alias: this.options.adapter.runtimeAlias() || TUNNEL_RUNTIME_ALIAS,
       mode: 'native-managed',
@@ -219,6 +226,8 @@ export class TunnelRuntimeReconciler {
       healthy: update.healthy,
       ready: update.ready,
       pollHealthy: update.pollHealthy,
+      processPid,
+      lastProcessPid: this.lastKnownPid,
       reconnectCount: this.reconnectCount,
       consecutiveFailures: this.consecutiveFailures,
       lastConnectedAt: this.lastConnectedAt,

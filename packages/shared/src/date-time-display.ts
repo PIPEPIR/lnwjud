@@ -2,11 +2,11 @@ export type DisplayDateTimeLocale = 'th' | 'en';
 
 export interface DisplayDateTimeOptions {
   readonly fallback?: string;
-  /** Primarily for deterministic tests; Thai UI intentionally remains pinned to Asia/Bangkok. */
+  /** Override the shared Asia/Bangkok display timezone, primarily for deterministic tests. */
   readonly timeZone?: string;
 }
 
-const THAI_DISPLAY_TIME_ZONE = 'Asia/Bangkok';
+export const DEFAULT_DISPLAY_TIME_ZONE = 'Asia/Bangkok';
 const EXACT_OFFSET_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /**
@@ -17,7 +17,7 @@ const EXACT_OFFSET_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+
  */
 export function formatDisplayDateTime(
   value: string | number | Date | null | undefined,
-  locale: DisplayDateTimeLocale,
+  _locale: DisplayDateTimeLocale,
   options: DisplayDateTimeOptions = {},
 ): string {
   const fallback = options.fallback ?? '—';
@@ -25,24 +25,54 @@ export function formatDisplayDateTime(
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return typeof value === 'string' ? value : fallback;
 
-  const thai = locale === 'th';
-  const formatter = new Intl.DateTimeFormat(thai ? 'en-GB-u-ca-gregory-nu-latn' : 'en-US-u-ca-gregory-nu-latn', {
+  const formatter = new Intl.DateTimeFormat('en-GB-u-ca-gregory-nu-latn', {
     calendar: 'gregory',
     numberingSystem: 'latn',
-    timeZone: thai ? THAI_DISPLAY_TIME_ZONE : options.timeZone,
+    timeZone: options.timeZone ?? DEFAULT_DISPLAY_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hourCycle: thai ? 'h23' : 'h12',
+    hourCycle: 'h23',
   });
   const parts = new Map(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-  const datePart = `${requiredPart(parts, 'day')}-${requiredPart(parts, 'month')}-${requiredPart(parts, 'year')}`;
+  const datePart = `${requiredPart(parts, 'day')}/${requiredPart(parts, 'month')}/${requiredPart(parts, 'year')}`;
   const timePart = `${requiredPart(parts, 'hour')}:${requiredPart(parts, 'minute')}:${requiredPart(parts, 'second')}`;
-  if (thai) return `${datePart} ${timePart}`;
-  return `${datePart} ${timePart} ${requiredPart(parts, 'dayPeriod').toUpperCase()}`;
+  return `${datePart} ${timePart}`;
+}
+
+/**
+ * Return a machine-parseable ISO-8601 timestamp using the same display timezone
+ * as the UI. This keeps incident evidence absolute while avoiding confusing UTC
+ * wall-clock values for operators reading the JSON directly.
+ */
+export function formatOffsetIsoTimestamp(
+  value: string | number | Date = new Date(),
+  timeZone = DEFAULT_DISPLAY_TIME_ZONE,
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
+  const formatter = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {
+    calendar: 'gregory',
+    numberingSystem: 'latn',
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'longOffset',
+  });
+  const parts = new Map(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const rawOffset = requiredPart(parts, 'timeZoneName');
+  const offset = rawOffset === 'GMT' ? '+00:00' : rawOffset.replace(/^GMT/, '');
+  if (!/^[+-]\d{2}:\d{2}$/.test(offset)) throw new Error(`Unsupported timezone offset ${rawOffset}`);
+  const milliseconds = String(date.getUTCMilliseconds()).padStart(3, '0');
+  return `${requiredPart(parts, 'year')}-${requiredPart(parts, 'month')}-${requiredPart(parts, 'day')}T${requiredPart(parts, 'hour')}:${requiredPart(parts, 'minute')}:${requiredPart(parts, 'second')}.${milliseconds}${offset}`;
 }
 
 /**
@@ -67,8 +97,9 @@ export function formatDisplayTimestampItem(
   return `${key}${formatDisplayDateTime(value, locale, { ...options, fallback: value })}`;
 }
 
-export function displayTimeZone(locale: DisplayDateTimeLocale): string | undefined {
-  return locale === 'th' ? THAI_DISPLAY_TIME_ZONE : undefined;
+export function displayTimeZone(locale: DisplayDateTimeLocale): string {
+  void locale;
+  return DEFAULT_DISPLAY_TIME_ZONE;
 }
 
 function requiredPart(parts: ReadonlyMap<string, string>, name: string): string {

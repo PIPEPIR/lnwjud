@@ -70,7 +70,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type EccRuntimeOptions, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { createExplicitKeySecretProtector, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
+import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -363,7 +363,24 @@ const defaultDesktopServices: DesktopIpcServices = {
   resolveActivityTargetDetail: async (): Promise<{ readonly status: 'unavailable'; readonly detail: null }> => ({ status: 'unavailable', detail: null }),
   searchActivityTargetDetails: async (): Promise<readonly string[]> => [],
   streamWorkLogExportRows: (): AsyncIterable<string> => emptySerializedRows(),
-  captureIncident: async (): Promise<IncidentReport> => ({ schemaVersion: 1, capturedAt: new Date().toISOString(), appVersion: APP_VERSION, tunnelClientVersion: null, tunnelClientVersionReason: 'desktop_services_unavailable', classification: 'healthy_or_inconclusive', classificationReasons: ['desktop_services_unavailable'], updaterEventTail: [], tunnel: { state: 'stopped', source: 'desktop', instanceIds: [], requestIds: [], health: { state: 'unavailable', message: 'unavailable' } }, mcpCalls: [], tunnelLogTail: [], processTree: { available: false, entries: [], error: 'unavailable' }, tcpListeners: { available: false, entries: [], error: 'unavailable' } }),
+  captureIncident: async (): Promise<IncidentReport> => ({
+    schemaVersion: 2,
+    capturedAt: formatOffsetIsoTimestamp(new Date(), DEFAULT_DISPLAY_TIME_ZONE),
+    timeZone: DEFAULT_DISPLAY_TIME_ZONE,
+    appVersion: APP_VERSION,
+    tunnelClientVersion: null,
+    tunnelClientVersionReason: 'desktop_services_unavailable',
+    classification: 'healthy_or_inconclusive',
+    classificationReasons: ['desktop_services_unavailable'],
+    updaterEventTail: [],
+    tunnel: { state: 'stopped', source: 'desktop', instanceIds: [], requestIds: [], health: { state: 'unavailable', message: 'unavailable' } },
+    runtimeDiagnostics: null,
+    transport: { webSocketCloseCode: null, httpStatus: null, networkError: null, lastDisconnectAt: null, evidenceSources: [] },
+    mcpCalls: [],
+    tunnelLogTail: [],
+    processTree: { available: false, entries: [], error: 'unavailable' },
+    tcpListeners: { available: false, entries: [], error: 'unavailable' },
+  }),
   getGitDiff: async (request: GetGitDiffRequest): Promise<GetGitDiffResponse> => ({ path: request.path, patch: '', truncated: false }),
 };
 

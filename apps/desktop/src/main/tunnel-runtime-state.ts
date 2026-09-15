@@ -43,6 +43,8 @@ export interface TunnelRuntimeSnapshot {
   readonly healthy: boolean | null;
   readonly ready: boolean | null;
   readonly pollHealthy: boolean | null;
+  readonly processPid: number | null;
+  readonly lastProcessPid: number | null;
   readonly reconnectCount: number;
   readonly consecutiveFailures: number;
   readonly lastConnectedAt: string | null;
