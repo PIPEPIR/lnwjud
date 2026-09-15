@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
@@ -55,12 +55,15 @@ interface WorkLogPanelProps {
 }
 
 
+const PROGRESSIVE_PAGE_SIZE = 120;
+
 export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   const [search, setSearch] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyErrorId, setCopyErrorId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(props.defaultWorkspaceId ?? null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PROGRESSIVE_PAGE_SIZE);
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
   const currentFeed = useMemo(
@@ -113,8 +116,16 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
     () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, feed.workspaces, hiddenMatches),
     [feed, props.filter, search, scope, hiddenMatches],
   );
-  const visible = props.compact ? rows.slice(0, 40) : rows;
+  useEffect(() => setVisibleCount(PROGRESSIVE_PAGE_SIZE), [props.filter, search, workspaceId, sessionId]);
+  const visible = props.compact ? rows.slice(0, 40) : rows.slice(0, visibleCount);
   const resolvedTargets = useMemo(() => completedTargetByCallId(feed.entries), [feed]);
+
+  function loadMoreOnScroll(event: UIEvent<HTMLDivElement>): void {
+    if (props.compact || visibleCount >= rows.length) return;
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight > 320) return;
+    setVisibleCount((current) => Math.min(rows.length, current + PROGRESSIVE_PAGE_SIZE));
+  }
 
   async function copyRow(row: WorkLogRow): Promise<void> {
     const detailRef = row.item.targetDetail.detailRef;
@@ -149,7 +160,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
           >
             {props.filterErrorLabel}
           </button>
-          {props.onExport === undefined ? null : <button type="button" onClick={() => { void props.onExport?.(visible.map(workLogRowIdentity)); }}>{props.exportLabel ?? 'Export'}</button>}
+          {props.onExport === undefined ? null : <button type="button" onClick={() => { void props.onExport?.(rows.map(workLogRowIdentity)); }}>{props.exportLabel ?? 'Export'}</button>}
           <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
           <button type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</button>
           <button type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearAllLabel}</button>
@@ -185,7 +196,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       />
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
-      <div className="worklog-stream" data-testid="work-log">
+      <div className="worklog-stream" data-testid="work-log" onScroll={loadMoreOnScroll}>
         {visible.length === 0 && detailSearchState.status !== 'loading' ? <p>{props.emptyLabel}</p> : null}
         {visible.map((row) => row.kind === 'inflight' ? (
           <div key={`inflight:${row.id}`} className="worklog-line inflight">

@@ -951,25 +951,35 @@ async function exportLogsToFile(
 ): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
   const locale = request.locale ?? desktopLocale;
+  const messages = nativeMessages(locale);
   const snapshot = await services.getLogSnapshot();
   const lineById = new Map(snapshot.lines.filter((line) => line.source === request.source).map((line) => [line.id, line] as const));
   const capturedRows = request.lines.map((reference) => ({ reference, line: lineById.get(reference.lineId) ?? null }));
   const result = await dialog.showSaveDialog(window, {
     title: 'Export lnwjud logs',
-    defaultPath: `lnwjud-${request.source}-logs.txt`,
-    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+    defaultPath: `lnwjud-${request.source}-logs.log`,
+    filters: [{ name: 'Log file', extensions: ['log'] }, { name: 'Text file', extensions: ['txt'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) {
     return { exported: false };
   }
   async function* serializedRows(): AsyncIterable<string> {
-    for (const captured of capturedRows) {
+    yield formatLogExportHeader(locale, 'Live Logs', request.source, capturedRows.length);
+    for (const [index, captured] of capturedRows.entries()) {
       const { reference, line } = captured;
       if (line === null) {
-        yield `Live Log row unavailable [line:${reference.lineId}]: the captured identity is no longer present.`;
+        yield `${formatLogEntryHeading(index + 1)}\r\n${messages.logStatus}: ${messages.logCapturedRowUnavailable}\r\nlineId=${reference.lineId}`;
         continue;
       }
-      const base = `${formatExportLogTimestamp(line.timestamp, locale)} [${line.level.toUpperCase()}] ${line.text}`;
+      const readable = [
+        formatLogEntryHeading(index + 1),
+        `${messages.logTime}: ${formatExportLogTimestamp(line.timestamp, locale)}`,
+        `${messages.logLevel}: ${line.level.toUpperCase()}`,
+        `${messages.logSource}: ${line.source}`,
+        `${messages.logWorkspace}: ${line.workspaceId ?? '-'}`,
+        `${messages.logSession}: ${line.sessionId ?? '-'}`,
+        `${messages.logMessage}: ${line.text}`,
+      ];
       const metadata = [
         `lineId=${line.id}`,
         `source=${line.source}`,
@@ -988,7 +998,7 @@ async function exportLogsToFile(
           `pid=${line.correlation.pid ?? '<none>'}`,
         ] : []),
       ];
-      const baseWithMetadata = `${base}\r\n${metadata.join('\r\n')}`;
+      const baseWithMetadata = `${readable.join('\r\n')}\r\n\r\n${messages.logTechnical}:\r\n${metadata.map((entry) => `  ${entry}`).join('\r\n')}`;
       const targetDetail = line.targetDetail;
       if (targetDetail?.legacyIncomplete === true && targetDetail.itemCount > targetDetail.preview.length) {
         yield formatIncompleteLegacyHistory(baseWithMetadata);
@@ -1007,14 +1017,41 @@ async function exportLogsToFile(
 
 async function exportWorkLogToFile(window: BrowserWindow | null, services: DesktopIpcServices, request: ExportWorkLogRequest): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
+  const locale = request.locale ?? desktopLocale;
+  const messages = nativeMessages(locale);
   const result = await dialog.showSaveDialog(window, {
     title: 'Export lnwjud work log',
-    defaultPath: 'lnwjud-work-log.txt',
-    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+    defaultPath: 'lnwjud-work-log.log',
+    filters: [{ name: 'Log file', extensions: ['log'] }, { name: 'Text file', extensions: ['txt'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
-  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds, request.locale ?? desktopLocale));
+  async function* serializedRows(): AsyncIterable<string> {
+    yield formatLogExportHeader(locale, messages.logWorkLogTitle, 'mcp', request.rowIds.length);
+    let index = 0;
+    for await (const row of services.streamWorkLogExportRows(request.rowIds, locale)) {
+      index += 1;
+      yield `${formatLogEntryHeading(index)}\r\n${row}`;
+    }
+  }
+  await writeSerializedLogRows(result.filePath, serializedRows());
   return { exported: true };
+}
+
+function formatLogExportHeader(locale: UiLocale, title: string, source: string, rows: number): string {
+  const messages = nativeMessages(locale);
+  return [
+    '============================================================',
+    `lnwjud - ${title}`,
+    '============================================================',
+    `${messages.logExported}: ${formatExportLogTimestamp(new Date().toISOString(), locale)}`,
+    `${messages.logSource}: ${source}`,
+    `${messages.logRows}: ${rows}`,
+    '============================================================',
+  ].join('\r\n');
+}
+
+function formatLogEntryHeading(index: number): string {
+  return `\r\n-------------------- #${index} --------------------`;
 }
 
 function formatExportLogTimestamp(value: string, locale: UiLocale): string {
@@ -2132,7 +2169,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     applyDesktopUserSettings(runtime.getUserSettings());
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start();
+    runtime.logHub.start({ skipExisting: true });
     registerIpcHandlers(() => mainWindow, runtime.services, {
       onLocaleChanged: setDesktopLocale,
       onUserSettingsChanged: applyDesktopUserSettings,
@@ -2175,7 +2212,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start();
+    runtime.logHub.start({ skipExisting: true });
     registerIpcHandlers(() => mainWindow, runtime.services, { ipcDrainBarrier: desktopIpcDrainBarrier });
     const viewer = openLogViewerWindow();
     if (viewer !== null) {

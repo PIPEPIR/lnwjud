@@ -23,6 +23,7 @@ interface LogScope {
 interface TailedFile {
   fd: number | null;
   offset: number;
+  initialOffset: number | null;
   pending: string;
   decoder: StringDecoder;
 }
@@ -36,8 +37,8 @@ export class LogHub {
   private readonly tunnelLogPath: string;
   private readonly mcpActivityLogPath: string | undefined;
   private onLine: ((line: LogLine) => void) | undefined;
-  private readonly tunnelFile: TailedFile = { fd: null, offset: 0, pending: '', decoder: new StringDecoder('utf8') };
-  private readonly mcpFile: TailedFile = { fd: null, offset: 0, pending: '', decoder: new StringDecoder('utf8') };
+  private readonly tunnelFile: TailedFile = { fd: null, offset: 0, initialOffset: null, pending: '', decoder: new StringDecoder('utf8') };
+  private readonly mcpFile: TailedFile = { fd: null, offset: 0, initialOffset: null, pending: '', decoder: new StringDecoder('utf8') };
   private tailTimer: ReturnType<typeof setInterval> | null = null;
 
   public constructor(options: LogHubOptions) {
@@ -54,7 +55,11 @@ export class LogHub {
     this.onLine = callback;
   }
 
-  public start(): void {
+  public start(options: { readonly skipExisting?: boolean } = {}): void {
+    if (options.skipExisting === true) {
+      this.tunnelFile.initialOffset = existingFileSize(this.tunnelLogPath);
+      if (this.mcpActivityLogPath !== undefined) this.mcpFile.initialOffset = existingFileSize(this.mcpActivityLogPath);
+    }
     this.syncTunnelFile();
     this.syncMcpActivityFile();
     this.tailTimer = setInterval(() => {
@@ -246,7 +251,8 @@ export class LogHub {
       const size = stat.size;
       if (state.fd === null) {
         state.fd = openSync(filePath, 'r');
-        state.offset = Math.max(0, size - 4 * 1024 * 1024);
+        state.offset = state.initialOffset ?? Math.max(0, size - 4 * 1024 * 1024);
+        state.initialOffset = null;
         state.pending = '';
         state.decoder = new StringDecoder('utf8');
       }
@@ -539,6 +545,14 @@ const MCP_FAILURE_RESULT_CODES = {
 function stringRecordField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
   for (const key of keys) if (typeof record[key] === 'string' && (record[key] as string).length <= 128) return record[key] as string;
   return undefined;
+}
+
+function existingFileSize(filePath: string): number | null {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return null;
+  }
 }
 
 function isMissingFileError(error: unknown): boolean {

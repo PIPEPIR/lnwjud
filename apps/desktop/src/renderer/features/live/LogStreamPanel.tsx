@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
@@ -51,7 +51,7 @@ interface LogStreamPanelProps {
 }
 
 
-const MAX_VISIBLE_LINES = 5_000;
+const PROGRESSIVE_PAGE_SIZE = 120;
 
 export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const [paused, setPaused] = useState(false);
@@ -60,6 +60,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const [copyErrorId, setCopyErrorId] = useState<number | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PROGRESSIVE_PAGE_SIZE);
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
   const currentFeed = useMemo(
@@ -104,14 +105,24 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
     return (): void => window.clearTimeout(timeout);
   }, [filter, props.onSearchTargetDetails, searchCandidates]);
   const hiddenMatches = activeDetailMatchIds(detailSearchState, filter);
-  const visible = useMemo(() => visibleLogLines(feedLines, scope, filter, feed.workspaces, hiddenMatches), [feed, scope, filter, hiddenMatches]);
+  const matchingLines = useMemo(() => visibleLogLines(feedLines, scope, filter, feed.workspaces, hiddenMatches), [feed, scope, filter, hiddenMatches]);
+  useEffect(() => setVisibleCount(PROGRESSIVE_PAGE_SIZE), [props.source, filter, workspaceId, sessionId]);
+  const visible = useMemo(() => matchingLines.slice(0, visibleCount), [matchingLines, visibleCount]);
+  const newestLineId = matchingLines[0]?.id ?? null;
 
   useEffect(() => {
     if (paused) return;
     const element = streamRef.current;
     if (element === null) return;
     element.scrollTop = 0;
-  }, [visible.length, paused]);
+  }, [newestLineId, paused]);
+
+  function loadMoreOnScroll(event: UIEvent<HTMLDivElement>): void {
+    if (visibleCount >= matchingLines.length) return;
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight > 320) return;
+    setVisibleCount((current) => Math.min(matchingLines.length, current + PROGRESSIVE_PAGE_SIZE));
+  }
 
   async function copyLine(line: LogLine): Promise<void> {
     const detailRef = detailRefForLine(line);
@@ -142,7 +153,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
           <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
           <button type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</button>
           <button type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearLabel}</button>
-          <button type="button" onClick={() => { void props.onExport(scope, filter, visible.map((line) => ({ lineId: line.id, correlationRef: detailRefForLine(line) }))); }}>{props.exportLabel}</button>
+          <button type="button" onClick={() => { void props.onExport(scope, filter, matchingLines.map((line) => ({ lineId: line.id, correlationRef: detailRefForLine(line) }))); }}>{props.exportLabel}</button>
         </div>
       </div>
       {props.description === undefined ? null : <p className="hint log-source-description">{props.description}</p>}
@@ -182,7 +193,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
           {props.tunnelLogPath === null ? '' : ` (${props.tunnelLogPath})`}
         </p>
       ) : null}
-      <div className="log-stream" ref={streamRef} data-testid="log-stream" role="log" aria-live="polite">
+      <div className="log-stream" ref={streamRef} data-testid="log-stream" role="log" aria-live="polite" onScroll={loadMoreOnScroll}>
         {visible.length === 0 && detailSearchState.status !== 'loading' && !(props.source === 'tunnel' && !props.tunnelLogExists) ? (
           <p className="hint">{props.waitingLabel}</p>
         ) : null}
@@ -241,7 +252,7 @@ export function filterLogLinesByScope(lines: readonly LogLine[], scope: LogScope
 }
 
 export function visibleLogLines(lines: readonly LogLine[], scope: LogScopeSelection, search = '', workspaces: readonly WorkspaceSummary[] = [], hiddenMatches: ReadonlySet<string> = new Set()): readonly LogLine[] {
-  return [...filterLogLinesByScope(lines, scope, search, workspaces, hiddenMatches)].sort(compareLogLinesNewestFirst).slice(0, MAX_VISIBLE_LINES);
+  return [...filterLogLinesByScope(lines, scope, search, workspaces, hiddenMatches)].sort(compareLogLinesNewestFirst);
 }
 
 function collectWorkspaceOptions(lines: readonly LogLine[], workspaces: readonly WorkspaceSummary[] | undefined): readonly { readonly id: string; readonly label: string }[] {
