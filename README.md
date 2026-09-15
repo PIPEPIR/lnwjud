@@ -53,7 +53,7 @@
 
 ## Current version: v5.0.1
 
-`v5.0.1` is the current release line. The platform cards above point to the matching v5.0.1 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
+`v5.0.1` is the current public release line. The platform cards above point to the matching v5.0.1 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
 
 ### What's new in v5.0.1
 
