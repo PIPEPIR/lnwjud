@@ -105,7 +105,9 @@ describe('MCP tool registry', () => {
       'read_file_page', 'read_file_page_continue',
       'workspace_index', 'workspace_index_status', 'workspace_index_watch', 'workspace_index_stop',
       'session_handoff', 'verify_incremental',
-      'run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
+      'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+      'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure', 'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
+      'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
       ...UPGRADE_TOOL_CATALOG
         .filter((entry) => entry.name !== 'agent_swarm_run' && isAdvertisedDeliveryState(entry.deliveryState))

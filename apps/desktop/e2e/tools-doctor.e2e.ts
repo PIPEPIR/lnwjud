@@ -7,13 +7,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
+import { ToolRegistry } from '@lnwjud/mcp-server';
 import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = electronExecutablePath(desktopRoot);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim() || undefined;
-const FIRST_PARTY_TOOL_COUNT = 242;
+const FIRST_PARTY_TOOL_COUNT = new ToolRegistry({}, { clientId: 'desktop-e2e', clientName: 'desktop-e2e' }).listAll().length;
 
 type LaunchedDesktop = {
   readonly process: ChildProcess;

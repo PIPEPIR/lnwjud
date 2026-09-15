@@ -250,10 +250,14 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
               <Decision label="EXECUTE" value={draft.customPermission.execute} onChange={(value) => patchCustom({ execute: value })} />
               <Decision label="DANGEROUS" value={draft.customPermission.dangerous} onChange={(value) => patchCustom({ dangerous: value })} />
             </div>
-            <div className="setting-field">
-              <label className="field-label" htmlFor="custom-executables">{locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}</label>
-              <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={isWindowsHost ? 'python.exe\ndocker.exe\ndotnet.exe' : 'python\ndocker\ndotnet'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
-            </div>
+            <TextList
+              id="custom-executables"
+              label={locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}
+              value={draft.customPermission.allowedExecutables}
+              rows={4}
+              placeholder={isWindowsHost ? 'python.exe\ndocker.exe\ndotnet.exe' : 'python\ndocker\ndotnet'}
+              onChange={(value) => patchCustom({ allowedExecutables: value })}
+            />
           </section>
         </>
       ) : null}
@@ -291,8 +295,14 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
 
           <section className="panel settings-card settings-card-polished" aria-label="Capability roots">
             <CardHeading icon="⌂" title={locale === 'th' ? 'Capability Roots' : 'Capability Roots'} subtitle={locale === 'th' ? 'เพิ่มพื้นที่ที่ tools สามารถเข้าถึงได้' : 'Additional roots available to local capability tools'} />
-            <label className="field-label" htmlFor="capability-roots">{locale === 'th' ? 'หนึ่ง path ต่อบรรทัด' : 'One path per line'}</label>
-            <textarea id="capability-roots" className="settings-textarea" rows={5} value={draft.capabilityRoots.join('\n')} placeholder={isWindowsHost ? 'D:\\Projects\nE:\\Work' : '/Users/name/Projects\n/home/name/Work'} onChange={(event) => patch({ capabilityRoots: splitList(event.target.value) })} />
+            <TextList
+              id="capability-roots"
+              label={locale === 'th' ? 'หนึ่ง path ต่อบรรทัด' : 'One path per line'}
+              value={draft.capabilityRoots}
+              rows={5}
+              placeholder={isWindowsHost ? 'D:\\Projects\nE:\\Work' : '/Users/name/Projects\n/home/name/Work'}
+              onChange={(value) => patch({ capabilityRoots: value })}
+            />
             <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, native providers และ Screen Record โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, native providers, and screen recording without editing environment variables.'}</p>
           </section>
 
@@ -325,10 +335,10 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
                 {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
                 {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
               </div>
-              <TextArea
+              <StringMapTextArea
                 label={locale === 'th' ? 'LSP Commands — LANGUAGE=COMMAND' : 'LSP Commands — LANGUAGE=COMMAND'}
-                value={stringMapToText(draft.lspCommands)}
-                onChange={(value) => patch({ lspCommands: stringMapFromText(value) })}
+                value={draft.lspCommands}
+                onChange={(value) => patch({ lspCommands: value })}
               />
             </div>
             <p className="hint">{locale === 'th'
@@ -443,8 +453,62 @@ function Decision({ label, value, onChange }: { readonly label: string; readonly
   return <div className="setting-field"><label className="field-label">{label}</label><select className="settings-select" value={value} onChange={(event) => onChange(event.target.value === 'ALLOW' || event.target.value === 'DENY' ? event.target.value : 'ASK')}><option value="ALLOW">ALLOW</option><option value="ASK">ASK</option><option value="DENY">DENY</option></select></div>;
 }
 
-function TextList({ label, value, onChange }: { readonly label: string; readonly value: readonly string[]; readonly onChange: (value: readonly string[]) => void }): ReactElement {
-  return <TextArea label={label} value={value.join('\n')} onChange={(text) => onChange(splitList(text))} />;
+function TextList({ label, value, onChange, id, rows = 3, placeholder }: { readonly label: string; readonly value: readonly string[]; readonly onChange: (value: readonly string[]) => void; readonly id?: string; readonly rows?: number; readonly placeholder?: string }): ReactElement {
+  const canonicalText = value.join('\n');
+  const [draftText, setDraftText] = useState(canonicalText);
+
+  useEffect(() => {
+    if (!sameStringList(splitList(draftText), value)) setDraftText(canonicalText);
+  }, [canonicalText, draftText, value]);
+
+  return (
+    <div className="setting-field">
+      <label className="field-label" htmlFor={id}>{label}</label>
+      <textarea
+        id={id}
+        className="settings-textarea"
+        rows={rows}
+        value={draftText}
+        placeholder={placeholder}
+        onChange={(event) => {
+          const text = event.target.value;
+          setDraftText(text);
+          onChange(splitList(text));
+        }}
+      />
+    </div>
+  );
+}
+
+function StringMapTextArea({ label, value, onChange }: { readonly label: string; readonly value: Readonly<Record<string, string>>; readonly onChange: (value: Readonly<Record<string, string>>) => void }): ReactElement {
+  const canonicalText = stringMapToText(value);
+  const [draftText, setDraftText] = useState(canonicalText);
+
+  useEffect(() => {
+    if (!sameStringMap(stringMapFromText(draftText), value)) setDraftText(canonicalText);
+  }, [canonicalText, draftText, value]);
+
+  return (
+    <TextArea
+      label={label}
+      value={draftText}
+      onChange={(text) => {
+        setDraftText(text);
+        onChange(stringMapFromText(text));
+      }}
+    />
+  );
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function sameStringMap(left: Readonly<Record<string, string>>, right: Readonly<Record<string, string>>): boolean {
+  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
+  return leftEntries.length === rightEntries.length
+    && leftEntries.every(([key, value], index) => key === rightEntries[index]?.[0] && value === rightEntries[index]?.[1]);
 }
 
 function Field({ label, value, placeholder, onChange }: { readonly label: string; readonly value: string; readonly placeholder?: string; readonly onChange: (value: string) => void }): ReactElement {

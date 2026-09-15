@@ -69,7 +69,24 @@ export interface McpApplicationServices {
   readonly project?: Pick<ProjectService, 'detect'>;
   readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
-  readonly goals?: Pick<GoalContinuationService, 'runGoal' | 'getGoal' | 'checkpointGoal' | 'finishGoal' | 'cancelGoal' | 'reconcileGoals' | 'listGoals'>;
+  readonly goals?: Pick<GoalContinuationService,
+    | 'runGoal'
+    | 'getGoal'
+    | 'updateGoalPlan'
+    | 'updateGoalAcceptance'
+    | 'reviseGoalIntent'
+    | 'createContextCapsule'
+    | 'getContextCapsule'
+    | 'listContextCapsules'
+    | 'recordDeliveryReceipt'
+    | 'listDeliveryReceipts'
+    | 'advanceGoalIteration'
+    | 'checkpointGoal'
+    | 'finishGoal'
+    | 'cancelGoal'
+    | 'reconcileGoals'
+    | 'listGoals'
+  >;
   /** Runtime-shared cancellation registry for in-flight fenced MCP requests. */
   readonly goalRequestCancellation?: GoalRequestCancellationPort;
   readonly scheduledContinuations?: Pick<ScheduledContinuationService, 'prepareScheduledContinuation' | 'recordScheduledContinuationReceipt' | 'cancelScheduledContinuation' | 'claimScheduledContinuation' | 'getScheduledContinuation' | 'expediteScheduledContinuation'>;

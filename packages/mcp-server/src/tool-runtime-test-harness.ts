@@ -110,7 +110,21 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       if (method === 'result') return { swarmId: '00000000-0000-4000-8000-000000000001', taskId: 'inspect', state: 'completed', text: '', eof: true, outputTruncated: false };
       return { swarmId: '00000000-0000-4000-8000-000000000001', state: method === 'cancel' ? 'cancelled' : 'running', tasks: [] };
     }),
-    goals: serviceProxy('goals', calls, (method) => method === 'listGoals' ? [] : { goalId: 'goal-1', status: 'active', acquired: true, leaseToken: 'lease-token' }),
+    goals: serviceProxy('goals', calls, (method) => {
+      const goal = {
+        goalId: 'goal-1', goalKey: 'smoke-goal', workspaceId: 'workspace-1', objective: 'Smoke durable goal contract',
+        status: 'active', revision: 0, userIntentRevision: 0, currentPhase: 'smoke',
+        plan: { steps: [] }, acceptanceCriteria: [], iterationPolicy: { mode: 'outcome', maxIterations: 0, currentIteration: 0, stopOnNoNewEvidence: true },
+        completedSteps: [], pendingSteps: [], nextAction: 'continue smoke', blockers: [], activeTaskIds: [], trackedTasks: [], lastCheckpoint: null,
+        leaseGeneration: 1, leaseActivitySeq: 0,
+      };
+      if (method === 'listGoals') return { goals: [goal] };
+      if (method === 'listContextCapsules' || method === 'listDeliveryReceipts') return [];
+      if (method === 'getContextCapsule') return null;
+      if (method === 'recordDeliveryReceipt') return { id: 'receipt-1', goalId: 'goal-1', channel: 'smoke', state: 'reserved', basedOnUserIntentRevision: 0, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+      if (method === 'createContextCapsule') return { capsule: { id: 'capsule-1', goalId: 'goal-1', sourceGoalRevision: 0, sourceUserIntentRevision: 0, payload: {}, createdAt: new Date(0).toISOString() }, goal: { ...goal, revision: 1, currentContextCapsuleId: 'capsule-1' } };
+      return method === 'runGoal' ? { ...goal, acquired: true, leaseToken: 'lease-token' } : goal;
+    }),
     scheduledContinuations: serviceProxy('scheduledContinuations', calls, (method) => method === 'authorizeWorkspaceMutation'
       ? { allowed: true }
       : { continuationId: 'continuation-1', status: 'scheduled', version: 1 }),

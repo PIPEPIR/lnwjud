@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>242 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, ECC integration, and extensibility; 235 are advertised by default and all 242 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 246 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,31 +18,31 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-242%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-253%20tools-6f42c1" />
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v4.70.1 build directly.</p>
+<p align="center">Choose your platform and download the current v5.0.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-4.70.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-4.70.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,22 @@
 
 ---
 
-## Current version: v4.70.1
+## Current version: v5.0.0
 
-`v4.70.1` is the current release version. The platform cards above link straight to the primary release assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only.
+`v5.0.0` is the current public release line. The platform cards above point to the matching v5.0.0 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
 
-### What's new in v4.70.1
+### What's new in v5.0.0
+
+- **Durable Goal Plan + acceptance:** authoritative goal state now exposes a user-facing plan projection, explicit acceptance criteria/evidence, and completion gates instead of treating prose checkpoints as the finish line.
+- **Newest user intent wins:** `userIntentRevision` fences stale generated work, while durable delivery receipts track reserved, attempted, ambiguous-dispatch, confirmed, completed, cancelled, and retired states without blind replay.
+- **Context Capsule / compact state:** bounded immutable capsules preserve objective, steering, completed/remaining work, decisions, validation, changed files, artifacts, blockers, and next action without storing private chain-of-thought.
+- **Goal-first handoff:** `session_handoff` uses Durable Goal + the latest Context Capsule first, then Git/workspace state and only then the optional legacy phase tracker.
+- **Native-only ChatGPT continuation:** compact/resume state never clicks, types into, scrapes, or creates ChatGPT browser conversations. Long-running continuation stays on supported Native ChatGPT Scheduled Tasks plus local durable state.
+- **Bounded review loops:** iteration has explicit limits and stale-intent fences instead of an unbounded autonomous browser-message loop; context-pressure reporting is explicitly an estimate unless the provider exposes exact usage.
+- **Settings text editing fix:** multiline configuration fields keep newlines while editing, and `LSP Commands — LANGUAGE=COMMAND` accepts incomplete draft text such as `typescript=` before validation/save.
+- **253-tool contract:** the MCP registry contains 253 definitions, advertises 246 by default, and advertises all 253 when Codex delegation plus Agent Swarm are enabled.
+
+### Historical: What's new in v4.70.1
 
 - **Progressive log rendering:** Work Log and Live Logs render bounded batches while scrolling instead of mounting thousands of rows at once; Recovery lists use the same progressive pattern for large histories.
 - **Fresh visible log sessions:** reopening the desktop starts Work Log and file-backed Live Log views from the new session boundary without deleting persisted SQLite audit history or existing log files.
@@ -68,7 +79,7 @@
 - **ECC Memory Vault:** new `ecc_memory_*` tools provide bounded local `ecc.memory.v1` save/search/read/doctor workflows with create-only unreviewed memory, explicit user-scope opt-in, completeness checks, and no automatic promotion into policy.
 - **AgentShield security boundary:** `ecc_security_scan` runs the pinned bundled AgentShield scanner with bounded JSON output and no auto-fix, network expansion, or imported hook/workflow execution.
 - **Packaged ECC provenance:** Windows, macOS, and Linux packaging materialize the pinned ECC runtime and security scanner as verified resources with third-party/license provenance instead of depending on ambient global installs.
-- **242-tool contract:** the MCP registry now contains 242 definitions, advertises 235 by default, and advertises all 242 when Codex delegation plus Agent Swarm are enabled.
+- **Historical v4.70.0 242-tool contract:** that release contained 242 definitions, advertised 235 by default, and advertised all 242 when Codex delegation plus Agent Swarm were enabled.
 
 ### Historical: What's new in v4.62.2
 
@@ -146,7 +157,7 @@ Installed lnwjud keeps per-user runtime data outside your source repository: `%A
 
 ## What can lnwjud do?
 
-lnwjud exposes **242 tool definitions** through one local runtime and MCP gateway. The default advertised set is 235; all 242 are available when Codex delegation plus Agent Swarm is enabled.
+lnwjud exposes **253 tool definitions** through one local runtime and MCP gateway. The default advertised set is 246; all 253 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |
@@ -259,8 +270,18 @@ C:\path\to\my-project
    - ไทย: เมื่องานจบจริง ให้ปิด scheduled continuation และทำให้ task ตัวเดิมรันต่อไม่ได้ เพื่อไม่ให้ปลุกงานที่เสร็จแล้วขึ้นมาอีก
 
 5. **Finish — `finish_goal`**
-   - English: Finish only after all planned steps are complete, blockers are cleared, blocking tasks are terminal, and scheduled continuation cleanup is complete. Record final evidence instead of merely declaring success in chat.
-   - ไทย: ปิด goal หลังจากทุก step เสร็จ, blocker ถูกเคลียร์, blocking task จบแล้ว และ cleanup ตัวตั้งเวลาเรียบร้อย พร้อมบันทึกหลักฐานสุดท้าย
+   - English: Finish only after all planned steps are complete, blockers are cleared, blocking tasks are terminal, acceptance criteria are satisfied, and scheduled continuation cleanup is complete. Record final evidence instead of merely declaring success in chat.
+   - ไทย: ปิด goal หลังจากทุก step เสร็จ, blocker ถูกเคลียร์, blocking task จบแล้ว, acceptance criteria ผ่านครบ และ cleanup ตัวตั้งเวลาเรียบร้อย พร้อมบันทึกหลักฐานสุดท้าย
+
+### v5 Goal state / สถานะ Goal ใน v5
+
+- **Plan:** `get_goal_plan` projects the authoritative plan; `update_goal_plan` changes that same durable plan instead of creating a second planner.
+- **Acceptance:** `update_goal_acceptance` records explicit completion evidence. `finish_goal(status=completed)` is rejected while any criterion is still pending or blocked.
+- **Newest intent wins:** `revise_goal_intent` increments `userIntentRevision`; stale checkpoints or delivery receipts from older accepted user intent are fenced/retired rather than replayed.
+- **Context Capsule:** `create_context_capsule` stores a bounded immutable objective/decision/result summary for compact/resume or handoff. It stores task state, not private chain-of-thought, and does not drive ChatGPT through browser/DOM automation.
+- **Pressure + iteration:** `context_pressure` reports a local estimate when exact provider usage is unavailable, while `advance_goal_iteration` is explicitly bounded by `maxIterations` and can stop when no new evidence appears.
+
+ภาษาไทยแบบสั้น: v5 แยก **plan / acceptance / user intent / context capsule / bounded iteration** ออกจากกันชัดเจน โดย Durable Goal ยังเป็น source of truth เพียงชุดเดียว ถ้าผู้ใช้เปลี่ยนคำสั่งใหม่ งานเก่าต้องแพ้ revision ใหม่ และ Context Capsule ใช้เก็บสรุปสถานะเพื่อกลับมาทำต่อ ไม่ใช่เก็บ chain-of-thought หรือใช้ browser ไปสร้างแชทใหม่เอง
 
 ### Short prompt — English
 

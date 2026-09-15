@@ -95,7 +95,7 @@ async function withFreshDesktop(run: (page: Page) => Promise<void>): Promise<voi
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
     const context = browser.contexts()[0];
     if (context === undefined) throw new Error('Electron did not create a browser context');
-    await expect.poll(() => context.pages().length).toBeGreaterThan(0);
+    await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBeGreaterThan(0);
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
     await run(page);

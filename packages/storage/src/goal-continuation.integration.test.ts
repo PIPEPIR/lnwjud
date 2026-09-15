@@ -929,4 +929,107 @@ describe('durable goal continuation persistence', () => {
       runtime.database.close();
     }
   });
+
+  it('persists v5 orchestration state, fences stale intent, and completes only after acceptance', async () => {
+    const { filename, workspace } = await fixture();
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const runtime = await open(filename, workspace, () => now);
+    try {
+      const created = await runtime.service.runGoal(actor('session-v5'), {
+        ...createRequest,
+        goalKey: 'release-v5-orchestration',
+        acceptanceCriteria: [{ id: 'verified', title: 'Verification evidence is complete' }],
+        iterationPolicy: { mode: 'iterate', maxIterations: 2, stopOnNoNewEvidence: true },
+      });
+      expect(created).toMatchObject({
+        ok: true,
+        value: {
+          revision: 0,
+          userIntentRevision: 0,
+          acceptanceCriteria: [{ id: 'verified', status: 'pending' }],
+          iterationPolicy: { mode: 'iterate', maxIterations: 2, currentIteration: 0, stopOnNoNewEvidence: true },
+        },
+      });
+      if (!created.ok || created.value.leaseToken === undefined) throw new Error('v5 goal create failed');
+      const { goalId, leaseToken } = created.value;
+
+      for (const state of ['reserved', 'attempted_unresolved', 'dispatched_unresolved'] as const) {
+        const receipt = await runtime.service.recordDeliveryReceipt(actor('session-v5'), {
+          receiptId: 'delivery-v5', goalId, channel: 'native-host', state, basedOnUserIntentRevision: 0,
+        });
+        expect(receipt).toMatchObject({ ok: true, value: { state } });
+      }
+
+      const revised = await runtime.service.reviseGoalIntent(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 0, expectedUserIntentRevision: 0,
+        steering: 'Keep the newer user request authoritative.',
+        nextAction: 'Continue against intent revision 1.',
+      });
+      expect(revised).toMatchObject({ ok: true, value: { revision: 1, userIntentRevision: 1 } });
+      if (!revised.ok) throw new Error('intent revision failed');
+      expect(await runtime.service.listDeliveryReceipts(actor('session-v5'), goalId)).toMatchObject({
+        ok: true,
+        value: [{ id: 'delivery-v5', state: 'retired', basedOnUserIntentRevision: 0 }],
+      });
+
+      const stale = await runtime.service.checkpointGoal(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: revised.value.revision, expectedUserIntentRevision: 0,
+        currentPhase: 'stale', summary: 'This must lose to newer user intent.', stepUpdates: [], nextAction: 'none', blockers: [], evidence: [],
+      });
+      expect(stale).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const capsule = await runtime.service.createContextCapsule(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: revised.value.revision, expectedUserIntentRevision: 1,
+        userSteering: ['Keep the newer user request authoritative.'],
+        completedWork: ['Durable v5 state is persisted.'],
+        decisions: ['Native host continuation only; no browser or DOM automation.'],
+        validation: [{ kind: 'note', value: 'typecheck passed' }],
+        changedFiles: ['packages/storage/src/goal-repository.ts'],
+      });
+      expect(capsule).toMatchObject({
+        ok: true,
+        value: { capsule: { sourceGoalRevision: 1, sourceUserIntentRevision: 1 }, goal: { revision: 2, currentContextCapsuleId: expect.any(String) } },
+      });
+      if (!capsule.ok) throw new Error('context capsule failed');
+      const capsuleId = capsule.value.capsule.id;
+      expect(await runtime.service.getContextCapsule(actor('session-v5'), capsuleId)).toMatchObject({ ok: true, value: { id: capsuleId, goalId } });
+      expect(await runtime.service.listContextCapsules(actor('session-v5'), goalId)).toMatchObject({ ok: true, value: [{ id: capsuleId }] });
+
+      const planned = await runtime.service.updateGoalPlan(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 2, expectedUserIntentRevision: 1,
+        steps: [
+          { id: 'implement', title: 'Implement typed persistence', status: 'completed', summary: 'Done.' },
+          { id: 'verify', title: 'Run verification', status: 'completed', summary: 'Done.' },
+        ],
+      });
+      expect(planned).toMatchObject({ ok: true, value: { revision: 3 } });
+
+      const premature = await runtime.service.finishGoal(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 3, status: 'completed', summary: 'Too early.', evidence: [],
+      });
+      expect(premature).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const accepted = await runtime.service.updateGoalAcceptance(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 3, expectedUserIntentRevision: 1,
+        updates: [{ criterionId: 'verified', status: 'completed', evidence: [{ kind: 'note', value: 'focused tests passed' }] }],
+      });
+      expect(accepted).toMatchObject({ ok: true, value: { revision: 4, acceptanceCriteria: [{ status: 'completed' }] } });
+
+      const iteration = await runtime.service.advanceGoalIteration(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 4, expectedUserIntentRevision: 1, evidenceAdded: true, nextAction: 'Run bounded review.',
+      });
+      expect(iteration).toMatchObject({ ok: true, value: { revision: 5, iterationPolicy: { mode: 'iterate', currentIteration: 1 } } });
+      const stopped = await runtime.service.advanceGoalIteration(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 5, expectedUserIntentRevision: 1, evidenceAdded: false, nextAction: 'Stop iterating.',
+      });
+      expect(stopped).toMatchObject({ ok: true, value: { revision: 6, iterationPolicy: { mode: 'outcome', currentIteration: 1 } } });
+
+      const finished = await runtime.service.finishGoal(actor('session-v5'), {
+        goalId, leaseToken, expectedRevision: 6, status: 'completed', summary: 'v5 orchestration acceptance passed.', evidence: [{ kind: 'note', value: 'verified' }],
+      });
+      expect(finished).toMatchObject({ ok: true, value: { status: 'completed', revision: 7 } });
+    } finally {
+      runtime.database.close();
+    }
+  });
 });

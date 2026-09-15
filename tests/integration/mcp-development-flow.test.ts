@@ -121,7 +121,7 @@ describe('MCP development flow', () => {
         structuredContent: {
           tracker_excerpt: expect.stringContaining('REAL-TRACKER-PROBE-42'),
           changed_files: expect.arrayContaining(['src/app.ts']),
-          prompt: expect.stringContaining('Recovery state for the same chat'),
+          prompt: expect.stringContaining('Recovery state from lnwjud durable task state'),
         },
       });
 

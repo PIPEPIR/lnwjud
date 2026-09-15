@@ -56,6 +56,64 @@ export interface GoalEvidence {
   readonly value: string;
 }
 
+export type GoalAcceptanceStatus = 'pending' | 'completed' | 'blocked';
+
+export interface GoalAcceptanceCriterion {
+  readonly id: string;
+  readonly title: string;
+  readonly status: GoalAcceptanceStatus;
+  readonly evidence?: readonly GoalEvidence[];
+}
+
+export type GoalIterationMode = 'outcome' | 'iterate';
+
+export interface GoalIterationPolicy {
+  readonly mode: GoalIterationMode;
+  readonly maxIterations: number;
+  readonly currentIteration: number;
+  readonly stopOnNoNewEvidence: boolean;
+}
+
+export interface GoalContextCapsulePayload {
+  readonly objective: string;
+  readonly userSteering: readonly string[];
+  readonly currentPhase: string;
+  readonly plan: GoalPlan;
+  readonly acceptanceCriteria: readonly GoalAcceptanceCriterion[];
+  readonly completedWork: readonly string[];
+  readonly remainingWork: readonly string[];
+  readonly decisions: readonly string[];
+  readonly validation: readonly GoalEvidence[];
+  readonly changedFiles: readonly string[];
+  readonly artifacts: readonly GoalEvidence[];
+  readonly blockers: readonly string[];
+  readonly nextAction: string;
+}
+
+export interface GoalContextCapsuleRecord {
+  readonly id: string;
+  readonly goalId: string;
+  readonly sourceGoalRevision: number;
+  readonly sourceUserIntentRevision: number;
+  readonly previousCapsuleId?: string;
+  readonly payload: GoalContextCapsulePayload;
+  readonly createdAt: string;
+}
+
+export type GoalDeliveryState = 'reserved' | 'attempted_unresolved' | 'dispatched_unresolved' | 'host_confirmed' | 'completed' | 'cancelled' | 'retired';
+
+export interface GoalDeliveryReceipt {
+  readonly id: string;
+  readonly goalId: string;
+  readonly channel: string;
+  readonly state: GoalDeliveryState;
+  readonly basedOnUserIntentRevision: number;
+  readonly externalId?: string;
+  readonly detail?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface GoalLeaseProof {
   readonly goalId: string;
   readonly leaseToken: string;
@@ -85,6 +143,10 @@ export interface GoalRecord {
   readonly ownerClientId: string;
   readonly objective: string;
   readonly plan: GoalPlan;
+  readonly acceptanceCriteria: readonly GoalAcceptanceCriterion[];
+  readonly userIntentRevision: number;
+  readonly iterationPolicy: GoalIterationPolicy;
+  readonly currentContextCapsuleId?: string;
   readonly status: GoalStatus;
   readonly revision: number;
   readonly currentPhase: string;
@@ -145,6 +207,8 @@ export interface AcquireGoalRecordRequest {
   readonly ownerSessionId: string;
   readonly objective?: string;
   readonly plan?: GoalPlan;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly iterationPolicy?: GoalIterationPolicy;
   readonly ponytailMode?: GoalPonytailMode;
   readonly leaseTokenHash: string;
   readonly leaseSeconds: number;
@@ -166,7 +230,12 @@ export interface CheckpointGoalRecordRequest {
   readonly ownerSessionId: string;
   readonly leaseTokenHash: string;
   readonly expectedRevision: number;
+  readonly expectedUserIntentRevision?: number;
   readonly plan: GoalPlan;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly userIntentRevision?: number;
+  readonly iterationPolicy?: GoalIterationPolicy;
+  readonly currentContextCapsuleId?: string | null;
   readonly currentPhase: string;
   readonly summary: string;
   readonly stepUpdates: readonly GoalStepUpdate[];
@@ -243,6 +312,27 @@ export interface ScheduledTaskCancellationInstruction {
   readonly reason: 'live_task_confirmed' | 'no_live_task' | 'already_fired' | 'already_cancelled' | 'native_task_unverified';
 }
 
+export interface CreateGoalContextCapsuleRecordRequest {
+  readonly id: string;
+  readonly goalId: string;
+  readonly sourceGoalRevision: number;
+  readonly sourceUserIntentRevision: number;
+  readonly previousCapsuleId?: string;
+  readonly payload: GoalContextCapsulePayload;
+  readonly createdAt: string;
+}
+
+export interface RecordGoalDeliveryReceiptRequest {
+  readonly id: string;
+  readonly goalId: string;
+  readonly channel: string;
+  readonly state: GoalDeliveryState;
+  readonly basedOnUserIntentRevision: number;
+  readonly externalId?: string;
+  readonly detail?: string;
+  readonly now: string;
+}
+
 export interface GoalRepository {
   acquire(request: AcquireGoalRecordRequest): Promise<AcquireGoalRecordResult>;
   getById(goalId: string): Promise<GoalRecord | null>;
@@ -253,4 +343,10 @@ export interface GoalRepository {
   finish(request: FinishGoalRecordRequest): Promise<GoalRecord>;
   cancel(request: CancelGoalRecordRequest): Promise<CancelGoalRecordResult>;
   reconcile(request: ReconcileGoalRecordRequest): Promise<GoalRecord>;
+  createContextCapsule?(request: CreateGoalContextCapsuleRecordRequest): Promise<GoalContextCapsuleRecord>;
+  getContextCapsule?(capsuleId: string): Promise<GoalContextCapsuleRecord | null>;
+  listContextCapsules?(goalId: string, limit: number): Promise<readonly GoalContextCapsuleRecord[]>;
+  recordDeliveryReceipt?(request: RecordGoalDeliveryReceiptRequest): Promise<GoalDeliveryReceipt>;
+  getDeliveryReceipt?(receiptId: string): Promise<GoalDeliveryReceipt | null>;
+  listDeliveryReceipts?(goalId: string, limit: number): Promise<readonly GoalDeliveryReceipt[]>;
 }

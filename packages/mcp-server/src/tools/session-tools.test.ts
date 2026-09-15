@@ -63,16 +63,67 @@ describe('session tools', () => {
     expect(value.tracker_excerpt).toContain('RUN-SMOKE-42');
     expect(value.changed_files).toContain('packages/mcp-server/src/run-budget.ts');
     expect(value.background_tasks).toEqual([expect.objectContaining({ task_id: 'durable-123', state: 'running' })]);
-    expect(value.prompt).toEqual(expect.stringContaining('Recovery state for the same chat'));
+    expect(value.prompt).toEqual(expect.stringContaining('Recovery state from lnwjud durable task state'));
     expect(value.recovery_state).toBe(value.prompt);
     expect(value.recovery_format).toBe('task_state');
     expect(value.persistent_instructions).toBe(false);
     expect(value.prompt).toEqual(expect.stringContaining('not persistent user or agent instructions'));
     expect(value.prompt).toEqual(expect.stringContaining('durable-123'));
-    expect(value.prompt).toEqual(expect.stringContaining('Refresh connector'));
-    expect(value.prompt).toEqual(expect.stringContaining('Continue until the requested acceptance is complete'));
-    expect(value.prompt).toEqual(expect.stringContaining('Do not invoke generic handoff skills'));
+    expect(value.prompt).toEqual(expect.stringContaining('Recover durable jobs by task_id'));
+    expect(value.prompt).toEqual(expect.stringContaining('Do not redo completed phases'));
+    expect(value.prompt).toEqual(expect.stringContaining('Never use browser/DOM automation'));
     expect(value.prompt).not.toEqual(expect.stringContaining('Before ending'));
+  });
+
+  it('uses the active durable goal and latest capsule even when the legacy tracker is unavailable', async () => {
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async listGoals() {
+            return ok({ goals: [{
+              goalId: 'goal-v5', goalKey: 'v5', workspaceId: 'workspace-1', objective: 'Ship v5 safely', status: 'active', revision: 7,
+              userIntentRevision: 2, currentPhase: 'verify', plan: { steps: [{ id: 'verify', title: 'Verify', status: 'in_progress' }] },
+              acceptanceCriteria: [{ id: 'tests', title: 'Tests pass', status: 'pending' }], blockers: [], trackedTasks: [], nextAction: 'Run tests.',
+              currentContextCapsuleId: 'capsule-v5', completedSteps: [], pendingSteps: [], activeTaskIds: [], lastCheckpoint: null,
+            }] });
+          },
+          async listContextCapsules() {
+            return ok([{ id: 'capsule-v5', goalId: 'goal-v5', sourceGoalRevision: 7, sourceUserIntentRevision: 2,
+              payload: { objective: 'Ship v5 safely', userSteering: ['No browser automation'], currentPhase: 'verify', plan: { steps: [] }, acceptanceCriteria: [],
+                completedWork: ['Implementation'], remainingWork: ['Verification'], decisions: ['Native scheduled tasks only'], validation: [], changedFiles: [], artifacts: [], blockers: [], nextAction: 'Run tests.' },
+              createdAt: '2026-09-15T00:00:00.000Z' }]);
+          },
+        },
+        git: {
+          async status() { return ok({ entries: [] }); },
+          async diff() { return ok({ patch: '', truncated: false }); },
+        },
+        capabilities: {
+          async execute() { return ok({ tasks: [] }); },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const response = await findTool(context, new IncrementalVerifier(), 'session_handoff').execute(
+      { workspaceId: 'workspace-1' },
+      new AbortController().signal,
+    );
+    expect(response).toMatchObject({
+      ok: true,
+      value: {
+        source_priority: ['durable_goal', 'context_capsule', 'git_workspace', 'legacy_tracker'],
+        tracker_available: false,
+        goal_state: { goalId: 'goal-v5', revision: 7, userIntentRevision: 2 },
+        context_capsule: { id: 'capsule-v5', sourceGoalRevision: 7 },
+      },
+    });
+    if (!response.ok) return;
+    const value = response.value as Record<string, unknown>;
+    expect(value.prompt).toEqual(expect.stringContaining('Ship v5 safely'));
+    expect(value.prompt).toEqual(expect.stringContaining('Native scheduled tasks only'));
+    expect(value.prompt).toEqual(expect.stringContaining('Never use browser/DOM automation'));
   });
 
   it('returns verify_incremental cache hit for unchanged diff and miss after the diff changes', async () => {
