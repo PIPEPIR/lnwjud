@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.0.0 release directly.</p>
+<p align="center">Choose your platform and download the current v5.0.1 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.0.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.1.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.0.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.1.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -53,9 +53,16 @@
 
 ## Current version: v5.0.1
 
-`v5.0.0` is the current public release line. The platform cards above point to the matching v5.0.0 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
+`v5.0.1` is the current release line. The platform cards above point to the matching v5.0.1 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
 
-### What's new in v5.0.0
+### What's new in v5.0.1
+
+- **Tunnel incident diagnostics v2:** exported incidents now preserve process exit/restart evidence, OAuth refresh diagnostics, transport/network clues, client-version probe results, and sanitized tunnel log messages without storing credentials.
+- **Reconnect evidence:** persistent tunnel supervision records restart attempts, outcomes, last known process IDs, and managed-runtime limitations so disconnects can be diagnosed instead of collapsing into a generic stopped state.
+- **Version probing fallback:** Windows tunnel-client inspection falls back to the runtime `--version` command when file-version metadata is unavailable.
+- **Consistent timestamps:** UI/log copy and incident evidence use the shared Asia/Bangkok 24-hour display contract, while incident JSON records its timezone and offset-aware timestamps explicitly.
+
+### Historical: What's new in v5.0.0
 
 - **Durable Goal Plan + acceptance:** authoritative goal state now exposes a user-facing plan projection, explicit acceptance criteria/evidence, and completion gates instead of treating prose checkpoints as the finish line.
 - **Newest user intent wins:** `userIntentRevision` fences stale generated work, while durable delivery receipts track reserved, attempted, ambiguous-dispatch, confirmed, completed, cancelled, and retired states without blind replay.

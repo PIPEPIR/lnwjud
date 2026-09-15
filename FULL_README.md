@@ -53,13 +53,20 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current version: v5.0.1
 
-The v5.0.0 release runtime contract contains **253 total MCP tool definitions**,
+The v5.0.1 release runtime contract contains **253 total MCP tool definitions**,
 with **246 advertised by default** and **all 253 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier v4 tool-count snapshots remain
 historical compatibility baselines rather than the current release contract.
 
-### What's new in v5.0.0
+### What's new in v5.0.1
+
+- Tunnel incident exports move to schema v2 and preserve sanitized process-exit, restart, OAuth-refresh, transport/network, client-version, and tunnel-log evidence for real disconnect diagnosis.
+- Persistent tunnel supervision records restart attempts/outcomes and last known process identity; native-managed runtimes report unavailable exit metadata explicitly instead of inventing it.
+- Windows tunnel-client version inspection falls back to `--version` when executable file metadata is unavailable.
+- UI/log copy and incident evidence share the Asia/Bangkok 24-hour timestamp contract, while incident JSON carries explicit timezone and offset-aware timestamps.
+
+### Historical: What's new in v5.0.0
 
 - Durable Goal state now exposes a user-facing plan projection, explicit acceptance criteria/evidence, and completion gates.
 - `userIntentRevision` makes newer accepted user steering authoritative and retires stale non-terminal generated delivery work.
@@ -392,7 +399,7 @@ Choose the guide for the host you will run lnwjud on:
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 v5.0.0 release artifacts are `lnwjud-Setup-5.0.0.exe` (recommended installer) and `lnwjud-Portable-5.0.0.exe` (no installation required).
+   Current Windows 10/11 x64 v5.0.1 release artifacts are `lnwjud-Setup-5.0.1.exe` (recommended installer) and `lnwjud-Portable-5.0.1.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
@@ -444,7 +451,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.0.0. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.0.1. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -505,7 +512,7 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำใน v5.0.0 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำใน v5.0.1 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
