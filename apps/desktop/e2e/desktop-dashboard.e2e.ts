@@ -21,7 +21,6 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-'));
   const fixtureRealRoot = await realpath(fixtureRoot);
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-data-'));
-  await seedExpandableWorkLog(dataRoot, fixtureRealRoot);
   const gitCeilingDirectories = [path.dirname(fixtureRoot), path.dirname(fixtureRealRoot)].filter((value, index, values) => values.indexOf(value) === index).join(path.delimiter);
   await writeFile(path.join(fixtureRoot, '.env'), 'SECRET_NOT_FOR_UI=do-not-display\n', 'utf8');
   const devToolsPort = await findEphemeralPort();
@@ -60,6 +59,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     diagnosticPage = page;
 
     await settleFirstRunAndOpenHome(page);
+    await seedExpandableWorkLog(dataRoot, fixtureRealRoot);
 
     await expect(page.getByRole('heading', { name: /^(ศูนย์ควบคุม Agent|Agent Control Center)$/ })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
@@ -177,15 +177,17 @@ async function seedExpandableWorkLog(dataRoot: string, workspaceId: string): Pro
     const items = ['one.ts', 'two.ts', 'three.ts', 'four.ts', 'five.ts', 'six.ts', 'hidden-seven.ts'];
     const detail = redactActivityTargetDetail({ kind: 'files', items });
     const targetDetail = { detailRef: 'e2e-expand-call', itemCount: items.length, preview: items.slice(0, 3), legacyIncomplete: false } as const;
+    const startedAt = new Date();
+    const completedAt = new Date(startedAt.getTime() + 1);
     await audit.recordMcpTool({
       actorId: 'e2e', actorName: 'e2e', workspaceId, toolName: 'read_files', callId: 'e2e-expand-call', phase: 'started',
       targetSummary: 'one.ts, two.ts, three.ts (+4)', targetDetail, activityTargetDetail: detail,
-      resultCode: 'STARTED', durationMs: 0, timestamp: '2026-08-30T00:00:00.000Z',
+      resultCode: 'STARTED', durationMs: 0, timestamp: startedAt.toISOString(),
     });
     await audit.recordMcpTool({
       actorId: 'e2e', actorName: 'e2e', workspaceId, toolName: 'read_files', callId: 'e2e-expand-call', phase: 'completed',
       targetSummary: 'one.ts, two.ts, three.ts (+4)', targetDetail,
-      resultCode: 'SUCCESS', durationMs: 7, timestamp: '2026-08-30T00:00:01.000Z',
+      resultCode: 'SUCCESS', durationMs: 7, timestamp: completedAt.toISOString(),
     });
   } finally {
     database.close();
