@@ -24,6 +24,18 @@ export interface NativeMessages {
   readonly cancel: string;
   readonly shutdownBlockedTitle: string;
   readonly shutdownBlockedMessage: string;
+  readonly logStatus: string;
+  readonly logCapturedRowUnavailable: string;
+  readonly logTime: string;
+  readonly logLevel: string;
+  readonly logMessage: string;
+  readonly logSource: string;
+  readonly logWorkspace: string;
+  readonly logSession: string;
+  readonly logTechnical: string;
+  readonly logWorkLogTitle: string;
+  readonly logExported: string;
+  readonly logRows: string;
   updateAvailableStatus(version: string): string;
   updateAvailableDialog(version: string): string;
   updateDownloadingStatus(version: string | null, percent: number | null): string;
@@ -59,6 +71,18 @@ const th: NativeMessages = {
   cancel: 'ยกเลิก',
   shutdownBlockedTitle: 'lnwjud ยังทำงานอยู่',
   shutdownBlockedMessage: 'ยังยืนยันไม่ได้ว่า Tunnel ที่ lnwjud ดูแลหยุดทำงานแล้ว โปรแกรมจะยังเปิดอยู่ กรุณาตรวจสอบสถานะ Tunnel แล้วลองปิดโปรแกรมอีกครั้ง',
+  logStatus: 'สถานะ',
+  logCapturedRowUnavailable: 'ไม่พบรายการที่จับไว้แล้ว',
+  logTime: 'เวลา',
+  logLevel: 'ระดับ',
+  logMessage: 'ข้อความ',
+  logSource: 'แหล่งที่มา',
+  logWorkspace: 'Workspace',
+  logSession: 'Session',
+  logTechnical: 'ข้อมูลทางเทคนิค',
+  logWorkLogTitle: 'บันทึกการทำงาน',
+  logExported: 'เวลาส่งออก',
+  logRows: 'จำนวนรายการ',
   updateAvailableStatus: (version) => `พบ v${version} — กำลังดาวน์โหลดในเบื้องหลัง`,
   updateAvailableDialog: (version) => `พบ lnwjud v${version} กำลังดาวน์โหลดอัปเดตในเบื้องหลัง`,
   updateDownloadingStatus: (_version, percent) => `กำลังดาวน์โหลดอัปเดต ${Math.round(percent ?? 0)}%`,
@@ -94,6 +118,18 @@ const en: NativeMessages = {
   cancel: 'Cancel',
   shutdownBlockedTitle: 'lnwjud is still running',
   shutdownBlockedMessage: 'The owned tunnel could not be confirmed stopped. lnwjud will remain open; check the tunnel status and retry Quit.',
+  logStatus: 'Status',
+  logCapturedRowUnavailable: 'Captured row is no longer available',
+  logTime: 'Time',
+  logLevel: 'Level',
+  logMessage: 'Message',
+  logSource: 'Source',
+  logWorkspace: 'Workspace',
+  logSession: 'Session',
+  logTechnical: 'Technical metadata',
+  logWorkLogTitle: 'Work Log',
+  logExported: 'Exported',
+  logRows: 'Rows',
   updateAvailableStatus: (version) => `v${version} found — downloading in the background`,
   updateAvailableDialog: (version) => `lnwjud v${version} is available and is downloading in the background`,
   updateDownloadingStatus: (_version, percent) => `Downloading update ${Math.round(percent ?? 0)}%`,

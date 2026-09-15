@@ -951,6 +951,7 @@ async function exportLogsToFile(
 ): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
   const locale = request.locale ?? desktopLocale;
+  const messages = nativeMessages(locale);
   const snapshot = await services.getLogSnapshot();
   const lineById = new Map(snapshot.lines.filter((line) => line.source === request.source).map((line) => [line.id, line] as const));
   const capturedRows = request.lines.map((reference) => ({ reference, line: lineById.get(reference.lineId) ?? null }));
@@ -967,20 +968,17 @@ async function exportLogsToFile(
     for (const [index, captured] of capturedRows.entries()) {
       const { reference, line } = captured;
       if (line === null) {
-        yield `${formatLogEntryHeading(index + 1)}\r\n${locale === 'th' ? 'สถานะ' : 'Status'}: ${locale === 'th' ? 'ไม่พบรายการที่จับไว้แล้ว' : 'Captured row is no longer available'}\r\nlineId=${reference.lineId}`;
+        yield `${formatLogEntryHeading(index + 1)}\r\n${messages.logStatus}: ${messages.logCapturedRowUnavailable}\r\nlineId=${reference.lineId}`;
         continue;
       }
-      const labels = locale === 'th'
-        ? { time: 'เวลา', level: 'ระดับ', message: 'ข้อความ', source: 'แหล่งที่มา', workspace: 'Workspace', session: 'Session', technical: 'ข้อมูลทางเทคนิค' }
-        : { time: 'Time', level: 'Level', message: 'Message', source: 'Source', workspace: 'Workspace', session: 'Session', technical: 'Technical metadata' };
       const readable = [
         formatLogEntryHeading(index + 1),
-        `${labels.time}: ${formatExportLogTimestamp(line.timestamp, locale)}`,
-        `${labels.level}: ${line.level.toUpperCase()}`,
-        `${labels.source}: ${line.source}`,
-        `${labels.workspace}: ${line.workspaceId ?? '-'}`,
-        `${labels.session}: ${line.sessionId ?? '-'}`,
-        `${labels.message}: ${line.text}`,
+        `${messages.logTime}: ${formatExportLogTimestamp(line.timestamp, locale)}`,
+        `${messages.logLevel}: ${line.level.toUpperCase()}`,
+        `${messages.logSource}: ${line.source}`,
+        `${messages.logWorkspace}: ${line.workspaceId ?? '-'}`,
+        `${messages.logSession}: ${line.sessionId ?? '-'}`,
+        `${messages.logMessage}: ${line.text}`,
       ];
       const metadata = [
         `lineId=${line.id}`,
@@ -1000,7 +998,7 @@ async function exportLogsToFile(
           `pid=${line.correlation.pid ?? '<none>'}`,
         ] : []),
       ];
-      const baseWithMetadata = `${readable.join('\r\n')}\r\n\r\n${labels.technical}:\r\n${metadata.map((entry) => `  ${entry}`).join('\r\n')}`;
+      const baseWithMetadata = `${readable.join('\r\n')}\r\n\r\n${messages.logTechnical}:\r\n${metadata.map((entry) => `  ${entry}`).join('\r\n')}`;
       const targetDetail = line.targetDetail;
       if (targetDetail?.legacyIncomplete === true && targetDetail.itemCount > targetDetail.preview.length) {
         yield formatIncompleteLegacyHistory(baseWithMetadata);
@@ -1020,6 +1018,7 @@ async function exportLogsToFile(
 async function exportWorkLogToFile(window: BrowserWindow | null, services: DesktopIpcServices, request: ExportWorkLogRequest): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
   const locale = request.locale ?? desktopLocale;
+  const messages = nativeMessages(locale);
   const result = await dialog.showSaveDialog(window, {
     title: 'Export lnwjud work log',
     defaultPath: 'lnwjud-work-log.log',
@@ -1027,7 +1026,7 @@ async function exportWorkLogToFile(window: BrowserWindow | null, services: Deskt
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
   async function* serializedRows(): AsyncIterable<string> {
-    yield formatLogExportHeader(locale, locale === 'th' ? 'บันทึกการทำงาน' : 'Work Log', 'mcp', request.rowIds.length);
+    yield formatLogExportHeader(locale, messages.logWorkLogTitle, 'mcp', request.rowIds.length);
     let index = 0;
     for await (const row of services.streamWorkLogExportRows(request.rowIds, locale)) {
       index += 1;
@@ -1039,16 +1038,14 @@ async function exportWorkLogToFile(window: BrowserWindow | null, services: Deskt
 }
 
 function formatLogExportHeader(locale: UiLocale, title: string, source: string, rows: number): string {
-  const labels = locale === 'th'
-    ? { exported: 'เวลาส่งออก', source: 'แหล่งข้อมูล', rows: 'จำนวนรายการ' }
-    : { exported: 'Exported', source: 'Source', rows: 'Rows' };
+  const messages = nativeMessages(locale);
   return [
     '============================================================',
     `lnwjud - ${title}`,
     '============================================================',
-    `${labels.exported}: ${formatExportLogTimestamp(new Date().toISOString(), locale)}`,
-    `${labels.source}: ${source}`,
-    `${labels.rows}: ${rows}`,
+    `${messages.logExported}: ${formatExportLogTimestamp(new Date().toISOString(), locale)}`,
+    `${messages.logSource}: ${source}`,
+    `${messages.logRows}: ${rows}`,
     '============================================================',
   ].join('\r\n');
 }

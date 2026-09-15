@@ -21,11 +21,39 @@
   <img alt="MCP" src="https://img.shields.io/badge/MCP-242%20tools-6f42c1" />
 </p>
 
+<h2 align="center">Download lnwjud</h2>
+<p align="center">Choose your platform and download the current v4.70.1 build directly.</p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-4.70.1.exe">
+        <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
+      </a><br />
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-4.70.1.exe">Portable x64</a></sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-arm64.dmg">
+        <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
+      </a><br />
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.deb">
+        <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
+      </a><br />
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-4.70.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center"><a href="https://github.com/engasnm111/lnwjud/releases/latest"><strong>View all release files →</strong></a></p>
+
 ---
 
 ## Current version: v4.70.1
 
-`v4.70.1` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.70.1` is the current release version. The platform cards above link straight to the primary release assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only.
 
 ### What's new in v4.70.1
 
@@ -118,7 +146,7 @@ Installed lnwjud keeps per-user runtime data outside your source repository: `%A
 
 ## What can lnwjud do?
 
-lnwjud exposes **233 first-party tool definitions** through one local runtime and MCP gateway. The default advertised set is 226; the remaining Codex delegation and Agent Swarm definitions are opt-in.
+lnwjud exposes **242 tool definitions** through one local runtime and MCP gateway. The default advertised set is 235; all 242 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |
