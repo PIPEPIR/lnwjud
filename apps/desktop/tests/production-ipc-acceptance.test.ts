@@ -223,11 +223,12 @@ describe('production desktop IPC acceptance', () => {
     const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
 
     await expect(requiredHandler(ipcChannels.exportLogs)(trusted, {
-      source: 'mcp', filePath: '', lines: [{ lineId: 99, correlationRef: 'call-missing' }],
+      source: 'mcp', filePath: '', locale: 'en', lines: [{ lineId: 99, correlationRef: 'call-missing' }],
     })).resolves.toEqual({ exported: true });
 
-    expect(await readFile(filePath, 'utf8')).toContain('line:99');
-    expect(await readFile(filePath, 'utf8')).toContain('unavailable');
+    const exported = await readFile(filePath, 'utf8');
+    expect(exported).toContain('lineId=99');
+    expect(exported).toContain('Captured row is no longer available');
   });
 
   it('enforces the production IPC sender and payload guards before invoking services', async () => {
