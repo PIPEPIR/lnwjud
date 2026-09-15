@@ -1365,7 +1365,13 @@ function openLogViewerWindow(): BrowserWindow | null {
 function createDesktopWindow(forceShow = false): void {
   mainWindow = createMainWindow(forceShow || !desktopUserSettings.startMinimized);
   mainWindow.on('close', (event) => {
-    if (!shouldHideMainWindowOnClose(quitRequested, desktopUserSettings.closeBehavior)) return;
+    const hideToTray = shouldHideMainWindowOnClose(quitRequested, desktopUserSettings.closeBehavior);
+    crashDiagnostics?.record({
+      type: 'desktop-lifecycle',
+      processType: 'main',
+      reason: `main-window:close:${hideToTray ? 'hide-to-tray' : quitRequested ? 'quit-requested' : 'window-close'}`,
+    });
+    if (!hideToTray) return;
     event.preventDefault();
     if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.hide();
   });
@@ -2294,17 +2300,22 @@ function configureDesktopShutdown(runtime: DesktopRuntime): void {
 
 function handleDesktopWindowsClosed(scope: 'desktop' | 'log-viewer'): void {
   const recoveryPending = rendererRecoveryBarrier.isPending();
+  const shouldQuit = rendererRecoveryBarrier.shouldQuitWhenWindowsClosed(process.platform);
   crashDiagnostics?.record({
     type: 'desktop-lifecycle',
     processType: 'main',
-    reason: `${scope}:window-all-closed${recoveryPending ? ':renderer-recovery-pending' : ''}`,
+    reason: `${scope}:window-all-closed:${shouldQuit ? 'app-quit' : recoveryPending ? 'renderer-recovery-pending' : 'keep-alive'}`,
   });
-  if (rendererRecoveryBarrier.shouldQuitWhenWindowsClosed(process.platform)) app.quit();
+  if (shouldQuit) app.quit();
 }
 
 function handleDesktopBeforeQuit(event: Electron.Event): void {
-  crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'before-quit' });
   const coordinator = desktopShutdownCoordinator;
+  crashDiagnostics?.record({
+    type: 'desktop-lifecycle',
+    processType: 'main',
+    reason: `before-quit:${coordinator === null ? 'no-runtime' : coordinator.canQuit() ? 'ready' : 'coordinating'}`,
+  });
   if (coordinator === null || coordinator.canQuit()) {
     quitRequested = true;
     updateInstallCoordinator?.cancel();
@@ -2328,7 +2339,25 @@ function configureCrashRecovery(dataPath: string): void {
   crashRecoveryConfigured = true;
 
   process.on('uncaughtExceptionMonitor', (error) => {
-    crashDiagnostics?.record({ type: 'main-uncaught-exception', processType: 'main', error });
+    crashDiagnostics?.record({ type: 'main-uncaught-exception', processType: 'main', reason: 'uncaught-exception-monitor', error });
+  });
+  process.on('unhandledRejection', (reason) => {
+    crashDiagnostics?.record({ type: 'main-unhandled-rejection', processType: 'main', reason: 'unhandled-rejection', error: reason });
+  });
+  process.on('exit', (exitCode) => {
+    crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'process-exit', exitCode });
+  });
+  const handleTerminationSignal = (signal: NodeJS.Signals): void => {
+    crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: `signal:${signal}`, signal });
+    app.quit();
+  };
+  process.once('SIGTERM', () => handleTerminationSignal('SIGTERM'));
+  process.once('SIGINT', () => handleTerminationSignal('SIGINT'));
+  app.on('will-quit', () => {
+    crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: `will-quit:${quitRequested ? 'requested' : 'external'}` });
+  });
+  app.on('quit', (_event, exitCode) => {
+    crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'quit', exitCode });
   });
   app.on('child-process-gone', (_event, details) => {
     crashDiagnostics?.record({
@@ -2339,13 +2368,19 @@ function configureCrashRecovery(dataPath: string): void {
     });
   });
   app.on('render-process-gone', (_event, webContents, details) => {
+    const shouldRecover = !quitRequested && rendererRecoveryPolicy.shouldRecover(details.reason);
     crashDiagnostics?.record({
       type: 'renderer-gone',
       processType: 'renderer',
       reason: details.reason,
       exitCode: details.exitCode,
     });
-    if (quitRequested || !rendererRecoveryPolicy.shouldRecover(details.reason)) return;
+    crashDiagnostics?.record({
+      type: 'desktop-lifecycle',
+      processType: 'main',
+      reason: `renderer-gone:${details.reason}:recovery=${shouldRecover ? 'scheduled' : quitRequested ? 'quit-requested' : 'rate-limited'}`,
+    });
+    if (!shouldRecover) return;
     const mainCrashed = mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents.id === webContents.id;
     const logViewerCrashed = logViewerWindow !== null && !logViewerWindow.isDestroyed() && logViewerWindow.webContents.id === webContents.id;
     if (!mainCrashed && !logViewerCrashed) return;

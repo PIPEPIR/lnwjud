@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { redactDiagnosticText } from '@lnwjud/application';
+import { DEFAULT_DISPLAY_TIME_ZONE, formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
 
 const MAX_CRASH_LOG_BYTES = 512 * 1024;
 const RETAINED_CRASH_EVENTS = 128;
@@ -9,24 +10,34 @@ const MAX_EVENT_TEXT = 1_000;
 const RECOVERY_WINDOW_MS = 5 * 60_000;
 const MAX_RECOVERIES_PER_WINDOW = 3;
 
-export type CrashEventType = 'main-uncaught-exception' | 'renderer-gone' | 'child-process-gone' | 'desktop-lifecycle' | 'desktop-startup';
+export type CrashEventType = 'main-uncaught-exception' | 'main-unhandled-rejection' | 'renderer-gone' | 'child-process-gone' | 'desktop-lifecycle' | 'desktop-startup';
 
 export interface CrashEventInput {
   readonly type: CrashEventType;
   readonly processType?: string;
   readonly reason?: string;
   readonly exitCode?: number;
+  readonly signal?: string;
   readonly error?: unknown;
 }
 
 export interface CrashEventRecord {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly timestamp: string;
+  readonly timeZone: string;
   readonly appVersion: string;
   readonly type: CrashEventType;
+  readonly pid: number;
+  readonly memory: {
+    readonly rssBytes: number;
+    readonly heapUsedBytes: number;
+    readonly externalBytes: number;
+    readonly arrayBuffersBytes: number;
+  };
   readonly processType?: string;
   readonly reason?: string;
   readonly exitCode?: number;
+  readonly signal?: string;
   readonly errorName?: string;
   readonly errorMessage?: string;
 }
@@ -92,20 +103,30 @@ export class RendererRecoveryBarrier {
   }
 }
 
-export function createCrashEventRecord(appVersion: string, input: CrashEventInput, timestamp: string = new Date().toISOString()): CrashEventRecord {
+export function createCrashEventRecord(appVersion: string, input: CrashEventInput, timestamp: string = formatOffsetIsoTimestamp(new Date(), DEFAULT_DISPLAY_TIME_ZONE)): CrashEventRecord {
+  const memory = process.memoryUsage();
   const error = input.error instanceof Error
     ? { errorName: sanitizeCrashText(input.error.name), errorMessage: sanitizeCrashText(input.error.message) }
     : input.error === undefined
       ? {}
       : { errorName: 'UnknownError', errorMessage: sanitizeCrashText(String(input.error)) };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     timestamp,
+    timeZone: DEFAULT_DISPLAY_TIME_ZONE,
     appVersion,
     type: input.type,
+    pid: process.pid,
+    memory: {
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+      externalBytes: memory.external,
+      arrayBuffersBytes: memory.arrayBuffers,
+    },
     ...(input.processType === undefined ? {} : { processType: sanitizeCrashText(input.processType) }),
     ...(input.reason === undefined ? {} : { reason: sanitizeCrashText(input.reason) }),
     ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
+    ...(input.signal === undefined ? {} : { signal: sanitizeCrashText(input.signal) }),
     ...error,
   };
 }

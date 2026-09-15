@@ -11,14 +11,26 @@ describe('crash recovery diagnostics', () => {
   it('redacts credentials and bounds crash text without persisting stacks', () => {
     const record = createCrashEventRecord('4.6.1', {
       type: 'main-uncaught-exception',
+      signal: 'SIGTERM',
       error: new Error(`Authorization: Bearer secret-token PASSWORD=hunter2 ${'x'.repeat(2_000)}`),
     }, '2026-08-22T00:00:00.000Z');
 
     const serialized = JSON.stringify(record);
+    expect(record.schemaVersion).toBe(2);
+    expect(record.timeZone).toBe('Asia/Bangkok');
+    expect(record.pid).toBe(process.pid);
+    expect(record.memory.rssBytes).toBeGreaterThan(0);
+    expect(record.signal).toBe('SIGTERM');
     expect(serialized).not.toContain('secret-token');
     expect(serialized).not.toContain('hunter2');
     expect(serialized).not.toContain('stack');
     expect(record.errorMessage?.length).toBeLessThanOrEqual(1_000);
+  });
+
+  it('uses a local offset timestamp for new records', () => {
+    const record = createCrashEventRecord('5.0.1', { type: 'desktop-lifecycle', reason: 'process-exit', exitCode: 0 });
+    expect(record.timestamp).toMatch(/[+-]\d{2}:\d{2}$/);
+    expect(record.timeZone).toBe('Asia/Bangkok');
   });
 
   it('writes local NDJSON crash records', async () => {
