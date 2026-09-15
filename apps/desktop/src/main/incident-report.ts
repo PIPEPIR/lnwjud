@@ -3,6 +3,8 @@ import { rename, unlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { LogLine, TunnelLifecycleCategory, TunnelStatus } from '@lnwjud/ipc-contracts';
+import { DEFAULT_DISPLAY_TIME_ZONE, formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
+import type { TunnelIncidentRuntimeDiagnostics } from './tunnel-controller.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_ENTRIES = 200;
@@ -21,12 +23,56 @@ export type IncidentClassification = 'local_tool_failed' | 'tunnel_disconnected'
 export type TunnelHealthState = 'live' | 'unhealthy' | 'unavailable' | 'unknown';
 export interface IncidentHealth { readonly state: TunnelHealthState; readonly message: string | null; }
 type IncidentLine = Pick<LogLine, 'source' | 'text' | 'timestamp' | 'correlation'> & { readonly id?: number };
-export interface IncidentEvidence { readonly triggeredByUser: boolean; readonly appVersion: string; readonly tunnelClientVersion: string | null; readonly tunnelClientVersionReason?: string | null; readonly tunnel: Pick<TunnelStatus, 'state' | 'source'> & { readonly message?: string | null; readonly health: IncidentHealth }; readonly updaterEvents: readonly string[]; readonly logLines: readonly IncidentLine[]; readonly relevantPids?: readonly number[]; readonly relevantPidUnavailableReason?: string; readonly collectProcessTree?: (pids: readonly number[]) => Promise<readonly IncidentProcess[]>; readonly collectListeners?: (pids: readonly number[]) => Promise<readonly IncidentListener[]>; }
+export interface IncidentEvidence {
+  readonly triggeredByUser: boolean;
+  readonly appVersion: string;
+  readonly tunnelClientVersion: string | null;
+  readonly tunnelClientVersionReason?: string | null;
+  readonly tunnel: Pick<TunnelStatus, 'state' | 'source'> & { readonly message?: string | null; readonly health: IncidentHealth };
+  readonly updaterEvents: readonly string[];
+  readonly logLines: readonly IncidentLine[];
+  readonly runtimeDiagnostics?: TunnelIncidentRuntimeDiagnostics;
+  readonly relevantPids?: readonly number[];
+  readonly relevantPidUnavailableReason?: string;
+  readonly collectProcessTree?: (pids: readonly number[]) => Promise<readonly IncidentProcess[]>;
+  readonly collectListeners?: (pids: readonly number[]) => Promise<readonly IncidentListener[]>;
+}
 export interface IncidentProcess { readonly pid: number; readonly parentPid: number | null; readonly executable: string; }
 export interface IncidentListener { readonly pid: number; readonly address: string; readonly port: number; readonly owner?: string; }
 export type IncidentCompletionState = 'success' | 'failure' | 'unknown' | 'conflict';
 export interface IncidentCall { readonly callId: string; readonly toolName: string | null; readonly resultCode: 'SUCCESS' | 'FAILED' | 'FATAL' | 'UNKNOWN' | null; readonly completionState: IncidentCompletionState; readonly incomplete: boolean; readonly startedWithoutCompletion: boolean; readonly completionWithoutStart: boolean; readonly sourceSequence: number; readonly lastEvidenceSequence: number; readonly startedAt: string | null; readonly completedAt: string | null; }
-export interface IncidentReport { readonly schemaVersion: 1; readonly capturedAt: string; readonly appVersion: string; readonly tunnelClientVersion: string | null; readonly tunnelClientVersionReason: string | null; readonly classification: IncidentClassification; readonly classificationReasons: readonly string[]; readonly updaterEventTail: readonly { readonly category: 'checking-for-update' | 'update-available' | 'update-not-available' | 'update-downloaded' | 'error'; readonly version?: string }[]; readonly tunnel: { readonly state: TunnelStatus['state']; readonly source: TunnelStatus['source']; readonly instanceIds: readonly string[]; readonly requestIds: readonly string[]; readonly health: IncidentHealth; }; readonly mcpCalls: readonly IncidentCall[]; readonly tunnelLogTail: readonly { readonly timestamp: string; readonly lifecycle: TunnelLifecycleCategory; readonly instanceId?: string; readonly requestId?: string }[]; readonly processTree: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly parentPid: number | null; readonly executable: string }[]; readonly error?: string; }; readonly tcpListeners: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly address: string; readonly port: number }[]; readonly error?: string; }; }
+
+export interface IncidentTransportDiagnostics {
+  readonly webSocketCloseCode: number | null;
+  readonly httpStatus: number | null;
+  readonly networkError: { readonly code: string | null; readonly category: 'connection_reset' | 'timeout' | 'dns' | 'tls' | 'connection_refused' | 'http' | 'unknown'; readonly message: string; readonly timestamp: string | null } | null;
+  readonly lastDisconnectAt: string | null;
+  readonly evidenceSources: readonly ('process_stderr' | 'tunnel_log')[];
+}
+export interface IncidentReport {
+  readonly schemaVersion: 2;
+  readonly capturedAt: string;
+  readonly timeZone: string;
+  readonly appVersion: string;
+  readonly tunnelClientVersion: string | null;
+  readonly tunnelClientVersionReason: string | null;
+  readonly classification: IncidentClassification;
+  readonly classificationReasons: readonly string[];
+  readonly updaterEventTail: readonly { readonly category: 'checking-for-update' | 'update-available' | 'update-not-available' | 'update-downloaded' | 'error'; readonly version?: string }[];
+  readonly tunnel: {
+    readonly state: TunnelStatus['state'];
+    readonly source: TunnelStatus['source'];
+    readonly instanceIds: readonly string[];
+    readonly requestIds: readonly string[];
+    readonly health: IncidentHealth;
+  };
+  readonly runtimeDiagnostics: TunnelIncidentRuntimeDiagnostics | null;
+  readonly transport: IncidentTransportDiagnostics;
+  readonly mcpCalls: readonly IncidentCall[];
+  readonly tunnelLogTail: readonly { readonly timestamp: string; readonly lifecycle: TunnelLifecycleCategory; readonly message: string; readonly instanceId?: string; readonly requestId?: string }[];
+  readonly processTree: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly parentPid: number | null; readonly executable: string }[]; readonly error?: string };
+  readonly tcpListeners: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly address: string; readonly port: number }[]; readonly error?: string };
+}
 
 export function classifyIncident(evidence: Pick<IncidentEvidence, 'triggeredByUser' | 'tunnel' | 'logLines'>): { readonly classification: IncidentClassification; readonly reasons: readonly string[] } {
   const latestCall = pairMcpCalls(evidence.logLines).reduce<IncidentCall | undefined>((latest, call) => latest === undefined || call.lastEvidenceSequence >= latest.lastEvidenceSequence ? call : latest, undefined);
@@ -152,6 +198,84 @@ export function parseTunnelCorrelations(lines: readonly IncidentLine[]): { reado
   return { instanceIds: [...instanceIds].slice(-MAX_IDS), requestIds: [...requestIds].slice(-MAX_IDS) };
 }
 
+function localIncidentTimestamp(value: string | null): string | null {
+  if (value === null) return null;
+  if (Number.isNaN(Date.parse(value))) return safe(value);
+  return formatOffsetIsoTimestamp(value, DEFAULT_DISPLAY_TIME_ZONE);
+}
+
+function localizeIncidentCall(call: IncidentCall): IncidentCall {
+  return {
+    ...call,
+    startedAt: localIncidentTimestamp(call.startedAt),
+    completedAt: localIncidentTimestamp(call.completedAt),
+  };
+}
+
+function localizeRuntimeDiagnostics(value: TunnelIncidentRuntimeDiagnostics | undefined): TunnelIncidentRuntimeDiagnostics | null {
+  if (value === undefined) return null;
+  return {
+    process: {
+      ...value.process,
+      lastProcessStartedAt: localIncidentTimestamp(value.process.lastProcessStartedAt),
+      lastExitAt: localIncidentTimestamp(value.process.lastExitAt),
+    },
+    restart: {
+      ...value.restart,
+      lastScheduledAt: localIncidentTimestamp(value.restart.lastScheduledAt),
+      lastStartedAt: localIncidentTimestamp(value.restart.lastStartedAt),
+      lastCompletedAt: localIncidentTimestamp(value.restart.lastCompletedAt),
+    },
+    auth: value.auth === null ? null : {
+      ...value.auth,
+      lastRefreshStartedAt: localIncidentTimestamp(value.auth.lastRefreshStartedAt),
+      lastRefreshCompletedAt: localIncidentTimestamp(value.auth.lastRefreshCompletedAt),
+      lastCredentialExpiresAt: localIncidentTimestamp(value.auth.lastCredentialExpiresAt),
+    },
+  };
+}
+
+function extractTransportDiagnostics(lines: readonly IncidentLine[], runtime: TunnelIncidentRuntimeDiagnostics | null): IncidentTransportDiagnostics {
+  let webSocketCloseCode = runtime?.process.webSocketCloseCode ?? null;
+  let httpStatus = runtime?.process.httpStatus ?? null;
+  let networkError: IncidentTransportDiagnostics['networkError'] = runtime?.process.networkError === null || runtime?.process.networkError === undefined
+    ? null
+    : { ...runtime.process.networkError, timestamp: localIncidentTimestamp(runtime.process.lastExitAt) };
+  let lastDisconnectAt: string | null = null;
+  const sources = new Set<'process_stderr' | 'tunnel_log'>();
+  if (webSocketCloseCode !== null || httpStatus !== null || networkError !== null || runtime?.process.stderrTail !== null && runtime?.process.stderrTail !== undefined) sources.add('process_stderr');
+  for (const line of lines) {
+    if (line.source !== 'tunnel') continue;
+    const lifecycle = line.correlation?.kind === 'tunnel' ? line.correlation.lifecycle : undefined;
+    if (lifecycle === 'ttl_expired' || lifecycle === 'stdio_stopped' || lifecycle === 'transport_stopped') lastDisconnectAt = localIncidentTimestamp(line.timestamp);
+    const text = line.text.trim();
+    const wsMatch = text.match(/(?:websocket|web\s*socket|\bws\b|connection)[^\r\n]{0,96}?(?:close(?:d)?(?:\s+code)?|code)\D{0,8}(1\d{3}|[234]\d{3})/i)
+      ?? text.match(/(?:close(?:d)?\s+code)\D{0,8}(1\d{3}|[234]\d{3})/i);
+    const httpMatch = text.match(/(?:http(?:\/\d(?:\.\d)?)?(?:\s+status)?|status(?:\s+code)?)\D{0,12}([45]\d{2})/i);
+    const codeMatch = text.match(/\b(ECONNRESET|EPIPE|ETIMEDOUT|ESOCKETTIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|CERT_[A-Z0-9_]+|ERR_TLS_[A-Z0-9_]+|ERR_SSL_[A-Z0-9_]+)\b/i);
+    const haystack = text.toUpperCase();
+    let category: NonNullable<IncidentTransportDiagnostics['networkError']>['category'] | null = null;
+    if (/ECONNRESET|\bEPIPE\b|SOCKET[^\r\n]*CLOSED/.test(haystack)) category = 'connection_reset';
+    else if (/ETIMEDOUT|ESOCKETTIMEDOUT|\bTIMEOUT\b|TIMED OUT/.test(haystack)) category = 'timeout';
+    else if (/ENOTFOUND|EAI_AGAIN|\bDNS\b/.test(haystack)) category = 'dns';
+    else if (/CERT_|\bTLS\b|\bSSL\b|ERR_TLS|ERR_SSL/.test(haystack)) category = 'tls';
+    else if (/ECONNREFUSED/.test(haystack)) category = 'connection_refused';
+    else if (httpMatch !== null) category = 'http';
+    if (wsMatch?.[1] !== undefined) { webSocketCloseCode = Number.parseInt(wsMatch[1], 10); sources.add('tunnel_log'); }
+    if (httpMatch?.[1] !== undefined) { httpStatus = Number.parseInt(httpMatch[1], 10); sources.add('tunnel_log'); }
+    if (category !== null) {
+      networkError = {
+        code: codeMatch?.[1]?.toUpperCase() ?? (httpMatch?.[1] === undefined ? null : `HTTP_${httpMatch[1]}`),
+        category,
+        message: safe(text),
+        timestamp: localIncidentTimestamp(line.timestamp),
+      };
+      sources.add('tunnel_log');
+    }
+  }
+  return { webSocketCloseCode, httpStatus, networkError, lastDisconnectAt, evidenceSources: [...sources] };
+}
+
 export async function buildIncidentReport(evidence: IncidentEvidence): Promise<IncidentReport> {
   const classification = classifyIncident(evidence);
   const pids = trustedPids(evidence.relevantPids ?? []);
@@ -160,9 +284,11 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
   const listenerPids = trustedPids([...pids, ...processTree.entries.map((entry) => entry.pid)]);
   const tcpListeners = await collectListeners(evidence.collectListeners, listenerPids, unavailableReason);
   const correlations = parseTunnelCorrelations(evidence.logLines);
+  const runtimeDiagnostics = localizeRuntimeDiagnostics(evidence.runtimeDiagnostics);
   const report: IncidentReport = {
-    schemaVersion: 1,
-    capturedAt: new Date().toISOString(),
+    schemaVersion: 2,
+    capturedAt: formatOffsetIsoTimestamp(new Date(), DEFAULT_DISPLAY_TIME_ZONE),
+    timeZone: DEFAULT_DISPLAY_TIME_ZONE,
     appVersion: evidence.appVersion,
     tunnelClientVersion: evidence.tunnelClientVersion,
     tunnelClientVersionReason: evidence.tunnelClientVersionReason ?? null,
@@ -170,12 +296,15 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
     classificationReasons: classification.reasons,
     updaterEventTail: normalizeUpdaterEvents(evidence.updaterEvents),
     tunnel: { state: evidence.tunnel.state, source: evidence.tunnel.source, ...correlations, health: { state: evidence.tunnel.health.state, message: evidence.tunnel.health.message } },
-    mcpCalls: pairMcpCalls(evidence.logLines),
+    runtimeDiagnostics,
+    transport: extractTransportDiagnostics(evidence.logLines, runtimeDiagnostics),
+    mcpCalls: pairMcpCalls(evidence.logLines).map(localizeIncidentCall),
     tunnelLogTail: evidence.logLines.filter((line) => line.source === 'tunnel').slice(-MAX_ENTRIES).map((line) => {
       const tunnelCorrelation = line.correlation?.kind === 'tunnel' ? line.correlation : undefined;
       return {
-        timestamp: line.timestamp,
+        timestamp: localIncidentTimestamp(line.timestamp) ?? safe(line.timestamp),
         lifecycle: tunnelCorrelation?.lifecycle ?? 'other',
+        message: safe(line.text),
         ...(tunnelCorrelation?.instanceId === undefined ? {} : { instanceId: tunnelCorrelation.instanceId }),
         ...(tunnelCorrelation?.requestId === undefined ? {} : { requestId: tunnelCorrelation.requestId }),
       };

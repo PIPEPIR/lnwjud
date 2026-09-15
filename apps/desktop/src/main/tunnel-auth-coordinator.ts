@@ -1,5 +1,5 @@
 import type { TunnelAuthMode, TunnelAuthStatus } from '@lnwjud/ipc-contracts';
-import type { TunnelAuthProvider, TunnelRuntimeCredential } from './tunnel-auth.js';
+import type { TunnelAuthDiagnostics, TunnelAuthProvider, TunnelRuntimeCredential } from './tunnel-auth.js';
 
 export interface TunnelAuthModeStore {
   get(): TunnelAuthMode | null;
@@ -39,6 +39,36 @@ export class TunnelAuthCoordinator implements TunnelAuthProvider {
     return this.mode() === 'oauth'
       ? this.oauth.getRuntimeCredential()
       : this.legacy.getRuntimeCredential();
+  }
+
+  public diagnostics(): TunnelAuthDiagnostics {
+    const mode = this.mode();
+    if (mode === 'oauth') {
+      return this.oauth.diagnostics?.() ?? {
+        mode,
+        refreshAttemptCount: 0,
+        refreshSuccessCount: 0,
+        refreshFailureCount: 0,
+        cacheHitCount: 0,
+        lastRefreshStartedAt: null,
+        lastRefreshCompletedAt: null,
+        lastRefreshResult: 'never',
+        lastRefreshError: null,
+        lastCredentialExpiresAt: null,
+      };
+    }
+    return {
+      mode,
+      refreshAttemptCount: 0,
+      refreshSuccessCount: 0,
+      refreshFailureCount: 0,
+      cacheHitCount: 0,
+      lastRefreshStartedAt: null,
+      lastRefreshCompletedAt: null,
+      lastRefreshResult: 'never',
+      lastRefreshError: null,
+      lastCredentialExpiresAt: null,
+    };
   }
 
   public async saveLegacyApiKey(apiKey: string): Promise<void> {

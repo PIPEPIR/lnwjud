@@ -328,7 +328,7 @@ describe('session resilience acceptance', () => {
     const destination = path.join(root, 'incident.json');
     const saved = new IncidentSaveCoordinator({ capture: async (): Promise<typeof report> => report, choosePath: async (): Promise<string> => destination, write: atomicWrite });
     await expect(saved.captureAndSave()).resolves.toMatchObject({ exported: true, cancelled: false });
-    expect(JSON.parse(await readFile(destination, 'utf8'))).toMatchObject({ schemaVersion: 1, classification: 'remote_turn_stopped' });
+    expect(JSON.parse(await readFile(destination, 'utf8'))).toMatchObject({ schemaVersion: 2, classification: 'remote_turn_stopped', timeZone: 'Asia/Bangkok' });
   });
 
   it('keeps the acceptance, operator, and composed resilience surfaces free of fixed nonzero listener ports', async () => {

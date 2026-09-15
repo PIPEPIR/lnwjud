@@ -9,7 +9,7 @@ import { request as httpRequest } from 'node:http';
 import type { TunnelAuthStatus, TunnelPersistentStatus, TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 import type { SecretProtector } from '@lnwjud/shared';
-import { LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
+import { LegacyApiKeyCredentialProvider, type TunnelAuthDiagnostics, type TunnelAuthProvider, type TunnelNetworkErrorDiagnostic } from './tunnel-auth.js';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
@@ -31,6 +31,7 @@ const MAX_AUTO_RESTARTS = 5;
 const RESTART_WINDOW_MS = 30_000;
 const MAX_HEALTH_METADATA_BYTES = 64 * 1024;
 const MAX_HEALTH_URL_BYTES = 2 * 1024;
+const MAX_DIAGNOSTIC_STDERR_BYTES = 16 * 1024;
 type ExternalTunnelProbe = 'live' | 'gone' | 'unverifiable';
 
 export function resolveTunnelProfileDirectory(environment: NodeJS.ProcessEnv = process.env, homeDirectory: string = os.homedir(), platform: NodeJS.Platform = process.platform): string {
@@ -94,6 +95,41 @@ export interface TunnelControllerOptions {
   readonly createRuntimeAdapter?: (options: TunnelRuntimeAdapterOptions) => TunnelRuntimeReconcilerAdapter;
 }
 
+export interface TunnelProcessDiagnostics {
+  readonly currentPid: number | null;
+  readonly lastPid: number | null;
+  readonly lastProcessStartedAt: string | null;
+  readonly lastExitAt: string | null;
+  readonly lastExitCode: number | null;
+  readonly lastSignal: string | null;
+  readonly lastTerminationReason: 'running' | 'exit' | 'spawn_error' | 'intentional_stop' | 'unknown';
+  readonly exitMetadataUnavailableReason: string | null;
+  readonly stderrTail: string | null;
+  readonly lastSpawnError: string | null;
+  readonly webSocketCloseCode: number | null;
+  readonly httpStatus: number | null;
+  readonly networkError: TunnelNetworkErrorDiagnostic | null;
+}
+
+export interface TunnelRestartDiagnostics {
+  readonly consecutiveAttempts: number;
+  readonly totalAttempts: number;
+  readonly successCount: number;
+  readonly failureCount: number;
+  readonly scheduled: boolean;
+  readonly lastScheduledAt: string | null;
+  readonly lastStartedAt: string | null;
+  readonly lastCompletedAt: string | null;
+  readonly lastResult: 'never' | 'scheduled' | 'started' | 'stable' | 'failed' | 'cancelled';
+  readonly lastError: string | null;
+}
+
+export interface TunnelIncidentRuntimeDiagnostics {
+  readonly process: TunnelProcessDiagnostics;
+  readonly restart: TunnelRestartDiagnostics;
+  readonly auth: TunnelAuthDiagnostics | null;
+}
+
 export class TunnelController {
   private child: ChildProcess | null = null;
   private ownedChildStartedAt: string | null = null;
@@ -106,6 +142,25 @@ export class TunnelController {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
   private restartAttempts = 0;
+  private restartAttemptTotal = 0;
+  private restartSuccessTotal = 0;
+  private restartFailureTotal = 0;
+  private restartLastScheduledAt: string | null = null;
+  private restartLastStartedAt: string | null = null;
+  private restartLastCompletedAt: string | null = null;
+  private restartLastResult: TunnelRestartDiagnostics['lastResult'] = 'never';
+  private restartLastError: string | null = null;
+  private lastChildPid: number | null = null;
+  private lastChildStartedAt: string | null = null;
+  private lastChildExitAt: string | null = null;
+  private lastChildExitCode: number | null = null;
+  private lastChildSignal: string | null = null;
+  private lastChildTerminationReason: TunnelProcessDiagnostics['lastTerminationReason'] = 'unknown';
+  private childStderrTail = '';
+  private lastChildSpawnError: string | null = null;
+  private lastWebSocketCloseCode: number | null = null;
+  private lastHttpStatus: number | null = null;
+  private lastNetworkError: TunnelNetworkErrorDiagnostic | null = null;
   private lastApiKey: string | null = null;
   private tunnelLock: TunnelLockAcquisition | null = null;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -707,9 +762,20 @@ export class TunnelController {
     const clientPath = this.resolveClientPath();
     if (clientPath === null || !existsSync(clientPath)) return { value: null, reason: 'configured_tunnel_client_not_found' };
     try {
-      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectTunnelClientVersion(clientPath, this.options.platform ?? process.platform));
-      return value === null || value.trim().length === 0 ? { value: null, reason: 'file_version_metadata_unavailable' } : { value: value.trim().slice(0, 128), reason: null };
-    } catch { return { value: null, reason: 'file_version_metadata_unavailable' }; }
+      const metadataValue = await this.options.inspectFileVersion?.(clientPath);
+      if (metadataValue !== undefined && metadataValue !== null && metadataValue.trim().length > 0) {
+        return { value: metadataValue.trim().slice(0, 128), reason: null };
+      }
+      const value = await inspectTunnelClientVersion(clientPath, this.options.platform ?? process.platform);
+      return value === null || value.trim().length === 0
+        ? { value: null, reason: 'file_metadata_and_cli_version_unavailable' }
+        : { value: value.trim().slice(0, 128), reason: null };
+    } catch (error: unknown) {
+      const record = typeof error === 'object' && error !== null ? error as { code?: unknown; message?: unknown } : {};
+      const code = typeof record.code === 'string' ? record.code : null;
+      const message = error instanceof Error ? error.message : typeof record.message === 'string' ? record.message : 'unknown';
+      return { value: null, reason: `version_probe_failed:${code ?? message}`.slice(0, 256) };
+    }
   }
 
   public async incidentRelevantPids(): Promise<{ readonly pids: readonly number[]; readonly unavailableReason: string | null }> {
@@ -723,6 +789,63 @@ export class TunnelController {
       if (pids.size === 0) return { pids: [], unavailableReason: error instanceof Error ? `external_tunnel_pid_probe_failed:${error.message}` : 'external_tunnel_pid_probe_failed' };
     }
     return pids.size === 0 ? { pids: [], unavailableReason: 'no_verified_tunnel_pid' } : { pids: [...pids], unavailableReason: null };
+  }
+
+  public incidentRuntimeDiagnostics(): TunnelIncidentRuntimeDiagnostics {
+    const managed = this.runtimeMode === 'native-managed' ? this.runtimeSnapshot : null;
+    const directCurrentPid = this.child !== null && this.child.exitCode === null && Number.isInteger(this.child.pid) && (this.child.pid ?? 0) > 0
+      ? this.child.pid as number
+      : null;
+    const managedCurrentPid = managed !== null && (managed.state === 'running' || managed.state === 'reconnecting' || managed.state === 'starting')
+      ? managed.processPid
+      : null;
+    const currentPid = directCurrentPid ?? managedCurrentPid;
+    const lastPid = this.lastChildPid ?? managed?.lastProcessPid ?? null;
+    const nativeSupervisor = this.runtimeMode === 'native-managed' ? this.runtimeSupervisor?.diagnostics() ?? null : null;
+    const nativeExitMetadataUnavailable = this.runtimeMode === 'native-managed'
+      && this.lastChildExitAt === null
+      && currentPid === null;
+    return {
+      process: {
+        currentPid,
+        lastPid,
+        lastProcessStartedAt: this.lastChildStartedAt,
+        lastExitAt: this.lastChildExitAt,
+        lastExitCode: this.lastChildExitCode,
+        lastSignal: this.lastChildSignal,
+        lastTerminationReason: currentPid === null ? this.lastChildTerminationReason : 'running',
+        exitMetadataUnavailableReason: nativeExitMetadataUnavailable ? 'native_managed_runtime_does_not_expose_exit_code_signal_or_stderr' : null,
+        stderrTail: this.childStderrTail.trim().length === 0 ? null : this.childStderrTail.trim(),
+        lastSpawnError: this.lastChildSpawnError,
+        webSocketCloseCode: this.lastWebSocketCloseCode,
+        httpStatus: this.lastHttpStatus,
+        networkError: this.lastNetworkError,
+      },
+      restart: nativeSupervisor === null ? {
+        consecutiveAttempts: this.restartAttempts,
+        totalAttempts: this.restartAttemptTotal,
+        successCount: this.restartSuccessTotal,
+        failureCount: this.restartFailureTotal,
+        scheduled: this.restartTimer !== null,
+        lastScheduledAt: this.restartLastScheduledAt,
+        lastStartedAt: this.restartLastStartedAt,
+        lastCompletedAt: this.restartLastCompletedAt,
+        lastResult: this.restartLastResult,
+        lastError: this.restartLastError,
+      } : {
+        consecutiveAttempts: managed?.consecutiveFailures ?? 0,
+        totalAttempts: nativeSupervisor.restartAttemptCount,
+        successCount: nativeSupervisor.restartSuccessCount,
+        failureCount: nativeSupervisor.restartFailureCount,
+        scheduled: nativeSupervisor.restartScheduled,
+        lastScheduledAt: nativeSupervisor.lastScheduledAt,
+        lastStartedAt: nativeSupervisor.lastStartedAt,
+        lastCompletedAt: nativeSupervisor.lastCompletedAt,
+        lastResult: nativeSupervisor.lastResult === 'success' ? 'stable' : nativeSupervisor.lastResult === 'failure' ? 'failed' : nativeSupervisor.lastResult,
+        lastError: nativeSupervisor.lastError,
+      },
+      auth: this.authProvider.diagnostics?.() ?? null,
+    };
   }
 
   private async resolveHealthAddress(): Promise<{ readonly host: string; readonly port: number } | null> {
@@ -807,35 +930,73 @@ export class TunnelController {
         windowsHide: true,
         // detached:true on Windows gives the child its own console window.
         detached: (this.options.platform ?? process.platform) !== 'win32',
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', 'ignore', 'pipe'],
       },
     );
     this.child = child;
     this.options.setRuntimeOwnerPath?.(path.resolve(clientPath));
     this.ownedChildStartedAt = null;
-    if (Number.isInteger(child.pid) && (child.pid ?? 0) > 0) {
-      const childPid = child.pid as number;
+    this.childStderrTail = '';
+    this.lastChildSpawnError = null;
+    this.lastWebSocketCloseCode = null;
+    this.lastHttpStatus = null;
+    this.lastNetworkError = null;
+    this.lastChildExitAt = null;
+    this.lastChildExitCode = null;
+    this.lastChildSignal = null;
+    this.lastChildTerminationReason = 'running';
+    this.lastChildStartedAt = new Date().toISOString();
+    this.lastChildPid = Number.isInteger(child.pid) && (child.pid ?? 0) > 0 ? child.pid as number : null;
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string | Buffer) => {
+      const text = String(chunk);
+      this.childStderrTail = appendBoundedTail(this.childStderrTail, text, MAX_DIAGNOSTIC_STDERR_BYTES);
+      const transport = parseTransportDiagnostic(text);
+      if (transport.webSocketCloseCode !== null) this.lastWebSocketCloseCode = transport.webSocketCloseCode;
+      if (transport.httpStatus !== null) this.lastHttpStatus = transport.httpStatus;
+      if (transport.networkError !== null) this.lastNetworkError = transport.networkError;
+    });
+    if (this.lastChildPid !== null) {
+      const childPid = this.lastChildPid;
       void (this.options.inspectOwnedProcess?.(childPid) ?? probeProcessStart(childPid, { platform: this.options.platform ?? process.platform })).then((probe) => {
-        if (this.child === child && probe.state === 'live') this.ownedChildStartedAt = probe.processStartedAt;
+        if (this.child === child && probe.state === 'live') {
+          this.ownedChildStartedAt = probe.processStartedAt;
+          this.lastChildStartedAt = probe.processStartedAt;
+        }
       }).catch(() => undefined);
     }
     let terminalHandled = false;
-    const handleTerminal = (code: number | null, errorMessage?: string): void => {
+    const handleTerminal = (code: number | null, signal: string | null, terminationReason: 'exit' | 'spawn_error', errorMessage?: string): void => {
       if (terminalHandled) return;
       terminalHandled = true;
+      const exitedAt = new Date().toISOString();
+      this.lastChildExitAt = exitedAt;
+      this.lastChildExitCode = code;
+      this.lastChildSignal = signal;
+      this.lastChildTerminationReason = this.intentionalStop ? 'intentional_stop' : terminationReason;
+      if (errorMessage !== undefined) {
+        this.lastChildSpawnError = errorMessage.slice(0, 512);
+        const transport = parseTransportDiagnostic(errorMessage);
+        if (transport.webSocketCloseCode !== null) this.lastWebSocketCloseCode = transport.webSocketCloseCode;
+        if (transport.httpStatus !== null) this.lastHttpStatus = transport.httpStatus;
+        if (transport.networkError !== null) this.lastNetworkError = transport.networkError;
+      }
+      if (this.restartLastResult === 'started') {
+        this.restartFailureTotal += 1;
+        this.restartLastCompletedAt = exitedAt;
+        this.restartLastResult = 'failed';
+        this.restartLastError = errorMessage ?? formatTunnelExitMessage(code, undefined);
+      }
       if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
       if (this.intentionalStop) {
-        // Keep the durable owner until stopOnce has reconciled native state
-        // and forced an external-liveness check. Clearing it here would let a
-        // surviving descendant/external runtime be orphaned during a switch.
         this.state = 'stopped';
         this.message = null;
         return;
       }
       void this.applyUnexpectedExit(code, clientPath, errorMessage);
     };
-    child.on('error', (error) => { handleTerminal(null, error.message); });
-    child.on('exit', (code) => { handleTerminal(code); });
+    child.on('error', (error) => { handleTerminal(null, null, 'spawn_error', error.message); });
+    child.on('exit', (code, signal) => { handleTerminal(code, signal, 'exit'); });
   }
 
   private async applyUnexpectedExit(code: number | null, clientPath: string, errorMessage?: string): Promise<void> {
@@ -872,18 +1033,39 @@ export class TunnelController {
     if (this.intentionalStop || this.runtimeDesiredState() === 'stopped' || !this.autoReconnectEnabled() || (rapidThreshold > 0 && this.restartAttempts >= rapidThreshold)) return;
     this.clearRestartTimer();
     const delay = Math.min(RESTART_DELAY_MS * (2 ** Math.max(0, this.restartAttempts - 1)), 30_000);
+    this.restartLastScheduledAt = new Date().toISOString();
+    this.restartLastResult = 'scheduled';
+    this.restartLastError = null;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (this.intentionalStop || this.lastApiKey === null) return;
+      if (this.intentionalStop || this.lastApiKey === null) {
+        this.restartLastCompletedAt = new Date().toISOString();
+        this.restartLastResult = 'cancelled';
+        return;
+      }
+      this.restartAttemptTotal += 1;
+      this.restartLastStartedAt = new Date().toISOString();
+      this.restartLastResult = 'started';
       void this.repairDesktopTunnelProfile()
         .then(() => {
-          if (this.intentionalStop || this.lastApiKey === null) return;
+          if (this.intentionalStop || this.lastApiKey === null) {
+            this.restartLastCompletedAt = new Date().toISOString();
+            this.restartLastResult = 'cancelled';
+            return;
+          }
           this.spawnRun(clientPath, this.lastApiKey);
           this.state = 'running';
           this.message = `Tunnel reconnecting (attempt ${this.restartAttempts}; retries continue until stopped)…`;
           this.scheduleStableReset();
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Tunnel restart preparation failed';
+          this.restartFailureTotal += 1;
+          this.restartLastCompletedAt = new Date().toISOString();
+          this.restartLastResult = 'failed';
+          this.restartLastError = message.slice(0, 512);
+          void this.applyUnexpectedExit(null, clientPath, message);
+        });
     }, delay);
   }
 
@@ -909,6 +1091,10 @@ export class TunnelController {
     if (this.restartTimer !== null) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
+      if (this.restartLastResult === 'scheduled') {
+        this.restartLastCompletedAt = new Date().toISOString();
+        this.restartLastResult = 'cancelled';
+      }
     }
   }
 
@@ -916,6 +1102,12 @@ export class TunnelController {
     this.clearStableTimer();
     this.stableTimer = setTimeout(() => {
       this.stableTimer = null;
+      if (this.restartLastResult === 'started') {
+        this.restartSuccessTotal += 1;
+        this.restartLastCompletedAt = new Date().toISOString();
+        this.restartLastResult = 'stable';
+        this.restartLastError = null;
+      }
       this.restartAttempts = 0;
     }, RESTART_WINDOW_MS);
   }
@@ -1504,12 +1696,53 @@ async function terminateWindowsProcessTree(pid: number): Promise<void> {
   });
 }
 
+function appendBoundedTail(current: string, chunk: string, maxBytes: number): string {
+  const combined = `${current}${chunk}`;
+  const encoded = Buffer.from(combined, 'utf8');
+  if (encoded.byteLength <= maxBytes) return combined;
+  return encoded.subarray(encoded.byteLength - maxBytes).toString('utf8');
+}
+
+function parseTransportDiagnostic(text: string): {
+  readonly webSocketCloseCode: number | null;
+  readonly httpStatus: number | null;
+  readonly networkError: TunnelNetworkErrorDiagnostic | null;
+} {
+  const normalized = text.trim();
+  const wsMatch = normalized.match(/(?:websocket|web\s*socket|\bws\b|connection)[^\r\n]{0,96}?(?:close(?:d)?(?:\s+code)?|code)\D{0,8}(1\d{3}|[234]\d{3})/i)
+    ?? normalized.match(/(?:close(?:d)?\s+code)\D{0,8}(1\d{3}|[234]\d{3})/i);
+  const httpMatch = normalized.match(/(?:http(?:\/\d(?:\.\d)?)?(?:\s+status)?|status(?:\s+code)?)\D{0,12}([45]\d{2})/i);
+  const codeMatch = normalized.match(/\b(ECONNRESET|EPIPE|ETIMEDOUT|ESOCKETTIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|CERT_[A-Z0-9_]+|ERR_TLS_[A-Z0-9_]+|ERR_SSL_[A-Z0-9_]+)\b/i);
+  const haystack = normalized.toUpperCase();
+  let category: TunnelNetworkErrorDiagnostic['category'] | null = null;
+  if (/ECONNRESET|\bEPIPE\b|SOCKET[^\r\n]*CLOSED/.test(haystack)) category = 'connection_reset';
+  else if (/ETIMEDOUT|ESOCKETTIMEDOUT|\bTIMEOUT\b|TIMED OUT/.test(haystack)) category = 'timeout';
+  else if (/ENOTFOUND|EAI_AGAIN|\bDNS\b/.test(haystack)) category = 'dns';
+  else if (/CERT_|\bTLS\b|\bSSL\b|ERR_TLS|ERR_SSL/.test(haystack)) category = 'tls';
+  else if (/ECONNREFUSED/.test(haystack)) category = 'connection_refused';
+  else if (httpMatch !== null) category = 'http';
+  const networkError = category === null ? null : {
+    code: codeMatch?.[1]?.toUpperCase() ?? (httpMatch?.[1] === undefined ? null : `HTTP_${httpMatch[1]}`),
+    category,
+    message: normalized.slice(-512),
+  };
+  return {
+    webSocketCloseCode: wsMatch?.[1] === undefined ? null : Number.parseInt(wsMatch[1], 10),
+    httpStatus: httpMatch?.[1] === undefined ? null : Number.parseInt(httpMatch[1], 10),
+    networkError,
+  };
+}
+
 async function inspectTunnelClientVersion(filePath: string, platform: NodeJS.Platform = process.platform): Promise<string | null> {
-  if (platform === 'win32') return inspectWindowsFileVersion(filePath);
+  if (platform === 'win32') {
+    const metadata = await inspectWindowsFileVersion(filePath).catch(() => null);
+    if (metadata !== null && metadata.trim().length > 0) return metadata.trim();
+  }
   const result = await execFileAsync(filePath, ['--version'], {
     encoding: 'utf8',
     timeout: 3_000,
     maxBuffer: 16 * 1024,
+    ...(platform === 'win32' ? { windowsHide: true } : {}),
   });
   const output = [result.stdout, result.stderr]
     .filter((value): value is string => typeof value === 'string')

@@ -52,10 +52,32 @@ export interface TunnelRuntimeCredential {
   readonly expiresAt: string | null;
 }
 
+export type TunnelNetworkErrorCategory = 'connection_reset' | 'timeout' | 'dns' | 'tls' | 'connection_refused' | 'http' | 'unknown';
+
+export interface TunnelNetworkErrorDiagnostic {
+  readonly code: string | null;
+  readonly category: TunnelNetworkErrorCategory;
+  readonly message: string;
+}
+
+export interface TunnelAuthDiagnostics {
+  readonly mode: TunnelAuthStatus['mode'];
+  readonly refreshAttemptCount: number;
+  readonly refreshSuccessCount: number;
+  readonly refreshFailureCount: number;
+  readonly cacheHitCount: number;
+  readonly lastRefreshStartedAt: string | null;
+  readonly lastRefreshCompletedAt: string | null;
+  readonly lastRefreshResult: 'never' | 'success' | 'failure';
+  readonly lastRefreshError: TunnelNetworkErrorDiagnostic | null;
+  readonly lastCredentialExpiresAt: string | null;
+}
+
 export interface TunnelAuthProvider {
   status(): Promise<TunnelAuthStatus>;
   getRuntimeCredential(): Promise<TunnelRuntimeCredential | null>;
   saveLegacyApiKey(apiKey: string): Promise<void>;
+  diagnostics?(): TunnelAuthDiagnostics;
 }
 
 export interface LegacyApiKeyCredentialProviderOptions {

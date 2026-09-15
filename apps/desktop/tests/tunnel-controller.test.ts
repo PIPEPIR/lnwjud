@@ -1434,11 +1434,26 @@ describe('TunnelController lifecycle', () => {
     await expect(controller.clientVersion()).resolves.toEqual({ value: '1.2.3', reason: null });
   });
 
+  it('falls back to the client --version command when file metadata is unavailable on any OS', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
+    temporaryRoots.push(dataPath);
+    const controller = new TunnelController({
+      getClientPath: (): string => process.execPath,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+      inspectFileVersion: async (): Promise<null> => null,
+    });
+    const result = await controller.clientVersion();
+    expect(result.reason).toBeNull();
+    expect(result.value).toMatch(/^v?\d+\./);
+  });
+
   it('funnels child error and exit through one per-process terminal fence', async () => {
     const source = await readFile(new URL('../src/main/tunnel-controller.ts', import.meta.url), 'utf8');
     expect(source).toContain('if (terminalHandled) return;');
-    expect(source).toContain("child.on('error', (error) => { handleTerminal(null, error.message); });");
-    expect(source).toContain("child.on('exit', (code) => { handleTerminal(code); });");
+    expect(source).toContain("child.on('error', (error) => { handleTerminal(null, null, 'spawn_error', error.message); });");
+    expect(source).toContain("child.on('exit', (code, signal) => { handleTerminal(code, signal, 'exit'); });");
+    expect(source).toContain("stdio: ['ignore', 'ignore', 'pipe']");
     expect(source).not.toContain('restartWindowStartedAt');
   });
 

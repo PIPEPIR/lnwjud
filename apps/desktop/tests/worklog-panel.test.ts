@@ -206,10 +206,10 @@ describe('WorkLogPanel', () => {
     const rows = newestFirstWorkLogRows(mockEntries, mockInFlight);
     const row = rows[0]!;
     const thai = formatWorkLogCopyText(row, new Map(), null, 'th');
-    expect(thai.startsWith('19-08-2026 21:01:18')).toBe(true);
+    expect(thai.startsWith('19/08/2026 21:01:18')).toBe(true);
     expect(thai).not.toContain(row.timestamp);
     const english = formatWorkLogCopyText(row, new Map(), null, 'en');
-    expect(english).toMatch(/^\d{2}-\d{2}-2026 \d{2}:\d{2}:\d{2} (AM|PM)/);
+    expect(english).toMatch(/^\d{2}\/\d{2}\/2026 \d{2}:\d{2}:\d{2}/);
     expect(english).not.toContain(row.timestamp);
   });
 
@@ -219,8 +219,8 @@ describe('WorkLogPanel', () => {
       kind: 'details',
       items: ['started_at=2026-09-09T05:23:22.224Z', 'deadline_at=2026-09-09T05:24:22.224Z', 'status=running'],
     }, 'th');
-    expect(copied).toContain('started_at=09-09-2026 12:23:22');
-    expect(copied).toContain('deadline_at=09-09-2026 12:24:22');
+    expect(copied).toContain('started_at=09/09/2026 12:23:22');
+    expect(copied).toContain('deadline_at=09/09/2026 12:24:22');
     expect(copied).toContain('status=running');
     expect(copied).not.toContain('2026-09-09T05:23:22.224Z');
   });

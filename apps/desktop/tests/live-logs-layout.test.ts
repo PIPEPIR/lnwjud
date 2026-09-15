@@ -115,10 +115,10 @@ describe('viewport-sized log and list layout', () => {
     expect(logDisplayParts(result).kind).toBe('result');
     const copied = formatLogCopyText(result, null, 'th');
     expect(copied).toContain(result.text);
-    expect(copied.startsWith('22-08-2026 07:00:11')).toBe(true);
+    expect(copied.startsWith('22/08/2026 07:00:11')).toBe(true);
     expect(copied).not.toContain(result.timestamp);
     const english = formatLogCopyText(result, null, 'en');
-    expect(english).toMatch(/^\d{2}-\d{2}-2026 \d{2}:\d{2}:\d{2} (AM|PM)/);
+    expect(english).toMatch(/^\d{2}\/\d{2}\/2026 \d{2}:\d{2}:\d{2}/);
     const markup = renderToStaticMarkup(createElement(LogStreamPanel, {
       source: 'mcp', title: 'MCP activity', lines: [task, result], tunnelLogPath: null, tunnelLogExists: false,
       filterPlaceholder: 'filter', pauseLabel: 'pause', followLabel: 'follow', clearLabel: 'clear', clearSessionLabel: 'clear session', clearWorkspaceLabel: 'clear workspace', exportLabel: 'export',

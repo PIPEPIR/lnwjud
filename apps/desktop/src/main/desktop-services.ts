@@ -1472,6 +1472,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         tunnel: { state: tunnel.state, source: tunnel.source, health: await tunnelController.incidentHealth() },
         updaterEvents,
         logLines: logHub.snapshot().lines,
+        runtimeDiagnostics: tunnelController.incidentRuntimeDiagnostics(),
         relevantPids: relevantPids.pids,
         ...(relevantPids.unavailableReason === null ? {} : { relevantPidUnavailableReason: relevantPids.unavailableReason }),
         collectProcessTree: collectRelevantProcessTree,
