@@ -101,7 +101,7 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     const rootAlive = this.processIsAlive(pid);
     const groupAlive = this.processGroupIsAlive(pid);
     if (!rootAlive && !groupAlive) return;
-    if (!groupAlive) throw new Error('POSIX process group could not be verified; targeted termination refused');
+    if (!rootAlive && groupAlive) throw new Error('POSIX process group remains live after its root exited; targeted termination refused');
 
     const expectedStartedAt = await this.processStartedAt(pid);
     if (expectedStartedAt === null) {
@@ -123,21 +123,22 @@ export class PosixProcessTree implements ProcessTreeTerminator {
       return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
     };
 
+    const targetPid = groupAlive ? -pid : pid;
     await verifyIdentity();
     try {
-      this.processKill(-pid, 'SIGTERM');
+      this.processKill(targetPid, 'SIGTERM');
     } catch (error: unknown) {
-      if (!isNoSuchProcess(error)) throw new Error('POSIX process-group termination could not be started', { cause: error });
+      if (!isNoSuchProcess(error)) throw new Error('POSIX process termination could not be started', { cause: error });
     }
     if (await waitForGone(this.termGraceMs)) return;
     await verifyIdentity();
     try {
-      this.processKill(-pid, 'SIGKILL');
+      this.processKill(targetPid, 'SIGKILL');
     } catch (error: unknown) {
-      if (!isNoSuchProcess(error)) throw new Error('POSIX process-group escalation could not be started', { cause: error });
+      if (!isNoSuchProcess(error)) throw new Error('POSIX process escalation could not be started', { cause: error });
     }
     if (await waitForGone(this.killGraceMs)) return;
-    throw new Error('POSIX process-group termination could not be verified');
+    throw new Error('POSIX process termination could not be verified');
   }
 }
 

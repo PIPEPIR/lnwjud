@@ -108,4 +108,23 @@ describe('portable process contracts', () => {
     await expect(tree.stopPid?.(4_242)).resolves.toBeUndefined();
     expect(signals).toEqual([{ pid: -4_242, signal: 'SIGTERM' }]);
   });
+
+  it('terminates a non-detached external POSIX root when no group wrapper exists', async () => {
+    const signals: Array<{ pid: number; signal: NodeJS.Signals | number }> = [];
+    let alive = true;
+    const tree = new PosixProcessTree({
+      platform: 'darwin',
+      processIsAlive: (): boolean => alive,
+      processGroupIsAlive: (): boolean => false,
+      processStartedAt: async (): Promise<string> => '2026-08-20T00:00:00.000Z',
+      processKill: (pid, signal): void => {
+        signals.push({ pid, signal });
+        if (signal === 'SIGTERM') alive = false;
+      },
+      termGraceMs: 5,
+      killGraceMs: 5,
+    });
+    await expect(tree.stopPid?.(4_243)).resolves.toBeUndefined();
+    expect(signals).toEqual([{ pid: 4_243, signal: 'SIGTERM' }]);
+  });
 });

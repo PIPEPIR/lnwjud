@@ -389,12 +389,11 @@ export function createDefaultMcpClientFactory(
 ): McpClientFactory {
   return {
     async connect(config: McpServerLaunchConfig, signal?: AbortSignal): Promise<McpClientSession> {
-    // ponytail: use the platform's tiny session wrapper instead of copying the
-    // SDK transport; macOS/Linux process groups are the ownership boundary.
-    const command = process.platform === 'win32' ? config.command : 'setsid';
-    const args = process.platform === 'win32'
-      ? [...(config.args ?? [])]
-      : [config.command, ...(config.args ?? [])];
+    // Linux ships util-linux `setsid`; macOS does not.  Keep the SDK transport
+    // on macOS and let the PID terminator use its direct-process fallback.
+    const useSessionWrapper = process.platform === 'linux';
+    const command = useSessionWrapper ? 'setsid' : config.command;
+    const args = useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])];
     const transport = new StdioClientTransport({
       command,
       args,
