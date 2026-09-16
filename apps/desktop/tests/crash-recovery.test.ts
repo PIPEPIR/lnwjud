@@ -1,8 +1,8 @@
-﻿import { mkdtemp, readFile, rm } from 'node:fs/promises';
+﻿import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPolicy, createCrashEventRecord } from '../src/main/crash-recovery.js';
+import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPolicy, createCrashEventRecord, readCrashEventHistory } from '../src/main/crash-recovery.js';
 
 const temporaryRoots: string[] = [];
 afterEach(async () => Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -42,6 +42,25 @@ describe('crash recovery diagnostics', () => {
     const content = await readFile(recorder.filePath, 'utf8');
     expect(content).toContain('"type":"renderer-gone"');
     expect(content).toContain('"reason":"crashed"');
+  });
+
+  it('reads persisted schema-1/schema-2 history after restart and ignores malformed lines', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-crash-history-'));
+    temporaryRoots.push(root);
+    const recorder = new CrashDiagnosticsRecorder(root, '5.1.1');
+    expect(readCrashEventHistory(root)).toEqual([]);
+    recorder.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'desktop-started' });
+    const legacy = { schemaVersion: 1, timestamp: '2026-09-16T01:00:00.000Z', appVersion: '5.0.0', type: 'desktop-lifecycle', processType: 'main', reason: 'process-exit', exitCode: 1 };
+    const current = createCrashEventRecord('5.1.1', { type: 'renderer-gone', processType: 'renderer', reason: 'crashed', exitCode: 1 }, '2026-09-16T01:01:00.000+07:00');
+    await writeFile(recorder.filePath, `${JSON.stringify(legacy)}\nnot-json\n${JSON.stringify(current)}\n`, 'utf8');
+
+    expect(readCrashEventHistory(root)).toEqual([
+      expect.objectContaining({ schemaVersion: 1, appVersion: '5.0.0', reason: 'process-exit' }),
+      expect.objectContaining({ schemaVersion: 2, appVersion: '5.1.1', reason: 'crashed' }),
+    ]);
+    expect(readCrashEventHistory(root, 1)).toEqual([
+      expect.objectContaining({ schemaVersion: 2, reason: 'crashed' }),
+    ]);
   });
 
   it('persists bounded startup stages in the same local diagnostic stream', async () => {

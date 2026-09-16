@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { ToolRegistry } from '@lnwjud/mcp-server';
 import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
@@ -65,25 +64,46 @@ describe('public repository hygiene', () => {
     expect(leaks, `developer-specific content found in: ${leaks.join(', ')}`).toEqual([]);
   }, 15_000);
 
-  it('documents the package version as the current v4 runtime rather than a stale release', async () => {
-    const [readme, expandedReadme, packagingWindows] = await Promise.all([
+  it('[version-contract] documents the package version as the current development target without rewriting the public release', async () => {
+    const [readme, expandedReadme, packagingWindows, usageTh] = await Promise.all([
       readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'docs', 'development', 'PACKAGING_WINDOWS.md'), 'utf8'),
+      readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8'),
     ]);
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(typeof rootPackage.version).toBe('string');
     const version = rootPackage.version as string;
 
-    expect(readme).toContain(`## Current version: v${version}`);
-    expect(readme).toContain(`\`v${version}\` is the current public release line.`);
-    expect(expandedReadme).toContain(`## Current version: v${version}`);
+    expect(readme.includes(`## Development target: v${version}`) || readme.includes(`## Current version: v${version}`)).toBe(true);
+    expect(expandedReadme.includes(`## Development target: v${version}`) || expandedReadme.includes(`## Current version: v${version}`)).toBe(true);
+    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
+      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
+    expect(publishedVersion).toBeTruthy();
+    expect(expandedReadme.includes(`## Current published version: v${publishedVersion}`)
+      || expandedReadme.includes(`## Current version: v${publishedVersion}`)).toBe(true);
+    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
     expect(packagingWindows).toContain(`lnwjud-Setup-${version}.exe`);
     expect(packagingWindows).toContain(`lnwjud-Portable-${version}.exe`);
     expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
     expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
     expect(readme).not.toContain('current source/release candidate is');
     expect(readme).not.toContain('pending publication');
+  });
+
+  it('[version-contract] rejects an invalid semantic version before writing files', async () => {
+    const packagePath = path.join(repositoryRoot, 'package.json');
+    const before = await readFile(packagePath, 'utf8');
+    await expect(execFileAsync(process.execPath, [path.join(repositoryRoot, 'scripts', 'set-version.mjs'), 'not-a-version'], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    })).rejects.toMatchObject({ stderr: expect.stringContaining('Invalid semantic version') });
+    expect(await readFile(packagePath, 'utf8')).toBe(before);
+  });
+
+  it('documents the live tool catalog instead of a hand-maintained count', async () => {
+    const { ToolRegistry } = await import('@lnwjud/mcp-server');
+    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
     const actor = { clientId: 'public-repo-hygiene', clientName: 'public-repo-hygiene' };
     const defaultRegistry = new ToolRegistry({}, actor);
     const fullRegistry = new ToolRegistry({ agentSwarm: {} as never }, actor, { codexToolsEnabled: true });

@@ -62,6 +62,7 @@ try {
 
     Assert-RepositoryChecks
     Invoke-ReleaseStage 'install --frozen-lockfile' @('install', '--frozen-lockfile')
+    Invoke-ReleaseStage 'test:version' @('test:version')
     Invoke-ReleaseStage 'lint' @('lint')
     Invoke-ReleaseStage 'typecheck' @('typecheck')
     Invoke-ReleaseStage 'test:release' @('test:release')

@@ -43,6 +43,7 @@ import {
   type PermissionProfileName,
   type SaveTunnelApiKeyRequest,
   type SaveRemoteMcpAuthtokenRequest,
+  type SetRemoteMcpPublicOriginRequest,
   type RemoteMcpStatus,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
@@ -157,6 +158,7 @@ export interface DesktopIpcServices {
   getRemoteMcpStatus(): Promise<RemoteMcpStatus>;
   installRemoteMcpProvider(): Promise<RemoteMcpStatus>;
   saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise<RemoteMcpStatus>;
+  setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<RemoteMcpStatus>;
   startRemoteMcp(): Promise<RemoteMcpStatus>;
   stopRemoteMcp(): Promise<RemoteMcpStatus>;
   regenerateRemoteMcpPairingCode(): Promise<RemoteMcpStatus>;
@@ -209,7 +211,7 @@ const emptyTunnel: TunnelStatus = {
 };
 const emptyRemoteMcp: RemoteMcpStatus = {
   state: 'stopped', provider: 'ngrok', installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
-  localMcpUrl: null, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
+  localMcpUrl: null, localGatewayUrl: null, publicMcpUrl: null, configuredPublicOrigin: null, pairingCode: null, pairingCodeExpiresAt: null,
   oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
 };
 const defaultUserSettings: UserSettings = {
@@ -331,6 +333,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   getRemoteMcpStatus: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   installRemoteMcpProvider: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   saveRemoteMcpAuthtoken: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
+  setRemoteMcpPublicOrigin: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   startRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   stopRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   regenerateRemoteMcpPairingCode: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
@@ -377,6 +380,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     runtimeDiagnostics: null,
     transport: { webSocketCloseCode: null, httpStatus: null, networkError: null, lastDisconnectAt: null, evidenceSources: [] },
     mcpCalls: [],
+    desktopCrashEventTail: [],
     tunnelLogTail: [],
     processTree: { available: false, entries: [], error: 'unavailable' },
     tcpListeners: { available: false, entries: [], error: 'unavailable' },
@@ -584,6 +588,10 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.saveRemoteMcpAuthtoken, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.saveRemoteMcpAuthtoken(parseSaveRemoteMcpAuthtokenRequest(payload));
+  });
+  registerHandler(ipcChannels.setRemoteMcpPublicOrigin, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setRemoteMcpPublicOrigin(parseSetRemoteMcpPublicOriginRequest(payload));
   });
   registerHandler(ipcChannels.startRemoteMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -1108,6 +1116,11 @@ function parseSaveTunnelApiKeyRequest(payload: unknown): SaveTunnelApiKeyRequest
 function parseSaveRemoteMcpAuthtokenRequest(payload: unknown): SaveRemoteMcpAuthtokenRequest {
   if (!isRecord(payload)) throw new Error('Invalid IPC payload');
   return { authtoken: nonEmptyString(payload.authtoken, 'authtoken') };
+}
+
+function parseSetRemoteMcpPublicOriginRequest(payload: unknown): SetRemoteMcpPublicOriginRequest {
+  if (!isRecord(payload) || typeof payload.publicOrigin !== 'string' || payload.publicOrigin.length > 2_048) throw new Error('Invalid IPC payload: publicOrigin');
+  return { publicOrigin: payload.publicOrigin };
 }
 
 function parseSetTunnelClientPathRequest(payload: unknown): SetTunnelClientPathRequest {

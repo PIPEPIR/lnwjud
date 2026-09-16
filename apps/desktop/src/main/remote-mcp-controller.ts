@@ -18,9 +18,12 @@ interface RegisteredClient {
 }
 
 export interface RemoteMcpPersistedState {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly desiredRunning: boolean;
+  /** schema v1 only: learned runtime origin; never reused as launch configuration. */
   readonly publicOrigin?: string | null;
+  /** schema v2: explicit user-configured ngrok static/custom domain. */
+  readonly configuredPublicOrigin?: string | null;
   readonly trustedClients: ReadonlyArray<{
     readonly clientId: string;
     readonly redirectUris: readonly string[];
@@ -96,7 +99,7 @@ export class RemoteMcpController {
   private gateway: Server | null = null;
   private gatewayUrl: string | null = null;
   private publicOrigin: string | null = null;
-  private preferredPublicOrigin: string | null = null;
+  private configuredPublicOrigin: string | null = null;
   private ngrok: ChildProcess | null = null;
   private ngrokPath: string | null = null;
   private ngrokProbeAt = 0;
@@ -147,6 +150,7 @@ export class RemoteMcpController {
       localMcpUrl,
       localGatewayUrl: this.gatewayUrl,
       publicMcpUrl: this.publicOrigin === null ? null : `${this.publicOrigin}/mcp`,
+      configuredPublicOrigin: this.configuredPublicOrigin,
       pairingCode: this.runState === 'running' ? this.pairingCode : null,
       pairingCodeExpiresAt: this.runState === 'running' && this.pairingExpiresAt > 0 ? new Date(this.pairingExpiresAt).toISOString() : null,
       oauthProtected: true,
@@ -202,9 +206,20 @@ export class RemoteMcpController {
     if (this.secretProtector === undefined) throw new Error('Secure secret provider was not injected before saving the ngrok authtoken');
     const encrypted = await this.secretProtector.encrypt('tunnel_api_key', token);
     await writeFile(this.secretPath(), encrypted, { encoding: 'utf8', mode: 0o600 });
-    this.preferredPublicOrigin = null;
     await this.persistState();
-    this.message = 'ngrok authtoken saved securely. The stable public URL will be learned again on the next Remote MCP start.';
+    this.message = 'ngrok authtoken saved securely.';
+    return this.status();
+  }
+
+  public async savePublicOrigin(raw: string): Promise<RemoteMcpStatus> {
+    await this.ensurePersistenceLoaded();
+    if (!this.persistenceLoaded) throw new Error('Saved Remote MCP state could not be loaded; the ngrok domain was not changed. Retry after secure storage is available.');
+    if (this.runState === 'running' || this.runState === 'starting') throw new Error('Stop Remote MCP before changing the ngrok domain.');
+    this.configuredPublicOrigin = normalizeConfiguredPublicOrigin(raw);
+    await this.persistState();
+    this.message = this.configuredPublicOrigin === null
+      ? 'Static ngrok domain cleared. Remote MCP will let ngrok choose the public URL at startup.'
+      : `Remote MCP will request ${this.configuredPublicOrigin} on the next start.`;
     return this.status();
   }
 
@@ -258,7 +273,7 @@ export class RemoteMcpController {
       this.publicOrigin = null;
       let lastNgrokDiagnostic: string | null = null;
       let ngrokDiagnosticBuffer = '';
-      const child = spawn(executable, buildNgrokHttpArgs(this.gatewayUrl, this.preferredPublicOrigin), {
+      const child = spawn(executable, buildNgrokHttpArgs(this.gatewayUrl, this.configuredPublicOrigin), {
         env: { ...process.env, NGROK_AUTHTOKEN: authtoken },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -294,11 +309,10 @@ export class RemoteMcpController {
         waitForNgrokPublicOrigin(15_000, this.gatewayUrl).then((origin) => ({ kind: 'origin' as const, origin })),
         exitPromise.then((message) => ({ kind: 'exit' as const, message })),
       ]);
-      if (outcome.kind === 'exit') throw new Error(withStableOriginHint(outcome.message, this.preferredPublicOrigin));
-      if (outcome.origin === null) throw new Error(withStableOriginHint(this.message ?? 'ngrok started but no public HTTPS endpoint was reported', this.preferredPublicOrigin));
-      const origin = enforceStablePublicOrigin(outcome.origin, this.preferredPublicOrigin);
+      if (outcome.kind === 'exit') throw new Error(withStableOriginHint(outcome.message, this.configuredPublicOrigin));
+      if (outcome.origin === null) throw new Error(withStableOriginHint(this.message ?? 'ngrok started but no public HTTPS endpoint was reported', this.configuredPublicOrigin));
+      const origin = enforceStablePublicOrigin(outcome.origin, this.configuredPublicOrigin);
       this.publicOrigin = origin;
-      this.preferredPublicOrigin ??= origin;
       this.runState = 'running';
       this.desiredRunning = true;
       await this.persistState();
@@ -671,7 +685,7 @@ export class RemoteMcpController {
     this.persistenceLoaded = true;
     if (state === null) return;
     this.desiredRunning = state.desiredRunning;
-    this.preferredPublicOrigin = state.publicOrigin ?? null;
+    this.configuredPublicOrigin = state.schemaVersion === 2 ? state.configuredPublicOrigin ?? null : null;
     for (const client of state.trustedClients.slice(0, 32)) {
       this.clients.set(client.clientId, { ...client, trusted: true });
     }
@@ -695,7 +709,7 @@ export class RemoteMcpController {
       .filter(([, grant]) => grant.expiresAt > now && trustedClientIds.has(grant.clientId))
       .slice(-64)
       .map(([refreshToken, grant]) => ({ refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }));
-    await this.persistence.save({ schemaVersion: 1, desiredRunning: this.desiredRunning, publicOrigin: this.preferredPublicOrigin, trustedClients, refreshGrants });
+    await this.persistence.save({ schemaVersion: 2, desiredRunning: this.desiredRunning, configuredPublicOrigin: this.configuredPublicOrigin, trustedClients, refreshGrants });
   }
 
   private secretDir(): string { return path.join(this.dataPath, 'remote-mcp'); }
@@ -769,7 +783,8 @@ function createRemoteMcpStatePersistence(dataPath: string, secretProtector?: Sec
 function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== 1 || typeof record.desiredRunning !== 'boolean') return null;
+  if ((record.schemaVersion !== 1 && record.schemaVersion !== 2) || typeof record.desiredRunning !== 'boolean') return null;
+  const schemaVersion = record.schemaVersion;
   const clients = Array.isArray(record.trustedClients) ? record.trustedClients : [];
   const trustedClients = clients.flatMap((entry) => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
@@ -787,7 +802,7 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
     if (tokenEndpointAuthMethod === 'client_secret_post' && clientSecret === null) return [];
     return [{ clientId: client.clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }];
   }).slice(0, 32);
-  const publicOrigin = normalizePublicOrigin(record.publicOrigin);
+  const configuredPublicOrigin = schemaVersion === 2 ? normalizePublicOrigin(record.configuredPublicOrigin) : null;
   const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
   const grants = Array.isArray(record.refreshGrants) ? record.refreshGrants : [];
   const refreshGrants = grants.flatMap((entry) => {
@@ -798,31 +813,41 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
     if (typeof grant.expiresAt !== 'number' || !Number.isFinite(grant.expiresAt)) return [];
     return [{ refreshToken: grant.refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }];
   }).slice(-64);
-  return { schemaVersion: 1, desiredRunning: record.desiredRunning, publicOrigin, trustedClients, refreshGrants };
+  return { schemaVersion: 2, desiredRunning: record.desiredRunning, configuredPublicOrigin, trustedClients, refreshGrants };
+}
+
+export function normalizeConfiguredPublicOrigin(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  const origin = normalizePublicOrigin(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+  if (origin === null) throw new Error('Enter a valid HTTPS ngrok domain or hostname without a path, query, fragment, credentials, or port.');
+  const hostname = new URL(origin).hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname === '::1' || hostname === '[::1]' || hostname.startsWith('127.')) throw new Error('The ngrok domain must be a public hostname, not localhost or loopback.');
+  return origin;
 }
 
 function normalizePublicOrigin(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== 'https:' || url.username.length > 0 || url.password.length > 0 || url.pathname !== '/' || url.search.length > 0 || url.hash.length > 0) return null;
+    if (url.protocol !== 'https:' || url.username.length > 0 || url.password.length > 0 || url.port.length > 0 || url.pathname !== '/' || url.search.length > 0 || url.hash.length > 0) return null;
     return url.origin;
   } catch { return null; }
 }
 
-export function enforceStablePublicOrigin(value: unknown, rememberedOrigin: string | null): string {
+export function enforceStablePublicOrigin(value: unknown, configuredOrigin: string | null): string {
   const origin = normalizePublicOrigin(value);
   if (origin === null) throw new Error('ngrok reported an invalid public HTTPS origin');
-  if (rememberedOrigin !== null && origin !== rememberedOrigin) {
-    throw new Error(`ngrok reported ${origin}, but lnwjud previously saved ${rememberedOrigin}. Remote MCP stopped instead of silently changing the ChatGPT endpoint. If you intentionally changed ngrok account/domain, save the ngrok authtoken again to accept the new stable URL.`);
+  if (configuredOrigin !== null && origin !== configuredOrigin) {
+    throw new Error(`ngrok reported ${origin}, but Remote MCP was explicitly configured to use ${configuredOrigin}. Remote MCP stopped instead of silently changing the endpoint.`);
   }
   return origin;
 }
 
-function withStableOriginHint(message: string, publicOrigin: string | null): string {
-  return publicOrigin === null
+function withStableOriginHint(message: string, configuredOrigin: string | null): string {
+  return configuredOrigin === null
     ? message
-    : `${message} The saved Remote MCP public URL is pinned for stability. If you intentionally changed ngrok account/domain, save the ngrok authtoken again to learn the new stable URL.`;
+    : `${message} The configured Remote MCP domain ${configuredOrigin} was explicitly requested. Verify that it is reserved in your ngrok account or clear the configured domain; lnwjud will not silently change it.`;
 }
 
 function isMissingFileError(error: unknown): boolean {

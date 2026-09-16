@@ -14,14 +14,14 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('pins the product release to v5.1.1', async () => {
+  it('[version-contract] pins the product release to v5.2.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.1.1');
-    expect(desktopPackage.version).toBe('5.1.1');
+    expect(rootPackage.version).toBe('5.2.0');
+    expect(desktopPackage.version).toBe('5.2.0');
   });
 
-  it('keeps every workspace package and runtime version aligned', async () => {
+  it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
     const packageDirectories = [
       path.join(repositoryRoot, 'apps'),
       path.join(repositoryRoot, 'packages'),
@@ -41,12 +41,45 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.1.1');
+      expect(packageJson.version, packagePath).toBe('5.2.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.1.1'");
-    expect(shared).toContain("APP_VERSION = '5.1.1'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.2.0'");
+    expect(shared).toContain("APP_VERSION = '5.2.0'");
+  });
+
+  it('[version-contract] keeps current-version documentation and runtime copy aligned with the root version', async () => {
+    const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
+    const version = String(rootPackage.version);
+    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const fullReadme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
+    expect(readme.includes(`Development target: v${version}`) || readme.includes(`Current version: v${version}`)).toBe(true);
+    expect(fullReadme.includes(`Development target: v${version}`) || fullReadme.includes(`Current version: v${version}`)).toBe(true);
+    expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
+    expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
+
+    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
+      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
+    expect(publishedVersion).toBeTruthy();
+    const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
+    expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
+    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
+
+    const expectedReferences: ReadonlyArray<readonly [string, string]> = [
+      ['docs/INSTALL_MACOS.md', `v${version} native macOS release target`],
+      ['.github/RELEASE_CHECKLIST.md', `**Current version:** \`v${version}\``],
+      ['docs/development/PACKAGING_WINDOWS.md', `current v${version} packaging contract`],
+      ['docs/LNWJUD_CAPABILITIES.md', `lnwjud v${version}`],
+      ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', `current v${version} runtime contract`],
+      ['docs/architecture/TOOL_CONTRACT.md', `snapshot synchronized for \`v${version}\``],
+      ['docs/architecture/UPGRADE_ARCHITECTURE.md', `checkpoint synchronized for \`v${version}\``],
+      ['packages/application/src/agent-swarm-service.ts', `Agent swarm v${version} supports read_only access only`],
+      ['packages/mcp-server/src/tool-registry.ts', `v${version} enforces read-only child sandboxes`],
+    ];
+    for (const [relativePath, expected] of expectedReferences) {
+      expect(await readFile(path.join(repositoryRoot, relativePath), 'utf8'), relativePath).toContain(expected);
+    }
   });
 
   it('publishes complete desktop application metadata', async () => {

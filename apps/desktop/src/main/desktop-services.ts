@@ -175,6 +175,7 @@ import { ToolCatalogService, type ToolCatalogServiceOptions } from './tool-catal
 import { projectExternalMcpTools } from './tool-catalog/external-tool-catalog-adapter.js';
 import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
 import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentReport } from './incident-report.js';
+import { readCrashEventHistory } from './crash-recovery.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
 import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
@@ -1367,6 +1368,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     getRemoteMcpStatus: () => remoteMcpController.status(),
     installRemoteMcpProvider: async () => { const status = await remoteMcpController.installProvider(); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
     saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
+    setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] static domain ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'}`); return status; },
     startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
@@ -1485,6 +1487,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         tunnel: { state: tunnel.state, source: tunnel.source, health: await tunnelController.incidentHealth() },
         updaterEvents,
         logLines: logHub.snapshot().lines,
+        crashEvents: readCrashEventHistory(dataPath),
         runtimeDiagnostics: tunnelController.incidentRuntimeDiagnostics(),
         relevantPids: relevantPids.pids,
         ...(relevantPids.unavailableReason === null ? {} : { relevantPidUnavailableReason: relevantPids.unavailableReason }),

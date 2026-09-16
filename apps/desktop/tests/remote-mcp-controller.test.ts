@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createExplicitKeySecretProtector } from '@lnwjud/shared';
-import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeConfiguredPublicOrigin, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
   publicOrigin: string | null;
-  preferredPublicOrigin: string | null;
+  configuredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
   pairingCode: string | null;
   startGateway(localMcpUrl: string): Promise<void>;
@@ -71,10 +71,19 @@ describe('Remote MCP ngrok runtime', () => {
     ]);
   });
 
-  it('accepts the remembered ngrok origin but rejects silent public URL drift', () => {
+  it('normalizes only explicit public ngrok domains and rejects unsafe values', () => {
+    expect(normalizeConfiguredPublicOrigin('steady.ngrok-free.app')).toBe('https://steady.ngrok-free.app');
+    expect(normalizeConfiguredPublicOrigin(' https://steady.ngrok-free.app/ ')).toBe('https://steady.ngrok-free.app');
+    expect(normalizeConfiguredPublicOrigin('')).toBeNull();
+    expect(() => normalizeConfiguredPublicOrigin('http://steady.ngrok-free.app')).toThrow(/valid HTTPS/i);
+    expect(() => normalizeConfiguredPublicOrigin('https://steady.ngrok-free.app/path')).toThrow(/valid HTTPS/i);
+    expect(() => normalizeConfiguredPublicOrigin('https://127.0.0.1')).toThrow(/public hostname/i);
+  });
+
+  it('accepts the configured ngrok origin but rejects silent public URL drift', () => {
     expect(enforceStablePublicOrigin('https://steady.ngrok-free.app/', null)).toBe('https://steady.ngrok-free.app');
     expect(enforceStablePublicOrigin('https://steady.ngrok-free.app', 'https://steady.ngrok-free.app')).toBe('https://steady.ngrok-free.app');
-    expect(() => enforceStablePublicOrigin('https://changed.ngrok-free.app', 'https://steady.ngrok-free.app')).toThrow(/stopped instead of silently changing/i);
+    expect(() => enforceStablePublicOrigin('https://changed.ngrok-free.app', 'https://steady.ngrok-free.app')).toThrow(/explicitly configured/i);
     expect(() => enforceStablePublicOrigin('http://steady.ngrok-free.app', null)).toThrow(/invalid public HTTPS origin/i);
   });
 
@@ -155,7 +164,7 @@ describe('Remote MCP ngrok runtime', () => {
 describe('Remote MCP OAuth gateway', () => {
   it('does not overwrite unreadable authorization and retries loading after secure storage recovers', async () => {
     const state: RemoteMcpPersistedState = {
-      schemaVersion: 1, desiredRunning: true, publicOrigin: 'https://steady.ngrok-free.app',
+      schemaVersion: 2, desiredRunning: true, configuredPublicOrigin: 'https://steady.ngrok-free.app',
       trustedClients: [{ clientId: 'saved-client', clientName: 'Saved client', redirectUris: ['https://example.com/callback'], tokenEndpointAuthMethod: 'none', clientSecret: null }],
       refreshGrants: [{ clientId: 'saved-client', refreshToken: 'r'.repeat(40), expiresAt: Date.parse('2099-01-01') }],
     };
@@ -172,24 +181,30 @@ describe('Remote MCP OAuth gateway', () => {
     expect(save).not.toHaveBeenCalled();
     locked = false;
     await Promise.all([internal.ensurePersistenceLoaded(), internal.ensurePersistenceLoaded()]);
-    expect(internal.preferredPublicOrigin).toBe('https://steady.ngrok-free.app');
+    expect(internal.configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
     await internal.persistState();
     expect(load).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenCalledWith(state);
   });
 
-  it('keeps schema-1 state without a remembered public origin backward compatible', async () => {
-    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+  it('migrates schema-1 state without treating an observed runtime origin as configured', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({
+      schemaVersion: 1,
+      desiredRunning: false,
+      publicOrigin: 'https://observed.ngrok-free.app',
+      trustedClients: [],
+      refreshGrants: [],
+    }));
     const save = vi.fn(async () => undefined);
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
-    expect(internal.preferredPublicOrigin).toBeNull();
+    expect(internal.configuredPublicOrigin).toBeNull();
     await internal.persistState();
-    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: null, trustedClients: [], refreshGrants: [] });
   });
 
-  it('ignores an invalid remembered public origin from encrypted schema-1 state', async () => {
+  it('ignores an invalid legacy observed public origin from encrypted schema-1 state', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-invalid-origin-'));
     try {
       const secretProtector = createExplicitKeySecretProtector(Buffer.alloc(32, 0x52));
@@ -206,21 +221,19 @@ describe('Remote MCP OAuth gateway', () => {
       const controller = new RemoteMcpController({ dataPath: root, getLocalMcpUrl: async (): Promise<null> => null, secretProtector });
       const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void> };
       await internal.ensurePersistenceLoaded();
-      expect(internal.preferredPublicOrigin).toBeNull();
+      expect(internal.configuredPublicOrigin).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('persists a successfully learned public origin in Remote MCP state', async () => {
-    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+  it('persists only an explicitly configured static domain', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: null, trustedClients: [], refreshGrants: [] }));
     const save = vi.fn(async () => undefined);
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
-    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
-    await internal.ensurePersistenceLoaded();
-    internal.preferredPublicOrigin = enforceStablePublicOrigin('https://steady.ngrok-free.app/', internal.preferredPublicOrigin);
-    await internal.persistState();
-    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
+    const status = await controller.savePublicOrigin('steady.ngrok-free.app');
+    expect(status.configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
   });
 
   it('does not replace the ngrok authtoken when encrypted Remote MCP state cannot be loaded', async () => {
@@ -240,10 +253,10 @@ describe('Remote MCP OAuth gateway', () => {
     }
   });
 
-  it('clears the remembered public origin when the ngrok authtoken is saved again', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-origin-reset-'));
+  it('keeps an explicitly configured static domain when the ngrok authtoken is saved again', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-origin-token-update-'));
     try {
-      const state: RemoteMcpPersistedState = { schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] };
+      const state: RemoteMcpPersistedState = { schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] };
       const load = vi.fn(async () => state);
       const save = vi.fn(async () => undefined);
       const controller = new RemoteMcpController({
@@ -253,7 +266,7 @@ describe('Remote MCP OAuth gateway', () => {
         secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
       });
       await controller.saveAuthtoken('a'.repeat(24));
-      expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+      expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

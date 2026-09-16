@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_EXTENSIONS_SETTINGS } from './types.js';
 import { LocalExtensionsService } from './extensions-service.js';
 import { attachChildStderrDrain, McpSessionManager, type McpClientFactory, type McpClientSession } from './mcp-session-manager.js';
@@ -400,7 +400,8 @@ describe('LocalExtensionsService MCP bridge', () => {
     await manager.close();
   });
 
-  it('closes an idle child MCP session after the configured timeout', async () => {
+  it('keeps sweeping after an early pass and closes the session at its idle deadline', async () => {
+    vi.useFakeTimers();
     let closes = 0;
     const session: McpClientSession = {
       listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
@@ -419,14 +420,18 @@ describe('LocalExtensionsService MCP bridge', () => {
     try {
       await expect(manager.describe('mock', { command: 'node' })).resolves.toMatchObject({ ok: true });
       expect(manager.isConnected('mock')).toBe(true);
-      // CI runners can pause a worker long enough to miss several sweeps.
-      // The contract is eventual idle cleanup, not a sub-second scheduling SLA.
-      await expect.poll(() => closes, { timeout: 10_000 }).toBe(1);
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(manager.describe('mock', { command: 'node' })).resolves.toMatchObject({ ok: true });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(closes).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(closes).toBe(1);
       expect(manager.isConnected('mock')).toBe(false);
     } finally {
       await manager.close();
+      vi.useRealTimers();
     }
-  }, 15_000);
+  });
 
   it('does not evict an in-flight child operation at the idle deadline', async () => {
     let release!: () => void;

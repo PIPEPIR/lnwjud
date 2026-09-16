@@ -51,9 +51,17 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v5.1.1
+## Development target: v5.2.0 (unreleased)
 
-The v5.1.1 development runtime contract contains **253 total MCP tool definitions**,
+The `dev` branch is preparing v5.2.0 while v5.1.1 remains the current published release.
+
+- Remote MCP no longer converts an ngrok URL observed at runtime into persistent launch configuration. A reserved Static/Custom Domain is now explicit configuration, schema-v1 learned origins migrate without pinning, and `--url` is omitted when no domain was deliberately configured.
+- Incident capture now carries a bounded, sanitized tail of persisted desktop crash/lifecycle history across restarts.
+- The External MCP idle sweeper no longer wedges when its first pass runs before the session deadline; a deterministic regression now proves the next pass closes the idle session, strengthening the reported main-process CPU/idle cleanup path.
+
+## Current published version: v5.1.1
+
+The v5.2.0 development runtime contract contains **253 total MCP tool definitions**,
 with **241 advertised by default** and **all 253 advertised when Codex Delegation
 plus Agent Swarm is enabled**. The 12 Codex-backed delegation front doors are opt-in;
 the default surface still exposes every other current first-party definition. The earlier v4/v5 tool-count snapshots remain
@@ -807,8 +815,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.1.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.1.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.2.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.2.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

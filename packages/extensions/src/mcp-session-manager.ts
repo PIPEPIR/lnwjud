@@ -350,21 +350,22 @@ export class McpSessionManager {
 
   private async sweepIdle(): Promise<void> {
     if (this.idleSweep !== undefined) return this.idleSweep;
-    this.idleSweep = (async (): Promise<void> => {
-      try {
-        const now = Date.now();
-        for (const [name, managed] of this.sessions) {
-          if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
-        }
-      } finally {
-        this.idleSweep = undefined;
-        if (this.sessions.size === 0 && this.idleTimer !== undefined) {
-          clearInterval(this.idleTimer);
-          this.idleTimer = undefined;
-        }
+    const sweep = Promise.resolve().then(async () => {
+      const now = Date.now();
+      for (const [name, managed] of this.sessions) {
+        if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
       }
-    })();
-    return this.idleSweep;
+    });
+    this.idleSweep = sweep;
+    try {
+      await sweep;
+    } finally {
+      this.idleSweep = undefined;
+      if (this.sessions.size === 0 && this.idleTimer !== undefined) {
+        clearInterval(this.idleTimer);
+        this.idleTimer = undefined;
+      }
+    }
   }
 
   private async closeManaged(server: string, managed: ManagedSession): Promise<void> {

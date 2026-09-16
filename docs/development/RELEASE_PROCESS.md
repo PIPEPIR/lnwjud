@@ -82,12 +82,10 @@ full verification gate.
 - Fetch current remote state and confirm the branch is based on the latest
   development line required by branch protection.
 - Finish the code, native helper, packaging, and documentation changes.
-- Set the release version with the repository version tooling rather than
-  hand-editing one package. Do not reuse an existing public tag; this
-  cross-platform target uses a new version when the prior Windows tag already
-  exists.
-- Update README `Current version` and the current release's `What's new`
-  section. Historical release details stay in GitHub Release notes.
+- Set the release version by running `corepack pnpm@10.15.0 run set-version <version>` first. The script is the canonical version-sync path; do not begin by hand-editing packages or current-version docs. Inspect the resulting diff for drift, and use manual edits only for uncovered references. If an uncovered reference is part of the canonical current-version surface, extend `scripts/set-version.mjs` in the same change so future bumps stay automated. Do not reuse an existing public tag; this cross-platform target uses a new version when the prior Windows tag already exists.
+- Finish and locally verify functional behavior before changing the version. Keep the mechanical version-sync diff separate from unrelated runtime changes where practical so a failure has one obvious cause.
+- Run `corepack pnpm@10.15.0 test:version` immediately after `set-version`. This fast contract checks package/source alignment, development versus published documentation, local artifact names, and invalid version rejection.
+- Update README release-specific copy such as `What's new` when needed. Historical release details stay in GitHub Release notes and are not rewritten by the version script.
 - Update tool-count and target-artifact assertions when the catalog or release
   matrix changes.
 - Run `git diff --check` and keep source provenance clean before the
@@ -97,6 +95,7 @@ Useful local checks on the current Windows development host are:
 
 ```powershell
 corepack pnpm@10.15.0 install --frozen-lockfile
+corepack pnpm@10.15.0 test:version
 corepack pnpm@10.15.0 lint
 corepack pnpm@10.15.0 typecheck
 corepack pnpm@10.15.0 test
@@ -125,6 +124,33 @@ and never create a GitHub release. The Windows local gate remains:
 ```powershell
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1
 ```
+
+The same gate with `-SkipWindowsPackaging` is mandatory before pushing a
+version-changing `dev` commit. A targeted feature test is not a substitute:
+
+```powershell
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 -SkipWindowsPackaging
+git diff --check
+```
+
+### CI failure classification
+
+Do not infer the cause from a commit title containing `release`, `version`, or
+an `X.Y.Z` number. Inspect the exact failed run and job first:
+
+- failures in `test:version`, frozen-lockfile installation, versioned artifact
+  names, tag/version matching, or provenance are version-management failures;
+- timeouts, process teardown, child MCP lifecycle, OS-specific spawning, and
+  E2E state failures are runtime/test failures exposed by the broad release
+  matrix, not version failures;
+- a rerun that passes for the same SHA proves nondeterminism. It does not fix
+  the race. Replace wall-clock polling with deterministic synchronization or
+  fake time where appropriate, and leave a regression test at the real seam;
+- never weaken a gate or only increase a timeout to make a release green.
+
+After a corrective push, monitor the CI run for that exact commit SHA through
+completion. Do not reuse a successful run from another SHA and do not claim
+the Action is fixed while the replacement run is queued or in progress.
 
 ## 2. Push `dev` and validate the PR
 

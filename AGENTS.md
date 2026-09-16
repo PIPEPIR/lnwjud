@@ -40,6 +40,21 @@ When a GitHub Actions workflow must be monitored until completion, use one autho
 
 This policy is cross-platform because the monitoring contract is shared while the wrapper shell is platform-native. Do not label a PowerShell-only implementation as cross-platform.
 
+## Version Bump Policy
+
+For any repository/application version change, use the canonical root version script first: `corepack pnpm@10.15.0 run set-version <version>`. Do not start by hand-editing package versions or current-version documentation.
+
+After the script runs, inspect the diff and current-version references for drift. Manual per-file edits are fallback-only for genuinely uncovered references. If an uncovered reference belongs to the canonical current-version surface, update `scripts/set-version.mjs` in the same change so the next bump is automated. Preserve historical release notes, plans, and dated evidence unless the task explicitly requires changing history.
+
+Before pushing any version-changing commit:
+
+1. Finish the functional change and its deterministic regression test before changing the version. Keep the version-sync diff mechanically isolated from unrelated behavior where practical.
+2. Run `corepack pnpm@10.15.0 test:version` immediately after `set-version`; a failure is version drift and must be fixed in the script or canonical references before continuing.
+3. Run `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWindowsPackaging` and `git diff --check`. Do not push merely because a narrower targeted test passed.
+4. Inspect the final diff and confirm that the development target changed while the current published version stayed unchanged unless publication was explicitly requested.
+
+A GitHub Actions failure on a version-named commit is not automatically a version failure. Resolve the exact run ID and inspect the exact failed job/log before editing. Treat only version-contract, lockfile, artifact-name, tag/version, or provenance mismatches as version failures. Timing, process-lifecycle, OS-specific, and external MCP failures require a root-cause fix and deterministic regression test at their real seam. Never make a blind rerun the fix, and never hide nondeterminism by only increasing a timeout. A rerun that passes on the same SHA is evidence of a flaky test or race, not proof that the defect is resolved. Do not report the Action fixed until a new exact-SHA run completes successfully.
+
 ## Local Windows Packaging / Signing Policy
 
 Local Windows development builds normally run **without a paid/commercial Windows code-signing certificate**. Therefore `Get-AuthenticodeSignature` may legitimately report `NotSigned`/unsigned for locally built Setup or Portable artifacts. Do **not** treat that status by itself as a local build failure.
