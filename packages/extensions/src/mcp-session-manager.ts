@@ -346,7 +346,6 @@ export class McpSessionManager {
   private scheduleIdleSweep(): void {
     if (this.idleTimer !== undefined || this.closed || this.sessions.size === 0) return;
     this.idleTimer = setInterval(() => { void this.sweepIdle(); }, Math.min(30_000, this.idleTimeoutMs));
-    this.idleTimer.unref?.();
   }
 
   private async sweepIdle(): Promise<void> {
