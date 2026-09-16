@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
-import type { ExternalMcpContractDrift, McpResourceSummary, McpServerLaunchConfig, McpToolSummary } from './types.js';
+import {
+  createProcessTreeTerminator,
+  type ProcessTreeTerminator,
+} from '@lnwjud/process';
+import type { ExternalMcpContractDrift, McpResourceSummary, McpServerLaunchConfig, McpSessionLifecycle, McpToolSummary } from './types.js';
 
 export interface McpClientSession {
   listTools(signal?: AbortSignal): Promise<readonly McpToolSummary[]>;
@@ -17,6 +21,7 @@ export interface McpClientFactory {
 
 export interface McpSessionManagerOptions {
   readonly clientFactory?: McpClientFactory;
+  readonly processTreeTerminator?: ProcessTreeTerminator;
   readonly callTimeoutMs?: number;
   readonly idleTimeoutMs?: number;
 }
@@ -29,10 +34,12 @@ interface ManagedSession {
   readonly launchDriftDetected: boolean;
   lastUsedAt: number;
   queue: Promise<unknown>;
+  inFlight: number;
 }
 
 interface PendingConnection {
   readonly launchFingerprint: string;
+  readonly controller: AbortController;
   readonly promise: Promise<ManagedSession>;
 }
 
@@ -44,17 +51,57 @@ export class McpSessionManager {
   private readonly factory: McpClientFactory;
   private readonly callTimeoutMs: number;
   private readonly idleTimeoutMs: number;
+  private readonly processTreeTerminator: ProcessTreeTerminator;
+  private readonly closeFailures = new Map<string, string>();
   private idleTimer: NodeJS.Timeout | undefined;
+  private idleSweep: Promise<void> | undefined;
   private closed = false;
 
   public constructor(options: McpSessionManagerOptions = {}) {
-    this.factory = options.clientFactory ?? defaultMcpClientFactory;
+    this.processTreeTerminator = options.processTreeTerminator ?? createProcessTreeTerminator();
+    this.factory = options.clientFactory ?? createDefaultMcpClientFactory(this.processTreeTerminator);
     this.callTimeoutMs = options.callTimeoutMs ?? 60_000;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 5 * 60_000;
   }
 
   public isConnected(server: string): boolean {
     return this.sessions.has(server);
+  }
+
+  public lifecycle(server: string): McpSessionLifecycle {
+    if (this.closeFailures.has(server)) return 'termination_unverified';
+    return this.sessions.has(server) ? 'connected' : 'disconnected';
+  }
+
+  /** Reconcile settings before every discovery-backed operation. */
+  public async reconcile(
+    servers: readonly { readonly name: string; readonly config: McpServerLaunchConfig; readonly enabled: boolean; readonly excluded: boolean }[],
+  ): Promise<void> {
+    const desired = new Map(
+      servers
+        .filter((server) => server.enabled && !server.excluded)
+        .map((server) => [server.name, fingerprintExternalMcpValue(server.config)] as const),
+    );
+    const closing: Promise<void>[] = [];
+    for (const [name, managed] of this.sessions) {
+      if (desired.get(name) !== managed.launchFingerprint) closing.push(this.drop(name, managed));
+    }
+    for (const [name, pending] of this.pendingConnections) {
+      if (desired.get(name) !== pending.launchFingerprint) {
+        pending.controller.abort(new Error('MCP server settings changed'));
+        closing.push(this.awaitPending(pending.promise));
+      }
+    }
+    await Promise.all(closing);
+  }
+
+  public async disconnect(server: string): Promise<void> {
+    const pending = this.pendingConnections.get(server);
+    if (pending !== undefined) {
+      pending.controller.abort(new Error('MCP server disconnected'));
+      await this.awaitPending(pending.promise);
+    }
+    await this.drop(server);
   }
 
   public async describe(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<Result<{
@@ -70,6 +117,8 @@ export class McpSessionManager {
       managed = await this.ensure(server, config, signal);
       if (isAborted(signal)) return cancelledCall();
       const refreshed = await this.refreshCatalog(server, managed, signal);
+      managed.lastUsedAt = Date.now();
+      this.scheduleIdleSweep();
       return ok({
         connected: true,
         tools: managed.tools,
@@ -157,15 +206,16 @@ export class McpSessionManager {
   }
 
   public async close(): Promise<void> {
+    if (this.closed) return;
     this.closed = true;
     if (this.idleTimer !== undefined) clearInterval(this.idleTimer);
     this.idleTimer = undefined;
-    this.pendingConnections.clear();
-    const closers = [...this.sessions.entries()].map(async ([name, managed]) => {
-      this.sessions.delete(name);
-      await managed.session.close().catch(() => undefined);
-    });
+    const pending = [...this.pendingConnections.values()];
+    for (const connection of pending) connection.controller.abort(new Error('Child MCP session manager is closed'));
+    await Promise.all(pending.map((connection) => this.awaitPending(connection.promise)));
+    const closers = [...this.sessions.entries()].map(([name, managed]) => this.drop(name, managed));
     await Promise.all(closers);
+    this.pendingConnections.clear();
   }
 
   private async ensure(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<ManagedSession> {
@@ -181,15 +231,17 @@ export class McpSessionManager {
 
     const pending = this.pendingConnections.get(server);
     if (pending !== undefined) {
-      if (pending.launchFingerprint === launchFingerprint) return pending.promise;
+      if (pending.launchFingerprint === launchFingerprint) return await awaitWithAbort(pending.promise, signal);
+      pending.controller.abort(new Error('MCP server launch configuration changed'));
       await pending.promise.catch(() => undefined);
       return this.ensure(server, config, signal);
     }
 
-    const promise = this.connectManaged(server, config, launchFingerprint, signal);
-    this.pendingConnections.set(server, { launchFingerprint, promise });
+    const controller = new AbortController();
+    const promise = this.connectManaged(server, config, launchFingerprint, controller.signal);
+    this.pendingConnections.set(server, { launchFingerprint, controller, promise });
     try {
-      return await promise;
+      return await awaitWithAbort(promise, signal);
     } finally {
       if (this.pendingConnections.get(server)?.promise === promise) this.pendingConnections.delete(server);
     }
@@ -206,6 +258,7 @@ export class McpSessionManager {
       this.callTimeoutMs,
       `Timed out connecting to ${server}`,
       signal,
+      (lateSession) => this.closeSession(server, lateSession),
     );
     try {
       if (this.closed) throw new Error('Child MCP session manager is closed');
@@ -229,17 +282,21 @@ export class McpSessionManager {
         launchDriftDetected: previousLaunchFingerprint !== undefined && previousLaunchFingerprint !== launchFingerprint,
         lastUsedAt: Date.now(),
         queue: Promise.resolve(),
+        inFlight: 0,
       };
       this.lastLaunchFingerprints.set(server, launchFingerprint);
       this.lastCatalogFingerprints.set(server, catalogFingerprint);
       const replaced = this.sessions.get(server);
-      if (replaced !== undefined) await replaced.session.close().catch(() => undefined);
+      if (replaced !== undefined) {
+        this.sessions.delete(server);
+        await this.closeManaged(server, replaced);
+      }
       if (this.closed) throw new Error('Child MCP session manager is closed');
       this.sessions.set(server, managed);
       this.scheduleIdleSweep();
       return managed;
     } catch (error: unknown) {
-      await session.close().catch(() => undefined);
+      await this.closeSession(server, session);
       throw error;
     }
   }
@@ -268,39 +325,79 @@ export class McpSessionManager {
   }
 
   private enqueue<T>(managed: ManagedSession, operation: () => Promise<T>): Promise<T> {
+    managed.inFlight += 1;
+    managed.lastUsedAt = Date.now();
     const next = managed.queue.then(operation, operation);
-    managed.queue = next.then(() => undefined, () => undefined);
-    return next;
+    const settled = next.finally(() => {
+      managed.inFlight -= 1;
+      managed.lastUsedAt = Date.now();
+    });
+    managed.queue = settled.then(() => undefined, () => undefined);
+    return settled;
   }
 
   private async drop(server: string, expected?: ManagedSession): Promise<void> {
     const managed = this.sessions.get(server);
     if (managed === undefined || (expected !== undefined && managed !== expected)) return;
     this.sessions.delete(server);
-    await managed.session.close().catch(() => undefined);
+    await this.closeManaged(server, managed);
   }
 
   private scheduleIdleSweep(): void {
-    if (this.idleTimer !== undefined) return;
-    this.idleTimer = setInterval(() => {
-      void this.sweepIdle();
-    }, Math.min(30_000, this.idleTimeoutMs));
-    this.idleTimer.unref?.();
+    if (this.idleTimer !== undefined || this.closed || this.sessions.size === 0) return;
+    this.idleTimer = setInterval(() => { void this.sweepIdle(); }, Math.min(30_000, this.idleTimeoutMs));
   }
 
   private async sweepIdle(): Promise<void> {
-    const now = Date.now();
-    for (const [name, managed] of this.sessions) {
-      if (now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
+    if (this.idleSweep !== undefined) return this.idleSweep;
+    this.idleSweep = (async (): Promise<void> => {
+      const now = Date.now();
+      for (const [name, managed] of this.sessions) {
+        if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
+      }
+      this.idleSweep = undefined;
+      if (this.sessions.size === 0 && this.idleTimer !== undefined) {
+        clearInterval(this.idleTimer);
+        this.idleTimer = undefined;
+      }
+    })();
+    return this.idleSweep;
+  }
+
+  private async closeManaged(server: string, managed: ManagedSession): Promise<void> {
+    await Promise.race([
+      managed.queue,
+      delay(this.callTimeoutMs),
+    ]);
+    await this.closeSession(server, managed.session);
+  }
+
+  private async closeSession(server: string, session: McpClientSession): Promise<void> {
+    try {
+      await session.close();
+    } catch (error: unknown) {
+      this.closeFailures.set(server, sanitizeError(error));
     }
+  }
+
+  private async awaitPending(promise: Promise<ManagedSession>): Promise<void> {
+    await Promise.race([promise.then(() => undefined, () => undefined), delay(this.callTimeoutMs)]);
   }
 }
 
-export const defaultMcpClientFactory: McpClientFactory = {
-  async connect(config: McpServerLaunchConfig, signal?: AbortSignal): Promise<McpClientSession> {
+export function createDefaultMcpClientFactory(
+  processTreeTerminator: ProcessTreeTerminator = createProcessTreeTerminator(),
+): McpClientFactory {
+  return {
+    async connect(config: McpServerLaunchConfig, signal?: AbortSignal): Promise<McpClientSession> {
+    // Linux ships util-linux `setsid`; macOS does not.  Keep the SDK transport
+    // on macOS and let the PID terminator use its direct-process fallback.
+    const useSessionWrapper = process.platform === 'linux';
+    const command = useSessionWrapper ? 'setsid' : config.command;
+    const args = useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])];
     const transport = new StdioClientTransport({
-      command: config.command,
-      args: [...(config.args ?? [])],
+      command,
+      args,
       ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
       env: {
         ...definedEnv(process.env),
@@ -316,10 +413,15 @@ export const defaultMcpClientFactory: McpClientFactory = {
     try {
       await client.connect(transport, signal === undefined ? undefined : { signal });
     } catch (error: unknown) {
+      const pid = transport.pid;
+      if (pid !== null && getStopPid(processTreeTerminator) !== undefined) {
+        await getStopPid(processTreeTerminator)?.(pid).catch(() => undefined);
+      }
       await client.close().catch(() => undefined);
       disposeStderrDrain();
       throw error;
     }
+    const pid = transport.pid;
     let closed = false;
     return {
       async listTools(listSignal?: AbortSignal): Promise<readonly McpToolSummary[]> {
@@ -349,15 +451,31 @@ export const defaultMcpClientFactory: McpClientFactory = {
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
+        let firstError: unknown;
         try {
-          await client.close();
+          if (pid !== null && getStopPid(processTreeTerminator) !== undefined) {
+            try {
+              await getStopPid(processTreeTerminator)?.(pid);
+            } catch (error: unknown) {
+              firstError = error;
+            }
+          }
+          try {
+            await client.close();
+          } catch (error: unknown) {
+            firstError ??= error;
+          }
         } finally {
           disposeStderrDrain();
         }
+        if (firstError !== undefined) throw firstError;
       },
     };
-  },
-};
+    },
+  };
+}
+
+export const defaultMcpClientFactory: McpClientFactory = createDefaultMcpClientFactory();
 
 export function attachChildStderrDrain(stderr: unknown): () => void {
   if (!isDrainableStderr(stderr)) return () => undefined;
@@ -384,7 +502,13 @@ function isDrainableStderr(value: unknown): value is {
     && 'resume' in value && typeof value.resume === 'function';
 }
 
-function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, message: string, parentSignal?: AbortSignal): Promise<T> {
+function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  message: string,
+  parentSignal?: AbortSignal,
+  onLateValue?: (value: T) => void | Promise<void>,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const controller = new AbortController();
     if (isAborted(parentSignal)) {
@@ -428,7 +552,39 @@ function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutM
       rejectOnce(error);
       return;
     }
-    pending.then(resolveOnce, rejectOnce);
+    pending.then((value) => {
+      if (settled) {
+        if (onLateValue !== undefined) void Promise.resolve(onLateValue(value)).catch(() => undefined);
+        return;
+      }
+      resolveOnce(value);
+    }, rejectOnce);
+  });
+}
+
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error('Child MCP operation was cancelled'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason instanceof Error ? signal.reason : new Error('Child MCP operation was cancelled'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then((value) => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(value);
+    }, (error: unknown) => {
+      signal.removeEventListener('abort', onAbort);
+      reject(error);
+    });
+  });
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, Math.max(1, timeoutMs));
+    timer.unref?.();
   });
 }
 
@@ -583,4 +739,9 @@ function definedEnv(environment: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
     Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
+}
+
+function getStopPid(terminator: ProcessTreeTerminator): ((pid: number) => Promise<void>) | undefined {
+  const stopPid = (terminator as ProcessTreeTerminator & { readonly stopPid?: (pid: number) => Promise<void> }).stopPid;
+  return stopPid === undefined ? undefined : stopPid.bind(terminator);
 }

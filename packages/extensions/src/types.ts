@@ -103,6 +103,7 @@ export interface ExtensionsService {
     readonly tool: string;
     readonly arguments?: Readonly<Record<string, unknown>>;
   }, signal?: AbortSignal): Promise<Result<unknown>>;
+  disconnectMcpServer?(server: string): Promise<Result<void>>;
   close(): Promise<void>;
 }
 
@@ -114,7 +115,10 @@ export interface McpServerListItem {
   readonly excluded: boolean;
   readonly exclusionReason?: string;
   readonly command: string;
+  readonly lifecycle?: McpSessionLifecycle;
 }
+
+export type McpSessionLifecycle = 'disconnected' | 'connected' | 'termination_unverified';
 
 export const DEFAULT_EXTENSIONS_SETTINGS: ExtensionsSettings = Object.freeze({
   mode: 'enable_all',

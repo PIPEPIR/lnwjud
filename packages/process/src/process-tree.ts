@@ -11,6 +11,12 @@ import { WindowsProcessTree } from './windows-process-tree.js';
  */
 export interface ProcessTreeTerminator {
   stop(child: ChildProcess, pid: number): Promise<void>;
+  /**
+   * Stop an externally-owned process tree when no ChildProcess handle exists.
+   * Implementations may omit this only for legacy test doubles; production
+   * terminators expose it so stdio transports cannot leak descendants.
+   */
+  stopPid?(pid: number): Promise<void>;
 }
 
 /** Select the one process implementation for the current composition root. */

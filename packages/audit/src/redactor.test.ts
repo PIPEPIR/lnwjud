@@ -20,6 +20,12 @@ describe('Redactor', () => {
     expect(redacted).toMatchObject({ env: { NORMAL_VALUE: 'safe' } });
   });
 
+  it('removes terminal control sequences from audit text and expandable details', () => {
+    const input = '\u001b[33mwarning\u001b[22m\u001b[39m \u001b]8;;https://example.test\u0007link\u001b]8;;\u0007';
+
+    expect(new Redactor().redactText(input)).toBe('warning link');
+  });
+
   it('summarizes Codex instructions by task id, byte length, and SHA-256 only', () => {
     const summary = codexInstructionSummary('task-1', 'review this file');
 

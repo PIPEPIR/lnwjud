@@ -89,4 +89,15 @@ describe('default External MCP client protocol negotiation', () => {
       await manager.close();
     }
   }, 30_000);
+
+  it('survives a ten-cycle connect/use/close soak without retaining child sessions', async () => {
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      const session = await connectFixture('modern');
+      try {
+        await expect(session.listTools()).resolves.toEqual([expect.objectContaining({ name: 'modern_ping' })]);
+      } finally {
+        await session.close();
+      }
+    }
+  }, 60_000);
 });

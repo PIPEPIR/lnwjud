@@ -29,6 +29,27 @@ export class LogRingBuffer {
     };
   }
 
+  public compact(maxBytes: number): void {
+    const limit = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
+    while (this.entries.length > 0 && this.bytes > limit) {
+      const first = this.entries[0]!;
+      const firstBytes = Buffer.byteLength(first.text, 'utf8');
+      const excess = this.bytes - limit;
+      if (firstBytes <= excess) {
+        this.entries.shift();
+        this.bytes -= firstBytes;
+      } else {
+        const bytes = Buffer.from(first.text, 'utf8');
+        let start = excess;
+        while (start < bytes.length && (bytes[start]! & 0b1100_0000) === 0b1000_0000) start += 1;
+        const text = bytes.subarray(start).toString('utf8');
+        this.entries[0] = { ...first, text };
+        this.bytes += Buffer.byteLength(text, 'utf8') - firstBytes;
+      }
+      this.evicted = true;
+    }
+  }
+
   private appendChunk(stream: ProcessLogStream, input: string): void {
     let text = input;
     let size = Buffer.byteLength(text, 'utf8');

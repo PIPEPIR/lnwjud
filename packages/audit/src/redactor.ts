@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { stripVTControlCharacters } from 'node:util';
 import type { ActivityTargetDetail, ActivityTargetReference } from './audit-types.js';
 
 const SENSITIVE_KEY = /authorization|token|secret|password|api[_-]?key|private[_-]?key|credential/i;
@@ -108,7 +109,7 @@ export function codexInstructionSummary(codexTaskId: string, instruction: string
 }
 
 function redactString(value: string): string {
-  return value
+  return stripVTControlCharacters(value)
     .replace(AUTHORIZATION_HEADER, '$1[REDACTED]')
     .replace(BEARER_VALUE, 'Bearer [REDACTED]')
     .replace(ENV_SECRET_ASSIGNMENT, '$1=[REDACTED]')

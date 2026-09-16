@@ -1,6 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.0.2 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.1.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
+
+คู่มือนี้ติดตาม source/release target `v5.1.0`; จนกว่า release flow จะเสร็จ ไฟล์ public ล่าสุดยังเป็น `v5.0.2` ส่วนผู้พัฒนาที่ build จาก source จะได้ชื่อ artifact `v5.1.0`
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -27,7 +29,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- `lnwjud-Setup-5.0.2.exe` หรือ `lnwjud-Portable-5.0.2.exe`
+- public release ล่าสุด `lnwjud-Setup-5.0.2.exe` หรือ `lnwjud-Portable-5.0.2.exe` (หรือ build source target v5.1.0 เอง)
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -47,7 +49,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด `lnwjud-Setup-5.0.2.exe` จาก GitHub Releases
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.0.2.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -55,7 +57,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด `lnwjud-Portable-5.0.2.exe`
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.0.2.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -279,6 +281,10 @@ Live Logs ใช้ดูสถานะ realtime ของ:
 
 ถ้างาน fail ให้ดู Live Logs และหน้า Doctor ก่อน ไม่จำเป็นต้องเปิด PowerShell เพื่อรัน tunnel-client เอง
 
+External MCP/Serena จะถูกปิดเมื่อ idle ตามค่าที่ตั้งไว้ โดยไม่ตัด call ที่กำลังทำงานอยู่. เมื่อปิดโปรแกรม, เปลี่ยน command, ปิดใช้งาน หรือลบ server ระบบจะ abort การเชื่อมต่อที่รออยู่และปิด process tree ที่ lnwjud เป็นเจ้าของ (process group บน macOS/Linux และ `taskkill /T /F` บน Windows). ถ้าตรวจไม่ได้จริงจะแสดง `termination_unverified` ใน `mcp_list` และ Doctor แทนการรายงานว่าสำเร็จ.
+
+การสร้างไฟล์ภาพ/ไฟล์ไบนารีจาก ChatGPT แล้วส่งเข้าโฟลเดอร์โดยตรงไม่ใช่ความสามารถอัตโนมัติของ MCP bridge: ใช้เครื่องมือสร้างภาพของ ChatGPT แล้วดาวน์โหลดไฟล์ จากนั้นให้ lnwjud `copy_file` ไปยังโฟลเดอร์ที่อนุญาต หรือใช้ `write_file` เฉพาะข้อความ UTF-8. lnwjud ไม่รับ file-id จากหน้า ChatGPT เพื่อเขียนลงดิสก์เองโดยไม่มีการสั่ง copy ที่ชัดเจน.
+
 ## 13. Doctor / Troubleshooting
 
 อาการที่พบบ่อย:
@@ -338,8 +344,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.0.2.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.0.2.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.1.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.1.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

@@ -786,7 +786,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     for (const [processId, ownerWorkspaceId] of trackedProcesses) {
       if (ownerWorkspaceId !== workspaceId) continue;
       const status = await processService.status(actor, workspaceId, processId);
-      if (!status.ok) continue;
+      if (!status.ok) {
+        if (status.error.code === 'PROCESS_NOT_FOUND') trackedProcesses.delete(processId);
+        continue;
+      }
       if (status.value.state === 'starting' || status.value.state === 'running' || status.value.state === 'termination_unverified') {
         throw new Error('Workspace has a managed process running; stop it before archiving or deleting it');
       }
@@ -888,6 +891,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       lastExternalMcpProbeDetail = 'No enabled external MCP servers are configured';
       return;
     }
+    const unverified = enabled.filter((server) => server.lifecycle === 'termination_unverified');
+    if (unverified.length > 0) {
+      lastExternalMcpProbeDetail = unverified.map((server) => `${server.name}: termination_unverified`).join(' · ');
+      return;
+    }
 
     const observations = await Promise.all(enabled.map(async (server) => {
       const controller = new AbortController();
@@ -986,7 +994,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         };
       },
     },
-    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const connected = enabled.filter((server) => server.connected); return { status: connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? `${enabled.length} enabled external MCP server(s); ${connected.length} connected` }; } },
+    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const unverified = enabled.filter((server) => server.lifecycle === 'termination_unverified'); const connected = enabled.filter((server) => server.connected); return { status: unverified.length > 0 ? 'warn' : connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? (unverified.length > 0 ? `${unverified.length} external MCP termination(s) could not be verified` : `${enabled.length} enabled external MCP server(s); ${connected.length} connected`) }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
@@ -1378,6 +1386,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const previous = readSettings();
       persistUserSettings(settingsRepository, request.settings);
       const next = readSettings();
+      const reconciledMcp = await extensionsService.listMcpServers().catch(() => undefined);
+      if (reconciledMcp?.ok) {
+        const unverified = reconciledMcp.value.servers.filter((server) => server.lifecycle === 'termination_unverified');
+        if (unverified.length > 0) logHub.feed('mcp', 'warn', `[MCP] termination_unverified: ${unverified.map((server) => server.name).join(', ')}`);
+      }
       if (previous.recoveryRetentionDays !== next.recoveryRetentionDays) {
         lastRecoveryRetentionSweepAt = 0;
         await sweepRecoveryRetention(true).catch((error: unknown) => {
@@ -1754,12 +1767,15 @@ function persistStoredWorkspaceIds(settingsRepository: SqliteSettingsRepository,
 
 async function listTrackedProcesses(
   processService: ProcessService,
-  trackedProcesses: ReadonlyMap<string, string>,
+  trackedProcesses: Map<string, string>,
 ): Promise<readonly ProcessSummary[]> {
   const summaries: ProcessSummary[] = [];
   for (const [processId, workspaceId] of trackedProcesses) {
     const status = await processService.status(actor, workspaceId, processId);
-    if (!status.ok) continue;
+    if (!status.ok) {
+      if (status.error.code === 'PROCESS_NOT_FOUND') trackedProcesses.delete(processId);
+      continue;
+    }
     const logs = await processService.logs(actor, workspaceId, processId, { tailLines: 20 });
     summaries.push(toProcessSummary(status.value, workspaceId, logs.ok ? summarizeLogs([...logs.value.entries].reverse().map((entry) => entry.text)) : ''));
   }

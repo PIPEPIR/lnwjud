@@ -32,6 +32,16 @@ describe('log buffer helpers', () => {
     expect(appendLogBatch(previous, batch, 3).map((entry) => entry.id)).toEqual([2, 3, 4]);
   });
 
+  it('bounds retained renderer log bytes while preserving the newest lines', () => {
+    const batch = Array.from({ length: 10 }, (_, index) => line(index + 1, 'x'.repeat(200)));
+    const retained = appendLogBatch([], batch, 30_000, 700);
+    const retainedBytes = retained.reduce((bytes, entry) => bytes + new TextEncoder().encode(JSON.stringify(entry)).byteLength, 0);
+
+    expect(retainedBytes).toBeLessThanOrEqual(700);
+    expect(retained.at(-1)?.id).toBe(10);
+    expect(retained[0]?.id).toBeGreaterThan(1);
+  });
+
   it('keeps live-event dedupe ids bounded while preserving recent ids', () => {
     const ids = new Set<number>();
     for (let id = 1; id <= 8; id += 1) expect(rememberLogId(ids, id, 5)).toBe(true);

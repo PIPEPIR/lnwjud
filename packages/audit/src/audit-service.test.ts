@@ -114,7 +114,7 @@ describe('AuditService', () => {
       toolName: 'run_goal', callId: 'call-full', phase: 'completed',
       targetSummary: `goalKey=activity-log-full-detail-no-truncation workspace=${workspaceId}`,
       targetDetail: { detailRef: 'call-full:completed', itemCount: 4, preview: [], legacyIncomplete: false },
-      activityTargetDetail: { kind: 'details', items: [`goalId=${goalId}`, `workspaceId=${workspaceId}`, 'status=active', 'password=must-never-leak'] },
+      activityTargetDetail: { kind: 'details', items: [`goalId=${goalId}`, `workspaceId=${workspaceId}`, 'status=\u001b[33mactive\u001b[39m', 'password=must-never-leak'] },
       resultCode: 'SUCCESS', durationMs: 8,
     });
 

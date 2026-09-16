@@ -171,9 +171,14 @@ export class CodexService {
     if (!workspace.ok) return workspace;
     const tasks: CodexTaskListItem[] = [];
     for (const [codexTaskId, owner] of this.owners) {
-      if (owner.actorId !== actor.clientId || owner.sessionId !== actorSessionId(actor) || owner.workspaceId !== workspaceId) continue;
       const process = this.adapter.statusProcess(owner.processId);
-      if (process.ok) tasks.push({ codexTaskId, process: process.value });
+      if (!process.ok) {
+        if (process.error.code === 'PROCESS_NOT_FOUND') this.owners.delete(codexTaskId);
+        continue;
+      }
+      if (owner.actorId === actor.clientId && owner.sessionId === actorSessionId(actor) && owner.workspaceId === workspaceId) {
+        tasks.push({ codexTaskId, process: process.value });
+      }
     }
     return ok(tasks);
   }

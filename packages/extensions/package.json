@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/extensions",
-  "version": "5.0.2",
+  "version": "5.1.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@lnwjud/domain": "workspace:*",
+    "@lnwjud/process": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0"
   },
   "scripts": {

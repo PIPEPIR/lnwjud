@@ -74,7 +74,7 @@ describe('LocalExtensionsService MCP bridge', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('lists, describes, and calls child MCP tools through the session manager', async () => {
     const calls: string[] = [];
@@ -398,6 +398,79 @@ describe('LocalExtensionsService MCP bridge', () => {
     expect(results.every((result) => result.ok)).toBe(true);
     expect(connects).toBe(1);
     await manager.close();
+  });
+
+  it('closes an idle child MCP session after the configured timeout', async () => {
+    let closes = 0;
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+      close: async () => { closes += 1; },
+    };
+    const manager = new McpSessionManager({
+      clientFactory: { connect: async (): Promise<McpClientSession> => session },
+      callTimeoutMs: 500,
+      idleTimeoutMs: 25,
+    });
+
+    try {
+      await expect(manager.describe('mock', { command: 'node' })).resolves.toMatchObject({ ok: true });
+      expect(manager.isConnected('mock')).toBe(true);
+      // CI runners can pause a worker long enough to miss several 25 ms sweeps.
+      // The contract is eventual idle cleanup, not a sub-second scheduling SLA.
+      await expect.poll(() => closes, { timeout: 2_000 }).toBe(1);
+      expect(manager.isConnected('mock')).toBe(false);
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it('does not evict an in-flight child operation at the idle deadline', async () => {
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { release = resolve; });
+    let closes = 0;
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => {
+        await started;
+        return { content: [{ type: 'text', text: 'pong' }] };
+      },
+      close: async () => { closes += 1; },
+    };
+    const manager = new McpSessionManager({
+      clientFactory: { connect: async (): Promise<McpClientSession> => session },
+      callTimeoutMs: 500,
+      idleTimeoutMs: 25,
+    });
+    const pending = manager.call('mock', { command: 'node' }, 'ping', {});
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(closes).toBe(0);
+    release();
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    await manager.close();
+    expect(closes).toBe(1);
+  });
+
+  it('reports an unverified lifecycle when an external session cannot be closed', async () => {
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [] }),
+      close: async () => { throw new Error('tree still alive'); },
+    };
+    const service = new LocalExtensionsService({
+      settings: settingsWithMockServer(),
+      clientFactory: { connect: async (): Promise<McpClientSession> => session },
+    });
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true });
+    await service.disconnectMcpServer?.('mock');
+    await expect(service.listMcpServers()).resolves.toMatchObject({
+      ok: true,
+      value: { servers: [expect.objectContaining({ name: 'mock', connected: false, lifecycle: 'termination_unverified' })] },
+    });
+    await service.close();
   });
 
   it('closes a child connection that finishes after the session manager is closed', async () => {

@@ -226,6 +226,30 @@ describe('ProcessManager', () => {
 
     await expect(manager.stop(first.value.processId)).resolves.toMatchObject({ ok: true });
   });
+
+  it('bounds completed process history and compacts retained logs', async () => {
+    const manager = new ProcessManager();
+    const processIds: string[] = [];
+    for (let index = 0; index < 33; index += 1) {
+      const started = await manager.start({
+        executable: process.execPath,
+        args: ['-e', index === 32 ? "process.stdout.write('x'.repeat(300000) + 'tail-marker')" : 'process.exit(0)'],
+        cwd: process.cwd(),
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      processIds.push(started.value.processId);
+      await waitForState(manager, started.value.processId, 'exited');
+    }
+
+    expect(manager.list()).toHaveLength(32);
+    expect(manager.status(processIds[0]!)).toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+    const retained = manager.logs(processIds.at(-1)!, {});
+    expect(retained.ok).toBe(true);
+    if (!retained.ok) return;
+    expect(Buffer.byteLength(retained.value.entries.map((entry) => entry.text).join(''), 'utf8')).toBeLessThanOrEqual(256 * 1024);
+    expect(retained.value.entries.at(-1)?.text).toContain('tail-marker');
+  }, 20_000);
 });
 
 function delay(milliseconds: number): Promise<void> {
