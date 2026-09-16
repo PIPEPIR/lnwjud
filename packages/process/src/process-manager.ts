@@ -13,6 +13,8 @@ const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const START_CANCELLATION_RETRY_MS = 250;
 
 export const DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES = 24;
+export const DEFAULT_MAX_RETAINED_TERMINAL_PROCESSES = 32;
+export const MAX_RETAINED_TERMINAL_PROCESS_LOG_BYTES = 256 * 1024;
 
 interface ManagedRecord {
   readonly processId: string;
@@ -251,6 +253,21 @@ export class ProcessManager {
     record.resolveTerminationVerified?.();
     delete record.resolveTerminationVerified;
     delete record.terminationVerified;
+    record.logs.compact(MAX_RETAINED_TERMINAL_PROCESS_LOG_BYTES);
+    this.records.delete(record.processId);
+    this.records.set(record.processId, record);
+    this.pruneTerminalRecords();
+  }
+
+  private pruneTerminalRecords(): void {
+    let terminalCount = [...this.records.values()].filter((record) => isVerifiedTerminal(record.state)).length;
+    if (terminalCount <= DEFAULT_MAX_RETAINED_TERMINAL_PROCESSES) return;
+    for (const [processId, record] of this.records) {
+      if (!isVerifiedTerminal(record.state)) continue;
+      this.records.delete(processId);
+      terminalCount -= 1;
+      if (terminalCount <= DEFAULT_MAX_RETAINED_TERMINAL_PROCESSES) return;
+    }
   }
 
   private markTerminationUnverified(record: ManagedRecord, errorMessage: string): void {

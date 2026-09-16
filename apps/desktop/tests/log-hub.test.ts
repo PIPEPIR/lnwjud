@@ -70,6 +70,26 @@ describe('LogHub', () => {
     expect(snapshot.tunnelLogExists).toBe(false);
   });
 
+  it('removes terminal control sequences before logs reach the UI or exports', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    hub.feed('process', 'info', '\u001b[33mwarning\u001b[22m\u001b[39m \u001b]8;;https://example.test\u0007link\u001b]8;;\u0007');
+    hub.feed('process', 'info', '🙂'.repeat(3_000));
+
+    expect(hub.snapshot().lines[0]?.text).toBe('warning link');
+    expect(Buffer.byteLength(hub.snapshot().lines[1]?.text ?? '', 'utf8')).toBe(8_192);
+    expect(hub.snapshot().lines[1]?.text).not.toContain('�');
+  });
+
+  it('bounds retained log payload bytes per source', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    for (let index = 0; index < 1_100; index += 1) hub.feed('process', 'info', `${index}:${'x'.repeat(8_192)}`);
+
+    const lines = hub.snapshot().lines;
+    expect(lines.reduce((bytes, line) => bytes + Buffer.byteLength(JSON.stringify(line), 'utf8'), 0)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(lines.at(-1)?.text).toContain('1099:');
+    expect(lines[0]?.text).not.toMatch(/^0:/);
+  });
+
   it('clears a single source', () => {
     const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
     hub.feed('tunnel', 'info', 't1');
@@ -185,6 +205,22 @@ describe('LogHub', () => {
     const lines = hub.snapshot().lines;
     expect(lines).toHaveLength(1);
     expect(lines[0]?.text).toBe(message.slice(0, 8_192));
+  });
+
+  it('bounds an unterminated tailed record while waiting for a newline', async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-pending-'));
+    temporaryRoots.push(root);
+    const logPath = path.join(root, 'lnwjud-tunnel.log');
+    await writeFile(logPath, 'x'.repeat(200_000), 'utf8');
+
+    const hub = new LogHub({ tunnelLogPath: logPath });
+    hub.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    const pending = (hub as unknown as { tunnelFile: { pending: string } }).tunnelFile.pending;
+    hub.stop();
+
+    expect(Buffer.byteLength(pending, 'utf8')).toBeLessThanOrEqual(8_192);
   });
 
   it('tails MCP activity NDJSON into the mcp source without waiting for getDashboard', async () => {

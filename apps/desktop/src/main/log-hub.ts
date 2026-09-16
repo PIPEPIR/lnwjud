@@ -1,6 +1,7 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+import { stripVTControlCharacters } from 'node:util';
 import type { AppErrorCode } from '@lnwjud/domain';
 import { decodeActivityTargetReference, type ActivityTargetReference } from '@lnwjud/audit';
 import { workspaceScopeMatches, type LogCorrelation, type LogLevel, type LogLine, type LogScopeRequest, type LogSnapshot, type LogSource, type TunnelLifecycleCategory, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
@@ -8,6 +9,7 @@ import { workspaceScopeMatches, type LogCorrelation, type LogLevel, type LogLine
 const MAX_LINES_PER_SOURCE = 10_000;
 const MAX_SEEN_KEYS_PER_SOURCE = 20_000;
 const MAX_LINE_BYTES = 8_192;
+const MAX_BYTES_PER_SOURCE = 8 * 1024 * 1024;
 
 export interface LogHubOptions {
   readonly tunnelLogPath: string;
@@ -30,6 +32,7 @@ interface TailedFile {
 
 export class LogHub {
   private readonly lines = new Map<LogSource, LogLine[]>();
+  private readonly retainedBytes = new Map<LogSource, number>();
   private readonly seenKeys = new Map<LogSource, Set<string>>();
   private readonly seenMcpDeliveries = new Set<string>();
   private readonly mcpOccurrences = new Map<string, Set<string>>();
@@ -47,6 +50,7 @@ export class LogHub {
     this.onLine = options.onLine;
     for (const source of SOURCES) {
       this.lines.set(source, []);
+      this.retainedBytes.set(source, 0);
       this.seenKeys.set(source, new Set());
     }
   }
@@ -166,9 +170,12 @@ export class LogHub {
     const buffer = this.lines.get(source) ?? [];
     if (scope.workspaceId === undefined && scope.sessionId === undefined) {
       this.lines.set(source, []);
+      this.retainedBytes.set(source, 0);
       return;
     }
-    this.lines.set(source, buffer.filter((line) => !matchesLogScope(line, scope, workspaces)));
+    const retained = buffer.filter((line) => !matchesLogScope(line, scope, workspaces));
+    this.lines.set(source, retained);
+    this.retainedBytes.set(source, retained.reduce((bytes, line) => bytes + serializedLogLineBytes(line), 0));
   }
 
   private feedMcpLifecycle(
@@ -209,12 +216,14 @@ export class LogHub {
   }
 
   private append(source: LogSource, entry: { readonly level: LogLevel; readonly text: string; readonly workspaceId?: string | null; readonly sessionId?: string | null; readonly correlation?: LogCorrelation; readonly timestamp?: string; readonly targetDetail?: ActivityTargetReference }): void {
+    const text = truncateUtf8(stripVTControlCharacters(entry.text), MAX_LINE_BYTES);
+    if (text.length === 0) return;
     const line: LogLine = {
       id: this.nextId,
       source,
       timestamp: boundedTimestamp(entry.timestamp) ?? new Date().toISOString(),
       level: entry.level,
-      text: entry.text,
+      text,
       workspaceId: entry.workspaceId ?? null,
       sessionId: entry.sessionId ?? null,
       ...(entry.correlation === undefined ? {} : { correlation: entry.correlation }),
@@ -223,8 +232,14 @@ export class LogHub {
     this.nextId += 1;
     const buffer = this.lines.get(source) ?? [];
     buffer.push(line);
-    while (buffer.length > MAX_LINES_PER_SOURCE) buffer.shift();
+    let retainedBytes = (this.retainedBytes.get(source) ?? 0) + serializedLogLineBytes(line);
+    while (buffer.length > MAX_LINES_PER_SOURCE || retainedBytes > MAX_BYTES_PER_SOURCE) {
+      const removed = buffer.shift();
+      if (removed === undefined) break;
+      retainedBytes -= serializedLogLineBytes(removed);
+    }
     this.lines.set(source, buffer);
+    this.retainedBytes.set(source, retainedBytes);
     this.onLine?.(line);
   }
 
@@ -268,7 +283,7 @@ export class LogHub {
       if (read <= 0) return;
       const text = state.pending + state.decoder.write(chunk.subarray(0, read));
       const records = text.split(/\r?\n/);
-      state.pending = records.pop() ?? '';
+      state.pending = truncateUtf8(records.pop() ?? '', MAX_LINE_BYTES);
       for (const raw of records) {
         const trimmed = raw.trim();
         if (trimmed.length === 0) continue;
@@ -304,6 +319,18 @@ export class LogHub {
 }
 
 const SOURCES: readonly LogSource[] = ['tunnel', 'mcp', 'process'];
+
+function serializedLogLineBytes(line: LogLine): number {
+  return Buffer.byteLength(JSON.stringify(line), 'utf8');
+}
+
+function truncateUtf8(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end]! & 0b1100_0000) === 0b1000_0000) end -= 1;
+  return bytes.subarray(0, end).toString('utf8');
+}
 
 export interface WorkLogFeedEntry {
   readonly id: string;

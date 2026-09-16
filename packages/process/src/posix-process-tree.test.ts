@@ -89,4 +89,23 @@ describe('portable process contracts', () => {
     await expect(tree.stop(child, 4242)).rejects.toThrow('group remains live');
     expect(signals).toEqual([]);
   });
+
+  it('terminates an externally owned POSIX process group after the root handle is gone', async () => {
+    const signals: Array<{ pid: number; signal: NodeJS.Signals | number }> = [];
+    let alive = true;
+    const tree = new PosixProcessTree({
+      platform: 'linux',
+      processIsAlive: (): boolean => alive,
+      processGroupIsAlive: (): boolean => alive,
+      processStartedAt: async (): Promise<string> => '2026-08-20T00:00:00.000Z',
+      processKill: (pid, signal): void => {
+        signals.push({ pid, signal });
+        if (signal === 'SIGTERM') alive = false;
+      },
+      termGraceMs: 5,
+      killGraceMs: 5,
+    });
+    await expect(tree.stopPid?.(4_242)).resolves.toBeUndefined();
+    expect(signals).toEqual([{ pid: -4_242, signal: 'SIGTERM' }]);
+  });
 });

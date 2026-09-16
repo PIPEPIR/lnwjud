@@ -142,6 +142,10 @@ jobs:
         shell: bash
         run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts --passWithNoTests --shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}
 
+      - name: Run process-tree and external MCP lifecycle tests
+        shell: bash
+        run: corepack pnpm@10.15.0 --filter @lnwjud/process --filter @lnwjud/extensions test
+
   native-package-verification:
     name: Native Package Verification (${{ matrix.name }})
     timeout-minutes: 45

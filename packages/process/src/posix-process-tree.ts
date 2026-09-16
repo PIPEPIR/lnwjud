@@ -95,6 +95,50 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
     throw new Error('POSIX process-group termination could not be verified');
   }
+
+  public async stopPid(pid: number): Promise<void> {
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('POSIX process identity is invalid');
+    const rootAlive = this.processIsAlive(pid);
+    const groupAlive = this.processGroupIsAlive(pid);
+    if (!rootAlive && !groupAlive) return;
+    if (!groupAlive) throw new Error('POSIX process group could not be verified; targeted termination refused');
+
+    const expectedStartedAt = await this.processStartedAt(pid);
+    if (expectedStartedAt === null) {
+      if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
+      throw new Error('POSIX process start identity could not be verified');
+    }
+    const verifyIdentity = async (): Promise<boolean> => {
+      const currentStartedAt = await this.processStartedAt(pid);
+      if (currentStartedAt === null) return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
+      if (currentStartedAt !== expectedStartedAt) throw new Error('POSIX process identity changed; targeted termination refused');
+      return true;
+    };
+    const waitForGone = async (timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      do {
+        if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return true;
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(25, Math.max(1, deadline - Date.now()))));
+      } while (Date.now() < deadline);
+      return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
+    };
+
+    await verifyIdentity();
+    try {
+      this.processKill(-pid, 'SIGTERM');
+    } catch (error: unknown) {
+      if (!isNoSuchProcess(error)) throw new Error('POSIX process-group termination could not be started', { cause: error });
+    }
+    if (await waitForGone(this.termGraceMs)) return;
+    await verifyIdentity();
+    try {
+      this.processKill(-pid, 'SIGKILL');
+    } catch (error: unknown) {
+      if (!isNoSuchProcess(error)) throw new Error('POSIX process-group escalation could not be started', { cause: error });
+    }
+    if (await waitForGone(this.killGraceMs)) return;
+    throw new Error('POSIX process-group termination could not be verified');
+  }
 }
 
 function boundedDelay(value: number): number {

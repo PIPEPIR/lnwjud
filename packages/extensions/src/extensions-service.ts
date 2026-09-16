@@ -1,6 +1,7 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { McpConfigLoader } from './mcp-config-loader.js';
 import { fingerprintExternalMcpValue, McpSessionManager, type McpClientFactory } from './mcp-session-manager.js';
+import type { ProcessTreeTerminator } from '@lnwjud/process';
 import { SkillCatalog } from './skill-catalog.js';
 import type {
   ExtensionsService,
@@ -18,6 +19,7 @@ export interface LocalExtensionsServiceOptions {
   readonly workspaceRootProvider?: () => Promise<string | undefined>;
   readonly bundledSkillRoots?: readonly string[];
   readonly clientFactory?: McpClientFactory;
+  readonly processTreeTerminator?: ProcessTreeTerminator;
   readonly callTimeoutMs?: number;
   readonly idleTimeoutMs?: number;
 }
@@ -38,6 +40,7 @@ export class LocalExtensionsService implements ExtensionsService {
     this.bundledSkillRoots = options.bundledSkillRoots ?? [];
     this.sessions = new McpSessionManager({
       ...(options.clientFactory === undefined ? {} : { clientFactory: options.clientFactory }),
+      ...(options.processTreeTerminator === undefined ? {} : { processTreeTerminator: options.processTreeTerminator }),
       ...(options.callTimeoutMs === undefined ? {} : { callTimeoutMs: options.callTimeoutMs }),
       ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
     });
@@ -54,13 +57,14 @@ export class LocalExtensionsService implements ExtensionsService {
   }
 
   public async listMcpServers(): Promise<Result<{ readonly servers: readonly McpServerListItem[] }>> {
-    const discovered = await this.loader().then((loader) => loader.discover());
+    const discovered = await this.discover();
     return ok({
       servers: discovered.map((server) => ({
         name: server.name,
         source: server.source,
         enabled: server.enabled,
         connected: this.sessions.isConnected(server.name),
+        lifecycle: this.sessions.lifecycle(server.name),
         excluded: server.excluded,
         ...(server.exclusionReason === undefined ? {} : { exclusionReason: server.exclusionReason }),
         command: server.config.command,
@@ -155,6 +159,13 @@ export class LocalExtensionsService implements ExtensionsService {
     return this.sessions.close();
   }
 
+  public async disconnectMcpServer(server: string): Promise<Result<void>> {
+    const discovered = await this.discover();
+    if (!discovered.some((entry) => entry.name === server)) return err(appError('INVALID_INPUT', `Unknown MCP server: ${server}`));
+    await this.sessions.disconnect(server);
+    return ok(undefined);
+  }
+
   private async skillCatalog(): Promise<SkillCatalog> {
     const workspaceRoot = await this.workspaceRootProvider();
     return new SkillCatalog({
@@ -176,10 +187,16 @@ export class LocalExtensionsService implements ExtensionsService {
   }
 
   private async findServer(name: string): Promise<Result<Awaited<ReturnType<McpConfigLoader['discover']>>[number]>> {
-    const discovered = await this.loader().then((loader) => loader.discover());
+    const discovered = await this.discover();
     const server = discovered.find((entry) => entry.name === name);
     if (server === undefined) return err(appError('INVALID_INPUT', `Unknown MCP server: ${name}`));
     return ok(server);
+  }
+
+  private async discover(): Promise<Awaited<ReturnType<McpConfigLoader['discover']>>> {
+    const discovered = await this.loader().then((loader) => loader.discover());
+    await this.sessions.reconcile(discovered);
+    return discovered;
   }
 }
 

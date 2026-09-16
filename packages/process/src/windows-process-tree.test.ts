@@ -64,6 +64,19 @@ describe('WindowsProcessTree', () => {
     await expect(tree.stop(child, 4_242)).rejects.toThrow('root exited before tree termination could be verified');
     expect(taskkillCalls).toBe(1);
   });
+
+  it('terminates an externally owned PID tree without a ChildProcess handle', async () => {
+    let alive = true;
+    let taskkillCalls = 0;
+    const tree = new WindowsProcessTree({
+      platform: 'win32',
+      processIsAlive: (): boolean => alive,
+      taskkill: async (): Promise<number> => { taskkillCalls += 1; alive = false; return 0; },
+      waitForPidExit: async (): Promise<void> => undefined,
+    });
+    await expect(tree.stopPid?.(4_242)).resolves.toBeUndefined();
+    expect(taskkillCalls).toBe(1);
+  });
 });
 
 function fakeChild(): ChildProcess {

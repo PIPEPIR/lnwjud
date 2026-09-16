@@ -169,6 +169,7 @@ export class ProcessService {
     const workspace = await this.getWorkspace(workspaceId);
     if (!workspace.ok) return workspace;
     const processes = this.processManager.list?.() ?? [];
+    this.pruneOwners(processes);
     return ok(processes.filter((process) => {
       const owner = this.owners.get(process.processId);
       return owner?.actorId === actor.clientId && owner.sessionId === actorSessionId(actor) && owner.workspaceId === workspace.value.id;
@@ -251,8 +252,19 @@ export class ProcessService {
       await this.processManager.stop(started.value.processId, true).catch(() => undefined);
       return cancelledStart();
     }
-    if (started.ok) this.owners.set(started.value.processId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId });
+    if (started.ok) {
+      this.owners.set(started.value.processId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId });
+      this.pruneOwners();
+    }
     return started;
+  }
+
+  private pruneOwners(processes = this.processManager.list?.()): void {
+    if (processes === undefined) return;
+    const retained = new Set(processes.map((process) => process.processId));
+    for (const processId of this.owners.keys()) {
+      if (!retained.has(processId)) this.owners.delete(processId);
+    }
   }
 
   private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined, bypassAuthorization: boolean): Promise<Result<string>> {

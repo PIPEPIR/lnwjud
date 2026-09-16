@@ -51,11 +51,18 @@
 
 ---
 
-## Current version: v5.0.2
+## Current version: v5.1.0
 
-`v5.0.2` is the current public release line. The platform cards above point to the matching v5.0.2 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
+`v5.1.0` is the current source/release target; `v5.0.2` remains the latest published release until the verified `dev → main → tag → Release` flow completes. The platform cards above therefore continue to point to v5.0.2 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file.
 
-### What's new in v5.0.2
+### What's new in v5.1.0
+
+- **Bounded retained memory:** completed process history is capped at 32 records and each completed log is compacted to its newest 256 KiB; stale process-owner entries are pruned when the underlying process no longer exists.
+- **Clean, bounded Live Logs:** terminal ANSI/VT control sequences are stripped at shared log and audit-detail boundaries before UI, copy, and export, with an 8 KiB line limit, an 8 MiB budget per main-process source, and a 24 MiB serialized-payload budget in each renderer window.
+- **External MCP lifecycle hardening:** idle close is in-flight aware; pending connections are aborted during shutdown/reconcile; POSIX children run in an owned `setsid` process group; Windows uses verified `taskkill /T /F`; settings changes disconnect stale sessions immediately; and `mcp_list`/Doctor expose `termination_unverified` instead of hiding an unproven cleanup.
+- **Cross-platform evidence:** production stdio has a ten-cycle connect/use/close soak regression, while the [lifecycle plan](V5_1_0_MEMORY_MCP_LIFECYCLE_PLAN.md) records the target-native package gates still required before making an every-architecture claim.
+
+### Historical: What's new in v5.0.2
 
 - **Codex Delegation hard-off:** when Codex Delegation is disabled, every Codex-backed front door is system-ineligible, including `codex_*`, `agent_swarm_run`, `delegate`, `delegate_status`, `delegate_cancel`, `delegate_result`, and `parallel_delegate`.
 - **Override-safe feature boundary:** a stale per-tool `enabled` override cannot re-expose Codex-backed delegation while the feature is OFF; Desktop readiness and MCP runtime now share the same classifier.

@@ -1119,6 +1119,7 @@ export class UpgradeRuntimeService {
       name: server.name,
       enabled: server.enabled,
       connected: server.connected,
+      ...(server.lifecycle === undefined ? {} : { lifecycle: server.lifecycle }),
       excluded: server.excluded,
       ...(server.exclusionReason === undefined ? {} : { exclusionReason: server.exclusionReason }),
     }));
@@ -1143,6 +1144,7 @@ export class UpgradeRuntimeService {
       name: server.name,
       enabled: server.enabled,
       connected: server.connected,
+      ...(server.lifecycle === undefined ? {} : { lifecycle: server.lifecycle }),
       excluded: server.excluded,
     }));
     return ok({
