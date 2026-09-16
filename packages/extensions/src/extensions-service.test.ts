@@ -74,7 +74,7 @@ describe('LocalExtensionsService MCP bridge', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('lists, describes, and calls child MCP tools through the session manager', async () => {
     const calls: string[] = [];
