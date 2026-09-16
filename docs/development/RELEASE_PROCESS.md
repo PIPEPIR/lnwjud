@@ -82,12 +82,8 @@ full verification gate.
 - Fetch current remote state and confirm the branch is based on the latest
   development line required by branch protection.
 - Finish the code, native helper, packaging, and documentation changes.
-- Set the release version with the repository version tooling rather than
-  hand-editing one package. Do not reuse an existing public tag; this
-  cross-platform target uses a new version when the prior Windows tag already
-  exists.
-- Update README `Current version` and the current release's `What's new`
-  section. Historical release details stay in GitHub Release notes.
+- Set the release version by running `corepack pnpm@10.15.0 run set-version <version>` first. The script is the canonical version-sync path; do not begin by hand-editing packages or current-version docs. Inspect the resulting diff for drift, and use manual edits only for uncovered references. If an uncovered reference is part of the canonical current-version surface, extend `scripts/set-version.mjs` in the same change so future bumps stay automated. Do not reuse an existing public tag; this cross-platform target uses a new version when the prior Windows tag already exists.
+- Update README release-specific copy such as `What's new` when needed. Historical release details stay in GitHub Release notes and are not rewritten by the version script.
 - Update tool-count and target-artifact assertions when the catalog or release
   matrix changes.
 - Run `git diff --check` and keep source provenance clean before the

@@ -109,22 +109,15 @@ async function syncAllVersions() {
     try {
       let readmeContent = await readFile(readmePath, 'utf8');
       readmeContent = readmeContent
+      .replace(/## Development target: v[0-9.]+ \(unreleased\)/g, `## Development target: v${version} (unreleased)`)
       .replace(/## Current (?:version|source \/ release candidate|release): v[0-9.]+/g, `## Current version: v${version}`)
+      .replace(/(`dev` (?:branch is )?preparing )v[0-9.]+/g, `$1v${version}`)
+      .replace(/The v[0-9.]+ development runtime contract/g, `The v${version} development runtime contract`)
+      .replace(/revalidated in the v[0-9.]+ verification pass/g, `revalidated in the v${version} verification pass`)
+      .replace(/v[0-9.]+ keeps that fix while/g, `v${version} keeps that fix while`)
       .replace(/The v[0-9.]+ release target and runtime contract/g, 'The v' + version + ' release target and runtime contract')
       .replace(/current source\/release candidate is `v[0-9.]+`/g, 'current version is `v' + version + '`')
-      .replace(/The Windows installer for the current version is `lnwjud-Setup-[0-9.]+\.exe`/g, 'The Windows installer for the current version is `lnwjud-Setup-' + version + '.exe`')
-      .replace(/Current Windows 10\/11 x64 artifacts are `lnwjud-Setup-[0-9.]+\.exe` \(recommended installer\) and `lnwjud-Portable-[0-9.]+\.exe`/g, 'Current Windows 10/11 x64 artifacts are `lnwjud-Setup-' + version + '.exe` (recommended installer) and `lnwjud-Portable-' + version + '.exe`')
-      .replace(/If you prefer not to install the app, run `lnwjud-Portable-[0-9.]+\.exe` directly\./g, 'If you prefer not to install the app, run `lnwjud-Portable-' + version + '.exe` directly.')
-      .replace(/1\. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-[0-9.]+\.exe` แล้วติดตั้งตามปกติ/g, '1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-' + version + '.exe` แล้วติดตั้งตามปกติ')
-      .replace(/2\. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-[0-9.]+\.exe` แล้วเปิดได้ทันที/g, '2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-' + version + '.exe` แล้วเปิดได้ทันที')
-      .replace(/ถ้าใช้ `lnwjud-Setup-[0-9.]+\.exe` หรือ `lnwjud-Portable-[0-9.]+\.exe` บน Windows x64/g, 'ถ้าใช้ `lnwjud-Setup-' + version + '.exe` หรือ `lnwjud-Portable-' + version + '.exe` บน Windows x64')
-      .replace(/single-file \*\*`lnwjud-Portable-[0-9.]+\.exe`\*\*/g, 'single-file **`lnwjud-Portable-' + version + '.exe`**')
-      .replace(/validated local test installer `lnwjud-Setup-[0-9.]+\.exe`/g, 'validated local test installer `lnwjud-Setup-' + version + '.exe`')
-      .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, 'apps/desktop/dist/installers/lnwjud-Setup-' + version + '.exe')
-      .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, 'apps/desktop/dist/installers/lnwjud-Portable-' + version + '.exe')
-      .replace(/current v[0-9.]+ `ToolRegistry`/g, 'current v' + version + ' `ToolRegistry`')
-      .replace(/## v[0-9.]+ release status/g, `## v${version} release status`)
-      .replace(/Release `v[0-9.]+`/g, `Release \`v${version}\``);
+      .replace(/current v[0-9.]+ `ToolRegistry`/g, 'current v' + version + ' `ToolRegistry`');
       await writeFile(readmePath, readmeContent, 'utf8');
       console.log(`Updated ${path.basename(readmePath)} -> v${version}`);
     } catch {
@@ -138,15 +131,12 @@ async function syncAllVersions() {
       .replace(/\*\*Current (?:version|release candidate):\*\* `v[0-9.]+`/g, `**Current version:** ` + '`v' + version + '`')
       .replace(/(\*\*Current (?:version|release candidate):\*\*[^\r\n]*Windows installer `lnwjud-Setup-)[0-9.]+(\.exe`)/g, (_match, prefix, suffix) => prefix + version + suffix)
       .replace(/(portable executable `lnwjud-Portable-)[0-9.]+(\.exe`)/g, (_match, prefix, suffix) => prefix + version + suffix)],
-    ['docs/USAGE_TH.md', (content) => content
-      .replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`)
-      .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
-      .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
     ['docs/development/PACKAGING_WINDOWS.md', (content) => content
       .replace(/For v[0-9.]+:/g, `For v${version}:`)
       .replace(/current v[0-9.]+ packaging contract/g, `current v${version} packaging contract`)
       .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
       .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
+    ['docs/INSTALL_MACOS.md', (content) => content.replace(/This guide covers the v[0-9.]+ native macOS release target/g, `This guide covers the v${version} native macOS release target`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+ คือ:/g, `ความสามารถหลักใน v${version} คือ:`)],
     ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', (content) => content.replace(/current v[0-9.]+ runtime contract/g, `current v${version} runtime contract`)],
     ['docs/architecture/TOOL_CONTRACT.md', (content) => content.replace(/snapshot synchronized for `v[0-9.]+`/g, `snapshot synchronized for ` + '`v' + version + '`')],

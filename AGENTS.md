@@ -40,6 +40,12 @@ When a GitHub Actions workflow must be monitored until completion, use one autho
 
 This policy is cross-platform because the monitoring contract is shared while the wrapper shell is platform-native. Do not label a PowerShell-only implementation as cross-platform.
 
+## Version Bump Policy
+
+For any repository/application version change, use the canonical root version script first: `corepack pnpm@10.15.0 run set-version <version>`. Do not start by hand-editing package versions or current-version documentation.
+
+After the script runs, inspect the diff and current-version references for drift. Manual per-file edits are fallback-only for genuinely uncovered references. If an uncovered reference belongs to the canonical current-version surface, update `scripts/set-version.mjs` in the same change so the next bump is automated. Preserve historical release notes, plans, and dated evidence unless the task explicitly requires changing history.
+
 ## Local Windows Packaging / Signing Policy
 
 Local Windows development builds normally run **without a paid/commercial Windows code-signing certificate**. Therefore `Get-AuthenticodeSignature` may legitimately report `NotSigned`/unsigned for locally built Setup or Portable artifacts. Do **not** treat that status by itself as a local build failure.

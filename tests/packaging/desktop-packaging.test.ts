@@ -49,6 +49,37 @@ describe('cross-platform desktop packaging', () => {
     expect(shared).toContain("APP_VERSION = '5.2.0'");
   });
 
+  it('keeps current-version documentation and runtime copy aligned with the root version', async () => {
+    const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
+    const version = String(rootPackage.version);
+    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const fullReadme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
+    expect(readme.includes(`Development target: v${version}`) || readme.includes(`Current version: v${version}`)).toBe(true);
+    expect(fullReadme.includes(`Development target: v${version}`) || fullReadme.includes(`Current version: v${version}`)).toBe(true);
+
+    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
+      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
+    expect(publishedVersion).toBeTruthy();
+    const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
+    expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
+    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
+
+    const expectedReferences: ReadonlyArray<readonly [string, string]> = [
+      ['docs/INSTALL_MACOS.md', `v${version} native macOS release target`],
+      ['.github/RELEASE_CHECKLIST.md', `**Current version:** \`v${version}\``],
+      ['docs/development/PACKAGING_WINDOWS.md', `current v${version} packaging contract`],
+      ['docs/LNWJUD_CAPABILITIES.md', `lnwjud v${version}`],
+      ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', `current v${version} runtime contract`],
+      ['docs/architecture/TOOL_CONTRACT.md', `snapshot synchronized for \`v${version}\``],
+      ['docs/architecture/UPGRADE_ARCHITECTURE.md', `checkpoint synchronized for \`v${version}\``],
+      ['packages/application/src/agent-swarm-service.ts', `Agent swarm v${version} supports read_only access only`],
+      ['packages/mcp-server/src/tool-registry.ts', `v${version} enforces read-only child sandboxes`],
+    ];
+    for (const [relativePath, expected] of expectedReferences) {
+      expect(await readFile(path.join(repositoryRoot, relativePath), 'utf8'), relativePath).toContain(expected);
+    }
+  });
+
   it('publishes complete desktop application metadata', async () => {
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as {
       description?: unknown;
