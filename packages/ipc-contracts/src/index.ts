@@ -474,11 +474,13 @@ export interface RemoteMcpStatus {
   readonly oauthConnected: boolean;
   readonly pairingRequired: boolean;
   readonly autoStartEnabled: boolean;
+  readonly configuredDomain?: string | null;
   readonly message: string | null;
 }
 
 export interface SaveRemoteMcpAuthtokenRequest {
   readonly authtoken: string;
+  readonly domain?: string | null;
 }
 
 export interface TunnelStatus {

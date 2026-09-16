@@ -21,6 +21,7 @@ export interface RemoteMcpPersistedState {
   readonly schemaVersion: 1;
   readonly desiredRunning: boolean;
   readonly publicOrigin?: string | null;
+  readonly configuredDomain?: string | null;
   readonly trustedClients: ReadonlyArray<{
     readonly clientId: string;
     readonly redirectUris: readonly string[];
@@ -97,6 +98,7 @@ export class RemoteMcpController {
   private gatewayUrl: string | null = null;
   private publicOrigin: string | null = null;
   private preferredPublicOrigin: string | null = null;
+  private configuredDomain: string | null = null;
   private ngrok: ChildProcess | null = null;
   private ngrokPath: string | null = null;
   private ngrokProbeAt = 0;
@@ -153,6 +155,7 @@ export class RemoteMcpController {
       oauthConnected: this.hasTrustedClient(),
       pairingRequired: this.runState === 'running' && this.pairingCode !== null,
       autoStartEnabled: this.desiredRunning,
+      configuredDomain: this.configuredDomain,
       message: this.message,
     };
   }
@@ -193,18 +196,31 @@ export class RemoteMcpController {
     }
   }
 
-  public async saveAuthtoken(raw: string): Promise<RemoteMcpStatus> {
-    const token = raw.trim();
-    if (token.length < 16 || /\s/.test(token)) throw new Error('Enter a valid ngrok authtoken');
+  public async saveAuthtoken(raw?: string | null, rawDomain?: string | null): Promise<RemoteMcpStatus> {
+    const token = (raw ?? '').trim();
     await this.ensurePersistenceLoaded();
     if (!this.persistenceLoaded) throw new Error('Saved Remote MCP state could not be loaded; the ngrok authtoken was not changed. Retry after secure storage is available.');
-    await mkdir(this.secretDir(), { recursive: true });
-    if (this.secretProtector === undefined) throw new Error('Secure secret provider was not injected before saving the ngrok authtoken');
-    const encrypted = await this.secretProtector.encrypt('tunnel_api_key', token);
-    await writeFile(this.secretPath(), encrypted, { encoding: 'utf8', mode: 0o600 });
-    this.preferredPublicOrigin = null;
+    const domain = normalizeCustomDomain(rawDomain);
+
+    let tokenUpdated = false;
+    if (token.length > 0) {
+      if (token.length < 16 || /\s/.test(token)) throw new Error('Enter a valid ngrok authtoken');
+      await mkdir(this.secretDir(), { recursive: true });
+      if (this.secretProtector === undefined) throw new Error('Secure secret provider was not injected before saving the ngrok authtoken');
+      const encrypted = await this.secretProtector.encrypt('tunnel_api_key', token);
+      await writeFile(this.secretPath(), encrypted, { encoding: 'utf8', mode: 0o600 });
+      tokenUpdated = true;
+    } else {
+      const existingToken = await this.loadAuthtoken();
+      if (existingToken === null) throw new Error('Enter a valid ngrok authtoken');
+    }
+
+    this.configuredDomain = domain;
+    this.preferredPublicOrigin = domain !== null ? `https://${domain}` : null;
     await this.persistState();
-    this.message = 'ngrok authtoken saved securely. The stable public URL will be learned again on the next Remote MCP start.';
+    this.message = domain !== null
+      ? (tokenUpdated ? `ngrok authtoken and static domain (${domain}) saved securely.` : `ngrok static domain (${domain}) saved.`)
+      : 'ngrok authtoken saved securely. The stable public URL will be learned again on the next Remote MCP start.';
     return this.status();
   }
 
@@ -294,7 +310,14 @@ export class RemoteMcpController {
         waitForNgrokPublicOrigin(15_000, this.gatewayUrl).then((origin) => ({ kind: 'origin' as const, origin })),
         exitPromise.then((message) => ({ kind: 'exit' as const, message })),
       ]);
-      if (outcome.kind === 'exit') throw new Error(withStableOriginHint(outcome.message, this.preferredPublicOrigin));
+      if (outcome.kind === 'exit') {
+        if (lastNgrokDiagnostic && /ERR_NGROK_313/i.test(lastNgrokDiagnostic)) {
+          this.preferredPublicOrigin = this.configuredDomain !== null ? `https://${this.configuredDomain}` : null;
+          void this.persistState();
+          throw new Error(`ngrok rejected custom subdomain (${lastNgrokDiagnostic}). Free ngrok accounts require claiming a free static domain at https://dashboard.ngrok.com/cloud-edge/domains before setting it as custom domain.`);
+        }
+        throw new Error(withStableOriginHint(outcome.message, this.preferredPublicOrigin));
+      }
       if (outcome.origin === null) throw new Error(withStableOriginHint(this.message ?? 'ngrok started but no public HTTPS endpoint was reported', this.preferredPublicOrigin));
       const origin = enforceStablePublicOrigin(outcome.origin, this.preferredPublicOrigin);
       this.publicOrigin = origin;
@@ -671,7 +694,8 @@ export class RemoteMcpController {
     this.persistenceLoaded = true;
     if (state === null) return;
     this.desiredRunning = state.desiredRunning;
-    this.preferredPublicOrigin = state.publicOrigin ?? null;
+    this.configuredDomain = state.configuredDomain ?? null;
+    this.preferredPublicOrigin = state.publicOrigin ?? (this.configuredDomain !== null ? `https://${this.configuredDomain}` : null);
     for (const client of state.trustedClients.slice(0, 32)) {
       this.clients.set(client.clientId, { ...client, trusted: true });
     }
@@ -695,7 +719,14 @@ export class RemoteMcpController {
       .filter(([, grant]) => grant.expiresAt > now && trustedClientIds.has(grant.clientId))
       .slice(-64)
       .map(([refreshToken, grant]) => ({ refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }));
-    await this.persistence.save({ schemaVersion: 1, desiredRunning: this.desiredRunning, publicOrigin: this.preferredPublicOrigin, trustedClients, refreshGrants });
+    await this.persistence.save({
+      schemaVersion: 1,
+      desiredRunning: this.desiredRunning,
+      publicOrigin: this.preferredPublicOrigin,
+      ...(this.configuredDomain !== null ? { configuredDomain: this.configuredDomain } : {}),
+      trustedClients,
+      refreshGrants,
+    });
   }
 
   private secretDir(): string { return path.join(this.dataPath, 'remote-mcp'); }
@@ -788,6 +819,7 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
     return [{ clientId: client.clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }];
   }).slice(0, 32);
   const publicOrigin = normalizePublicOrigin(record.publicOrigin);
+  const configuredDomain = normalizeCustomDomain(record.configuredDomain);
   const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
   const grants = Array.isArray(record.refreshGrants) ? record.refreshGrants : [];
   const refreshGrants = grants.flatMap((entry) => {
@@ -798,7 +830,19 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
     if (typeof grant.expiresAt !== 'number' || !Number.isFinite(grant.expiresAt)) return [];
     return [{ refreshToken: grant.refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }];
   }).slice(-64);
-  return { schemaVersion: 1, desiredRunning: record.desiredRunning, publicOrigin, trustedClients, refreshGrants };
+  return { schemaVersion: 1, desiredRunning: record.desiredRunning, publicOrigin, configuredDomain, trustedClients, refreshGrants };
+}
+
+export function normalizeCustomDomain(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  try {
+    const withProto = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const url = new URL(withProto);
+    if (!url.hostname || url.hostname === 'localhost' || url.hostname.includes(' ') || url.username.length > 0 || url.password.length > 0) return null;
+    return url.hostname.toLowerCase();
+  } catch { return null; }
 }
 
 function normalizePublicOrigin(value: unknown): string | null {

@@ -319,6 +319,7 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
     oauthConnected: booleanField(value, 'oauthConnected'),
     pairingRequired: booleanField(value, 'pairingRequired'),
     autoStartEnabled: booleanField(value, 'autoStartEnabled'),
+    configuredDomain: value.configuredDomain === undefined || value.configuredDomain === null ? null : stringField(value, 'configuredDomain'),
     message: nullableString(value.message),
   };
 }
@@ -1077,7 +1078,8 @@ function saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise
   if (!isRecord(request) || typeof request.authtoken !== 'string' || request.authtoken.trim().length === 0) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.saveRemoteMcpAuthtoken, { authtoken: request.authtoken }).then(remoteMcpStatus);
+  const domain = typeof request.domain === 'string' && request.domain.trim().length > 0 ? request.domain.trim() : null;
+  return invoke(ipcChannels.saveRemoteMcpAuthtoken, { authtoken: request.authtoken, domain }).then(remoteMcpStatus);
 }
 
 function setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> {

@@ -82,8 +82,15 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [remoteMcpAuthtoken, setRemoteMcpAuthtoken] = useState('');
+  const [remoteMcpDomain, setRemoteMcpDomain] = useState(remoteMcp.configuredDomain ?? '');
   const [remoteMcpBusy, setRemoteMcpBusy] = useState(false);
   const [remoteMcpMessage, setRemoteMcpMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (remoteMcp.configuredDomain !== undefined && remoteMcp.configuredDomain !== null) {
+      setRemoteMcpDomain(remoteMcp.configuredDomain);
+    }
+  }, [remoteMcp.configuredDomain]);
   const [oauthLogin, setOauthLogin] = useState<TunnelOAuthLoginStatus | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
@@ -399,7 +406,10 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     try {
       if (action === 'install') await window.lnwjud.installRemoteMcpProvider();
       if (action === 'save') {
-        await window.lnwjud.saveRemoteMcpAuthtoken({ authtoken: remoteMcpAuthtoken });
+        await window.lnwjud.saveRemoteMcpAuthtoken({
+          authtoken: remoteMcpAuthtoken,
+          domain: remoteMcpDomain.trim().length > 0 ? remoteMcpDomain.trim() : null,
+        });
         setRemoteMcpAuthtoken('');
       }
       if (action === 'start') await window.lnwjud.startRemoteMcp();
@@ -770,8 +780,11 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <button type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{props.locale === 'th' ? 'เปิดหน้า ngrok Authtoken' : 'Open ngrok authtoken'}</button>
                   </div>
                   <label className="field-label" htmlFor="remote-mcp-authtoken">{props.locale === 'th' ? 'ngrok Authtoken (ใส่ครั้งเดียว)' : 'ngrok authtoken (one time)'}</label>
-                  <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{props.locale === 'th' ? 'บันทึกอย่างปลอดภัย' : 'Save securely'}</button></div>
+                  <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /></div>
                   <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? `✓ เก็บด้วย ${secureStorageLabel} แล้ว` : `✓ Stored with ${secureStorageLabel}`) : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
+                  <label className="field-label" htmlFor="remote-mcp-domain">{props.locale === 'th' ? 'ngrok Static Domain (ไม่บังคับ)' : 'ngrok static domain (optional)'}</label>
+                  <div className="form-row"><input id="remote-mcp-domain" type="text" autoComplete="off" placeholder={props.locale === 'th' ? 'เช่น your-domain.ngrok-free.dev' : 'e.g. your-domain.ngrok-free.dev'} value={remoteMcpDomain} onChange={(event) => setRemoteMcpDomain(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || (remoteMcpAuthtoken.trim().length === 0 && (!remoteMcp.hasAuthtoken || remoteMcpDomain.trim() === (remoteMcp.configuredDomain ?? '')))} onClick={() => { void runRemoteMcpAction('save'); }}>{props.locale === 'th' ? 'บันทึกอย่างปลอดภัย' : 'Save securely'}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'หาก Claim free static domain จาก ngrok Dashboard ให้ระบุที่นี่เพื่อให้ Public MCP URL ไม่เปลี่ยนเมื่อเริ่มรอบถัดไป' : 'If you claimed a free static domain on ngrok Dashboard, specify it here to keep your Public MCP URL stable across restarts.'}</p>
                 </div>
                 <div className="tunnel-setup-box">
                   <div className="settings-mini-heading"><strong>{props.locale === 'th' ? '2. เปิด Remote MCP' : '2. Start Remote MCP'}</strong><span>{remoteMcp.oauthConnected ? 'CHATGPT LINKED' : remoteMcp.pairingRequired ? 'FALLBACK PIN' : remoteMcp.oauthProtected ? 'CHATGPT READY' : 'AUTH REQUIRED'}</span></div>

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createExplicitKeySecretProtector } from '@lnwjud/shared';
-import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeCustomDomain, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
@@ -76,6 +76,75 @@ describe('Remote MCP ngrok runtime', () => {
     expect(enforceStablePublicOrigin('https://steady.ngrok-free.app', 'https://steady.ngrok-free.app')).toBe('https://steady.ngrok-free.app');
     expect(() => enforceStablePublicOrigin('https://changed.ngrok-free.app', 'https://steady.ngrok-free.app')).toThrow(/stopped instead of silently changing/i);
     expect(() => enforceStablePublicOrigin('http://steady.ngrok-free.app', null)).toThrow(/invalid public HTTPS origin/i);
+  });
+
+  it('normalizes custom domains and strips protocols and paths', () => {
+    expect(normalizeCustomDomain('noegenetic-opposedly-ruthanne.ngrok-free.dev')).toBe('noegenetic-opposedly-ruthanne.ngrok-free.dev');
+    expect(normalizeCustomDomain('https://noegenetic-opposedly-ruthanne.ngrok-free.dev')).toBe('noegenetic-opposedly-ruthanne.ngrok-free.dev');
+    expect(normalizeCustomDomain('https://noegenetic-opposedly-ruthanne.ngrok-free.dev/')).toBe('noegenetic-opposedly-ruthanne.ngrok-free.dev');
+    expect(normalizeCustomDomain('https://noegenetic-opposedly-ruthanne.ngrok-free.dev/mcp')).toBe('noegenetic-opposedly-ruthanne.ngrok-free.dev');
+    expect(normalizeCustomDomain('   MY-DOMAIN.NGROK.APP   ')).toBe('my-domain.ngrok.app');
+    expect(normalizeCustomDomain('')).toBeNull();
+    expect(normalizeCustomDomain('   ')).toBeNull();
+    expect(normalizeCustomDomain(null)).toBeNull();
+    expect(normalizeCustomDomain(undefined)).toBeNull();
+    expect(normalizeCustomDomain('localhost')).toBeNull();
+    expect(normalizeCustomDomain('invalid domain with spaces')).toBeNull();
+  });
+
+  it('saves and pins a static domain when provided with the authtoken', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-custom-domain-'));
+    try {
+      const state: RemoteMcpPersistedState = { schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] };
+      const load = vi.fn(async () => state);
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
+      });
+      const status = await controller.saveAuthtoken('a'.repeat(24), 'noegenetic-opposedly-ruthanne.ngrok-free.dev');
+      expect(status.configuredDomain).toBe('noegenetic-opposedly-ruthanne.ngrok-free.dev');
+      expect(save).toHaveBeenCalledWith({
+        schemaVersion: 1,
+        desiredRunning: false,
+        publicOrigin: 'https://noegenetic-opposedly-ruthanne.ngrok-free.dev',
+        configuredDomain: 'noegenetic-opposedly-ruthanne.ngrok-free.dev',
+        trustedClients: [],
+        refreshGrants: [],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('updates custom domain without re-entering authtoken when authtoken is already stored', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-update-domain-'));
+    try {
+      const state: RemoteMcpPersistedState = { schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] };
+      const load = vi.fn(async () => state);
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
+      });
+      await controller.saveAuthtoken('a'.repeat(24));
+      const updatedStatus = await controller.saveAuthtoken('', 'custom-updated.ngrok-free.app');
+      expect(updatedStatus.configuredDomain).toBe('custom-updated.ngrok-free.app');
+      expect(save).toHaveBeenLastCalledWith({
+        schemaVersion: 1,
+        desiredRunning: false,
+        publicOrigin: 'https://custom-updated.ngrok-free.app',
+        configuredDomain: 'custom-updated.ngrok-free.app',
+        trustedClients: [],
+        refreshGrants: [],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('parses POSIX PATH with POSIX semantics even when the test host is Windows', () => {

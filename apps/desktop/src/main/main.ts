@@ -1107,7 +1107,9 @@ function parseSaveTunnelApiKeyRequest(payload: unknown): SaveTunnelApiKeyRequest
 
 function parseSaveRemoteMcpAuthtokenRequest(payload: unknown): SaveRemoteMcpAuthtokenRequest {
   if (!isRecord(payload)) throw new Error('Invalid IPC payload');
-  return { authtoken: nonEmptyString(payload.authtoken, 'authtoken') };
+  const authtoken = typeof payload.authtoken === 'string' ? payload.authtoken.trim() : '';
+  const domain = typeof payload.domain === 'string' && payload.domain.trim().length > 0 ? payload.domain.trim() : null;
+  return { authtoken, domain };
 }
 
 function parseSetTunnelClientPathRequest(payload: unknown): SetTunnelClientPathRequest {
