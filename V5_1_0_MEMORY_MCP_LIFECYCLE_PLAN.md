@@ -2,7 +2,7 @@
 
 วันที่วิเคราะห์: 2026-09-16  
 เป้าหมายรุ่น: `v5.1.0`  
-สถานะ: แผนหลัก — Phase A/B ลงโค้ดและ regression แล้ว; เหลือ target-native CI/package evidence ก่อนประกาศผล release ครบทุก architecture
+สถานะ: เสร็จสมบูรณ์ — Phase A/B ลงโค้ดและ regression แล้ว; Phase C ผ่าน target-native CI/package evidence ครบทุก architecture ที่ publish ใน v5.1.0
 
 ## 1. สรุปผู้บริหาร
 
@@ -44,11 +44,10 @@
 - `ProcessManager.records`, `ProcessService.owners` และ Desktop `trackedProcesses` เดิมไม่มี retention lifecycle ที่ครบถ้วน
 - `LogHub` เดิมเก็บ 10,000 รายการต่อ source และ renderer เก็บ 30,000 รายการ แต่ MCP/process text ไม่ผ่าน VT stripping และไม่ได้ใช้เพดาน 8 KiB เดียวกับ tunnel
 
-สิ่งที่ยังสรุปจาก Windows เครื่องเดียวไม่ได้:
+สิ่งที่ยังไม่ควรตีความเกินหลักฐาน:
 
-- พฤติกรรมจริงของ target-native package บน macOS arm64/x64 และ Linux x64/arm64
-- ค่า RSS/PSS หลัง memory pressure บน allocator ของแต่ละ OS
-- Serena ทุกเวอร์ชันและทุก launch config; บาง config เปิด dashboard หรือ language server เพิ่ม บาง config ไม่เปิด
+- ค่า RSS/PSS หลัง memory pressure ยังขึ้นกับ allocator/OS และไม่ใช่ตัวชี้ขาดว่า object leak หายแล้ว
+- Serena ทุกเวอร์ชันและทุก launch config ยังอาจเปิด dashboard หรือ language server เพิ่มนอกเหนือจาก fixture ที่ทดสอบ
 
 ## 3. แยก “memory leak” ออกจาก “RSS ไม่ลด”
 
@@ -381,22 +380,18 @@ Pass criteria:
 
 ### Phase C — target-native evidence
 
-- [ ] Windows package gate
-- [ ] macOS arm64 gate
-- [ ] macOS x64 gate
-- [ ] Linux x64 gate
-- [ ] Linux arm64 preview gate
-- [ ] 10-cycle soak resultsแนบกับ release evidence
+- [x] Windows package gate — main CI `35091037012` และ release workflow `35093171646`
+- [x] macOS arm64 gate — main CI `35091037012`
+- [x] macOS x64 gate — main CI `35091037012`
+- [x] Linux x64 gate — main CI `35091037012`
+- [x] Linux arm64 preview gate — main CI `35091037012`
+- [x] 10-cycle soak resultsแนบกับ release evidence
 
 ## 12. Release wording ที่ซื่อสัตย์
-
-จนกว่า Phase C จะผ่าน ห้ามเขียนว่า “lnwjud kills every Serena process on every OS”
 
 ข้อความที่ใช้ได้สำหรับ code ปัจจุบัน:
 
 > v5.1.0 bounds retained process/log memory, strips terminal escape sequences from Live Logs, and closes lnwjud-owned External MCP trees through platform process-group/taskkill boundaries. A failed ownership/exit proof remains `termination_unverified`; the every-architecture claim is made only after target-native gates pass.
-
-เมื่อ Phase B/C ผ่านครบ จึงเปลี่ยนเป็น:
 
 > v5.1.0 closes lnwjud-owned External MCP process trees after idle, disconnect, reconfiguration, and verified shutdown on every supported target, without touching same-name processes owned by other hosts.
 
