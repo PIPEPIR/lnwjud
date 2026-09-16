@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.1.0 release directly.</p>
+<p align="center">Choose your platform and download the current v5.1.1 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.1.0.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.1.1.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.1.0.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.1.1.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,15 @@
 
 ---
 
-## Current version: v5.1.0
+## Current version: v5.1.1
 
-`v5.1.0` is the current published release. The verified `dev → main → tag → Release` flow completed successfully, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.1.0) contains every target architecture, package format, checksum, and provenance file.
+`v5.1.1` is the current published release. The verified `dev → main → tag → Release` flow completed successfully, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.1.1) contains every target architecture, package format, checksum, and provenance file.
 
-### What's new in v5.1.0
+### What's new in v5.1.1
+
+- **Deterministic MCP idle cleanup:** the manager no longer waits on an already-settled connection queue while closing an idle session. This removes the intermittent sweep stall that could leave a Serena/External MCP process alive after its idle deadline; active in-flight calls still receive the bounded close grace period.
+
+### Historical: What's new in v5.1.0
 
 - **Bounded retained memory:** completed process history is capped at 32 records and each completed log is compacted to its newest 256 KiB; stale process-owner entries are pruned when the underlying process no longer exists.
 - **Clean, bounded Live Logs:** terminal ANSI/VT control sequences are stripped at shared log and audit-detail boundaries before UI, copy, and export, with an 8 KiB line limit, an 8 MiB budget per main-process source, and a 24 MiB serialized-payload budget in each renderer window.

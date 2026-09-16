@@ -51,15 +51,19 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v5.1.0
+## Current version: v5.1.1
 
-The v5.1.0 development runtime contract contains **253 total MCP tool definitions**,
+The v5.1.1 development runtime contract contains **253 total MCP tool definitions**,
 with **241 advertised by default** and **all 253 advertised when Codex Delegation
 plus Agent Swarm is enabled**. The 12 Codex-backed delegation front doors are opt-in;
 the default surface still exposes every other current first-party definition. The earlier v4/v5 tool-count snapshots remain
 historical compatibility baselines rather than the current release contract.
 
-### What's new in v5.1.0
+### What's new in v5.1.1
+
+- The MCP idle sweeper now skips a settled connection queue during close and waits only when a call is actually in flight, preventing intermittent Serena/External MCP processes from surviving their idle deadline while preserving bounded shutdown grace for active calls.
+
+### Historical: What's new in v5.1.0
 
 - Completed process history is capped at 32 terminal records, each completed output buffer keeps only its newest 256 KiB, and stale service/Desktop ownership entries are removed after the underlying process disappears.
 - Live Logs strip terminal ANSI/VT control sequences at shared log and audit-detail boundaries before rendering, copy, or export. Every main-process source now has both an 8 KiB per-line ceiling and an 8 MiB retained-byte budget, while each renderer window has a 24 MiB serialized-payload budget.
@@ -411,13 +415,13 @@ Choose the guide for the host you will run lnwjud on:
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current published Windows 10/11 x64 v5.1.0 artifacts are `lnwjud-Setup-5.1.0.exe` (recommended installer) and `lnwjud-Portable-5.1.0.exe` (no installation required).
+   Current published Windows 10/11 x64 v5.1.1 artifacts are `lnwjud-Setup-5.1.1.exe` (recommended installer) and `lnwjud-Portable-5.1.1.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run the currently published `lnwjud-Portable-5.1.0.exe` directly.
+If you prefer not to install the app, run the currently published `lnwjud-Portable-5.1.1.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -463,7 +467,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.1.0. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.1.1. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -524,12 +528,12 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ v5.1.0 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ v5.1.1 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.1.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.1.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.1.1.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.1.1.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -803,8 +807,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.1.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.1.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.1.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.1.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
