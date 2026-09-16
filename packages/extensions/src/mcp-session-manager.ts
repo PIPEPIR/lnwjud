@@ -368,10 +368,12 @@ export class McpSessionManager {
   }
 
   private async closeManaged(server: string, managed: ManagedSession): Promise<void> {
-    await Promise.race([
-      managed.queue,
-      delay(this.callTimeoutMs),
-    ]);
+    if (managed.inFlight > 0) {
+      await Promise.race([
+        managed.queue,
+        delay(this.callTimeoutMs),
+      ]);
+    }
     await this.closeSession(server, managed.session);
   }
 
