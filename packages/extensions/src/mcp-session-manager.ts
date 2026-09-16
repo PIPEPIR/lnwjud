@@ -208,7 +208,7 @@ export class McpSessionManager {
   public async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
+    if (this.idleTimer !== undefined) clearInterval(this.idleTimer);
     this.idleTimer = undefined;
     const pending = [...this.pendingConnections.values()];
     for (const connection of pending) connection.controller.abort(new Error('Child MCP session manager is closed'));
@@ -345,22 +345,22 @@ export class McpSessionManager {
 
   private scheduleIdleSweep(): void {
     if (this.idleTimer !== undefined || this.closed || this.sessions.size === 0) return;
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined;
-      void this.sweepIdle();
-    }, Math.min(30_000, this.idleTimeoutMs));
+    this.idleTimer = setInterval(() => { void this.sweepIdle(); }, Math.min(30_000, this.idleTimeoutMs));
     this.idleTimer.unref?.();
   }
 
   private async sweepIdle(): Promise<void> {
     if (this.idleSweep !== undefined) return this.idleSweep;
     this.idleSweep = (async (): Promise<void> => {
-    const now = Date.now();
-    for (const [name, managed] of this.sessions) {
-      if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
-    }
-    this.idleSweep = undefined;
-    this.scheduleIdleSweep();
+      const now = Date.now();
+      for (const [name, managed] of this.sessions) {
+        if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
+      }
+      this.idleSweep = undefined;
+      if (this.sessions.size === 0 && this.idleTimer !== undefined) {
+        clearInterval(this.idleTimer);
+        this.idleTimer = undefined;
+      }
     })();
     return this.idleSweep;
   }
