@@ -421,12 +421,12 @@ describe('LocalExtensionsService MCP bridge', () => {
       expect(manager.isConnected('mock')).toBe(true);
       // CI runners can pause a worker long enough to miss several sweeps.
       // The contract is eventual idle cleanup, not a sub-second scheduling SLA.
-      await expect.poll(() => closes, { timeout: 5_000 }).toBe(1);
+      await expect.poll(() => closes, { timeout: 10_000 }).toBe(1);
       expect(manager.isConnected('mock')).toBe(false);
     } finally {
       await manager.close();
     }
-  });
+  }, 15_000);
 
   it('does not evict an in-flight child operation at the idle deadline', async () => {
     let release!: () => void;
