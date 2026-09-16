@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.0.2 release directly.</p>
+<p align="center">Choose your platform and download the current v5.1.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.2.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.1.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.2.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.1.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -53,14 +53,14 @@
 
 ## Current version: v5.1.0
 
-`v5.1.0` is the current source/release target; `v5.0.2` remains the latest published release until the verified `dev → main → tag → Release` flow completes. The platform cards above therefore continue to point to v5.0.2 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file.
+`v5.1.0` is the current published release. The verified `dev → main → tag → Release` flow completed successfully, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.1.0) contains every target architecture, package format, checksum, and provenance file.
 
 ### What's new in v5.1.0
 
 - **Bounded retained memory:** completed process history is capped at 32 records and each completed log is compacted to its newest 256 KiB; stale process-owner entries are pruned when the underlying process no longer exists.
 - **Clean, bounded Live Logs:** terminal ANSI/VT control sequences are stripped at shared log and audit-detail boundaries before UI, copy, and export, with an 8 KiB line limit, an 8 MiB budget per main-process source, and a 24 MiB serialized-payload budget in each renderer window.
 - **External MCP lifecycle hardening:** idle close is in-flight aware; pending connections are aborted during shutdown/reconcile; POSIX children run in an owned `setsid` process group; Windows uses verified `taskkill /T /F`; settings changes disconnect stale sessions immediately; and `mcp_list`/Doctor expose `termination_unverified` instead of hiding an unproven cleanup.
-- **Cross-platform evidence:** production stdio has a ten-cycle connect/use/close soak regression, while the [lifecycle plan](V5_1_0_MEMORY_MCP_LIFECYCLE_PLAN.md) records the target-native package gates still required before making an every-architecture claim.
+- **Cross-platform evidence:** production stdio has a ten-cycle connect/use/close soak regression, and target-native package gates passed for Windows, macOS (arm64/x64), Linux (arm64/x64), plus macOS 26 compatibility.
 
 ### Historical: What's new in v5.0.2
 
