@@ -417,7 +417,9 @@ describe('LocalExtensionsService MCP bridge', () => {
     try {
       await expect(manager.describe('mock', { command: 'node' })).resolves.toMatchObject({ ok: true });
       expect(manager.isConnected('mock')).toBe(true);
-      await expect.poll(() => closes, { timeout: 500 }).toBe(1);
+      // CI runners can pause a worker long enough to miss several 25 ms sweeps.
+      // The contract is eventual idle cleanup, not a sub-second scheduling SLA.
+      await expect.poll(() => closes, { timeout: 2_000 }).toBe(1);
       expect(manager.isConnected('mock')).toBe(false);
     } finally {
       await manager.close();
