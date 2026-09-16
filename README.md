@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 246 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 241 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.0.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.0.2 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.0.2.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.0.2.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.0.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,17 @@
 
 ---
 
-## Current version: v5.0.1
+## Current version: v5.0.2
 
-`v5.0.1` is the current public release line. The platform cards above point to the matching v5.0.1 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
+`v5.0.2` is the current public release line. The platform cards above point to the matching v5.0.2 assets, while [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest) contains every published architecture, package format, checksum, and provenance file. Development artifacts from `dev` remain testing-only until they are merged and released through the verified `dev → main → tag → Release` flow.
 
-### What's new in v5.0.1
+### What's new in v5.0.2
+
+- **Codex Delegation hard-off:** when Codex Delegation is disabled, every Codex-backed front door is system-ineligible, including `codex_*`, `agent_swarm_run`, `delegate`, `delegate_status`, `delegate_cancel`, `delegate_result`, and `parallel_delegate`.
+- **Override-safe feature boundary:** a stale per-tool `enabled` override cannot re-expose Codex-backed delegation while the feature is OFF; Desktop readiness and MCP runtime now share the same classifier.
+- **Tool catalog contract:** the registry still contains 253 definitions, advertises 241 by default, and advertises all 253 when Codex Delegation plus Agent Swarm is enabled.
+
+### Historical: What's new in v5.0.1
 
 - **Tunnel incident diagnostics v2:** exported incidents now preserve process exit/restart evidence, OAuth refresh diagnostics, transport/network clues, client-version probe results, and sanitized tunnel log messages without storing credentials.
 - **Reconnect evidence:** persistent tunnel supervision records restart attempts, outcomes, last known process IDs, and managed-runtime limitations so disconnects can be diagnosed instead of collapsing into a generic stopped state.
@@ -71,7 +77,7 @@
 - **Native-only ChatGPT continuation:** compact/resume state never clicks, types into, scrapes, or creates ChatGPT browser conversations. Long-running continuation stays on supported Native ChatGPT Scheduled Tasks plus local durable state.
 - **Bounded review loops:** iteration has explicit limits and stale-intent fences instead of an unbounded autonomous browser-message loop; context-pressure reporting is explicitly an estimate unless the provider exposes exact usage.
 - **Settings text editing fix:** multiline configuration fields keep newlines while editing, and `LSP Commands — LANGUAGE=COMMAND` accepts incomplete draft text such as `typescript=` before validation/save.
-- **253-tool contract:** the MCP registry contains 253 definitions, advertises 246 by default, and advertises all 253 when Codex delegation plus Agent Swarm are enabled.
+- **253-tool contract:** the MCP registry contains 253 definitions, advertises 241 by default, and advertises all 253 when Codex delegation plus Agent Swarm are enabled.
 
 ### Historical: What's new in v4.70.1
 
@@ -164,7 +170,7 @@ Installed lnwjud keeps per-user runtime data outside your source repository: `%A
 
 ## What can lnwjud do?
 
-lnwjud exposes **253 tool definitions** through one local runtime and MCP gateway. The default advertised set is 246; all 253 are available when Codex delegation plus Agent Swarm is enabled.
+lnwjud exposes **253 tool definitions** through one local runtime and MCP gateway. The default advertised set is 241; all 253 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |
