@@ -51,6 +51,7 @@ import {
   type RestoreRecoveryItemRequest,
   type SaveTunnelApiKeyRequest,
   type SaveRemoteMcpAuthtokenRequest,
+  type SetRemoteMcpPublicOriginRequest,
   type RemoteMcpStatus,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
@@ -313,6 +314,7 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
     localMcpUrl: nullableString(value.localMcpUrl),
     localGatewayUrl: nullableString(value.localGatewayUrl),
     publicMcpUrl: nullableString(value.publicMcpUrl),
+    configuredPublicOrigin: nullableString(value.configuredPublicOrigin),
     pairingCode: nullableString(value.pairingCode),
     pairingCodeExpiresAt: nullableString(value.pairingCodeExpiresAt),
     oauthProtected: booleanField(value, 'oauthProtected'),
@@ -1080,6 +1082,13 @@ function saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise
   return invoke(ipcChannels.saveRemoteMcpAuthtoken, { authtoken: request.authtoken }).then(remoteMcpStatus);
 }
 
+function setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<RemoteMcpStatus> {
+  if (!isRecord(request) || typeof request.publicOrigin !== 'string' || request.publicOrigin.length > 2_048) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.setRemoteMcpPublicOrigin, { publicOrigin: request.publicOrigin }).then(remoteMcpStatus);
+}
+
 function setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> {
   if (!isRecord(request) || typeof request.clientPath !== 'string' || request.clientPath.trim().length === 0) {
     return Promise.reject(new Error('Invalid IPC request'));
@@ -1352,6 +1361,7 @@ const api: LnwjudApi = {
   getRemoteMcpStatus: () => invoke(ipcChannels.getRemoteMcpStatus).then(remoteMcpStatus),
   installRemoteMcpProvider: () => invoke(ipcChannels.installRemoteMcpProvider).then(remoteMcpStatus),
   saveRemoteMcpAuthtoken,
+  setRemoteMcpPublicOrigin,
   startRemoteMcp: () => invoke(ipcChannels.startRemoteMcp).then(remoteMcpStatus),
   stopRemoteMcp: () => invoke(ipcChannels.stopRemoteMcp).then(remoteMcpStatus),
   regenerateRemoteMcpPairingCode: () => invoke(ipcChannels.regenerateRemoteMcpPairingCode).then(remoteMcpStatus),

@@ -64,7 +64,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const tunnelPresentation = tunnelAuthPresentation(props.dashboard.tunnel);
   const remoteMcp = props.dashboard.remoteMcp ?? {
     state: 'stopped' as const, provider: 'ngrok' as const, installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
-    localMcpUrl: props.dashboard.mcp.url, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
+    localMcpUrl: props.dashboard.mcp.url, localGatewayUrl: null, publicMcpUrl: null, configuredPublicOrigin: null, pairingCode: null, pairingCodeExpiresAt: null,
     oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
   };
   const ngrokReady = remoteMcp.installed && remoteMcp.ngrokPath !== null;
@@ -82,6 +82,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [remoteMcpAuthtoken, setRemoteMcpAuthtoken] = useState('');
+  const [remoteMcpPublicOrigin, setRemoteMcpPublicOrigin] = useState(remoteMcp.configuredPublicOrigin ?? '');
   const [remoteMcpBusy, setRemoteMcpBusy] = useState(false);
   const [remoteMcpMessage, setRemoteMcpMessage] = useState<string | null>(null);
   const [oauthLogin, setOauthLogin] = useState<TunnelOAuthLoginStatus | null>(null);
@@ -387,7 +388,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     }
   }
 
-  async function runRemoteMcpAction(action: 'install' | 'save' | 'start' | 'stop' | 'regenerate'): Promise<void> {
+  async function runRemoteMcpAction(action: 'install' | 'save' | 'domain' | 'start' | 'stop' | 'regenerate'): Promise<void> {
     if (action === 'regenerate') {
       const confirmed = window.confirm(props.locale === 'th'
         ? 'เชื่อม ChatGPT ใหม่? การเชื่อมต่อ OAuth ที่จำไว้และ Refresh Token เดิมจะถูกยกเลิก จากนั้นกด Connect ใน ChatGPT ใหม่ได้เลยโดยไม่ต้องใช้ PIN สำหรับ ChatGPT callback ที่รองรับ'
@@ -401,6 +402,10 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       if (action === 'save') {
         await window.lnwjud.saveRemoteMcpAuthtoken({ authtoken: remoteMcpAuthtoken });
         setRemoteMcpAuthtoken('');
+      }
+      if (action === 'domain') {
+        const status = await window.lnwjud.setRemoteMcpPublicOrigin({ publicOrigin: remoteMcpPublicOrigin });
+        setRemoteMcpPublicOrigin(status.configuredPublicOrigin ?? '');
       }
       if (action === 'start') await window.lnwjud.startRemoteMcp();
       if (action === 'stop') await window.lnwjud.stopRemoteMcp();
@@ -742,7 +747,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <div className="setting-field">
                     <span className="field-label">Public MCP URL</span>
                     <code className="settings-path-display">{remoteMcp.publicMcpUrl ?? '—'}</code>
-                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT; ngrok มี development domain ที่กำหนดให้ และ lnwjud จะจำ URL ครั้งแรกแล้วส่ง origin เดิมให้ ngrok ในรอบถัดไปเพื่อให้ endpoint คงเดิม ไม่ต้องซื้อโดเมนเอง ส่วน custom domain ยังใช้ได้แบบ optional หากตั้งใจเปลี่ยนบัญชี/โดเมน ngrok ให้บันทึก Authtoken ใหม่เพื่อเรียนรู้ URL ใหม่' : 'This /mcp URL is the one to add in ChatGPT. ngrok provides an assigned development domain, and lnwjud remembers the first URL and reuses that origin on later starts so the endpoint stays stable. You do not need to buy a domain; a custom domain remains optional. If you intentionally change ngrok account/domain, save the authtoken again to learn the new URL.'}</p>
+                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT; หากไม่กำหนด Static Domain, lnwjud จะให้ ngrok เลือก URL ตอนเริ่มแต่ละครั้งและจะไม่เอา URL ที่เคยสังเกตได้ไป pin เอง หากต้องการ endpoint คงที่ให้กำหนด Static/Custom Domain ที่จองไว้ในบัญชี ngrok ด้านล่าง' : 'This /mcp URL is the one to add in ChatGPT. Without an explicit static domain, lnwjud lets ngrok choose the URL on each start and never pins an observed runtime URL. For a stable endpoint, configure a static/custom domain reserved in your ngrok account below.'}</p>
                   </div>
                 </div>
                 <div className="tunnel-setup-box">
@@ -769,6 +774,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     {!ngrokReady && !ngrokAutoInstallAvailable ? <button type="button" disabled={remoteMcpBusy} onClick={() => { void props.onOpenExternalSetupPage('ngrok_download'); }}>{props.locale === 'th' ? 'เปิดหน้าดาวน์โหลด ngrok ทางการ' : 'Open official ngrok download'}</button> : null}
                     <button type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{props.locale === 'th' ? 'เปิดหน้า ngrok Authtoken' : 'Open ngrok authtoken'}</button>
                   </div>
+                  <label className="field-label" htmlFor="remote-mcp-domain">{props.locale === 'th' ? 'ngrok Static/Custom Domain (ไม่บังคับ)' : 'ngrok static/custom domain (optional)'}</label>
+                  <div className="form-row"><input id="remote-mcp-domain" type="text" autoComplete="off" placeholder="example.ngrok-free.app" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><button type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{props.locale === 'th' ? 'บันทึกโดเมน' : 'Save domain'}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'เว้นว่างแล้วกดบันทึกเพื่อล้างค่า; ใส่เฉพาะโดเมนที่จองไว้ในบัญชี ngrok เท่านั้น เช่น example.ngrok-free.app' : 'Leave blank and save to clear it. Only enter a domain reserved in your ngrok account, for example example.ngrok-free.app.'}</p>
                   <label className="field-label" htmlFor="remote-mcp-authtoken">{props.locale === 'th' ? 'ngrok Authtoken (ใส่ครั้งเดียว)' : 'ngrok authtoken (one time)'}</label>
                   <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{props.locale === 'th' ? 'บันทึกอย่างปลอดภัย' : 'Save securely'}</button></div>
                   <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? `✓ เก็บด้วย ${secureStorageLabel} แล้ว` : `✓ Stored with ${secureStorageLabel}`) : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>

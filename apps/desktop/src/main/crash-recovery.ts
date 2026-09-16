@@ -1,4 +1,4 @@
-﻿import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+﻿import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { redactDiagnosticText } from '@lnwjud/application';
@@ -42,6 +42,22 @@ export interface CrashEventRecord {
   readonly errorMessage?: string;
 }
 
+export interface CrashEventHistoryRecord {
+  readonly schemaVersion: 1 | 2;
+  readonly timestamp: string;
+  readonly appVersion: string;
+  readonly type: string;
+  readonly timeZone?: string;
+  readonly pid?: number;
+  readonly memory?: CrashEventRecord['memory'];
+  readonly processType?: string;
+  readonly reason?: string;
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly errorName?: string;
+  readonly errorMessage?: string;
+}
+
 export class CrashDiagnosticsRecorder {
   public readonly filePath: string;
 
@@ -65,6 +81,37 @@ export class CrashDiagnosticsRecorder {
     const lines = readFileSync(this.filePath, 'utf8').split(/\r?\n/).filter(Boolean);
     const retained = lines.slice(-RETAINED_CRASH_EVENTS);
     writeFileSync(this.filePath, retained.length === 0 ? '' : `${retained.join('\n')}\n`, 'utf8');
+  }
+}
+
+export function readCrashEventHistory(dataPath: string, maxEvents = 64): readonly CrashEventHistoryRecord[] {
+  const limit = Math.max(0, Math.min(RETAINED_CRASH_EVENTS, Math.trunc(maxEvents)));
+  if (limit === 0) return [];
+  const filePath = path.join(path.resolve(dataPath), 'crashes', 'crash-events.ndjson');
+  try {
+    const size = statSync(filePath).size;
+    const byteCount = Math.min(size, MAX_CRASH_LOG_BYTES);
+    const buffer = Buffer.alloc(byteCount);
+    const handle = openSync(filePath, 'r');
+    let bytesRead = 0;
+    try {
+      bytesRead = readSync(handle, buffer, 0, byteCount, Math.max(0, size - byteCount));
+    } finally {
+      closeSync(handle);
+    }
+    const records: CrashEventHistoryRecord[] = [];
+    for (const line of buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/)) {
+      if (line.trim().length === 0) continue;
+      try {
+        const record = normalizeCrashEventHistoryRecord(JSON.parse(line) as unknown);
+        if (record !== null) records.push(record);
+      } catch {
+        // Ignore a partial/corrupt line and keep the remaining persisted evidence.
+      }
+    }
+    return records.slice(-limit);
+  } catch {
+    return [];
   }
 }
 
@@ -128,6 +175,40 @@ export function createCrashEventRecord(appVersion: string, input: CrashEventInpu
     ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
     ...(input.signal === undefined ? {} : { signal: sanitizeCrashText(input.signal) }),
     ...error,
+  };
+}
+
+function normalizeCrashEventHistoryRecord(value: unknown): CrashEventHistoryRecord | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if ((record.schemaVersion !== 1 && record.schemaVersion !== 2)
+    || typeof record.timestamp !== 'string'
+    || typeof record.appVersion !== 'string'
+    || typeof record.type !== 'string') return null;
+  const memoryRecord = typeof record.memory === 'object' && record.memory !== null && !Array.isArray(record.memory)
+    ? record.memory as Record<string, unknown>
+    : null;
+  const memory = memoryRecord !== null
+    && typeof memoryRecord.rssBytes === 'number' && Number.isFinite(memoryRecord.rssBytes)
+    && typeof memoryRecord.heapUsedBytes === 'number' && Number.isFinite(memoryRecord.heapUsedBytes)
+    && typeof memoryRecord.externalBytes === 'number' && Number.isFinite(memoryRecord.externalBytes)
+    && typeof memoryRecord.arrayBuffersBytes === 'number' && Number.isFinite(memoryRecord.arrayBuffersBytes)
+    ? { rssBytes: memoryRecord.rssBytes, heapUsedBytes: memoryRecord.heapUsedBytes, externalBytes: memoryRecord.externalBytes, arrayBuffersBytes: memoryRecord.arrayBuffersBytes }
+    : undefined;
+  return {
+    schemaVersion: record.schemaVersion,
+    timestamp: record.timestamp,
+    appVersion: record.appVersion,
+    type: record.type,
+    ...(typeof record.timeZone === 'string' ? { timeZone: record.timeZone } : {}),
+    ...(typeof record.pid === 'number' && Number.isFinite(record.pid) ? { pid: record.pid } : {}),
+    ...(memory === undefined ? {} : { memory }),
+    ...(typeof record.processType === 'string' ? { processType: record.processType } : {}),
+    ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+    ...(typeof record.exitCode === 'number' && Number.isFinite(record.exitCode) ? { exitCode: record.exitCode } : {}),
+    ...(typeof record.signal === 'string' ? { signal: record.signal } : {}),
+    ...(typeof record.errorName === 'string' ? { errorName: record.errorName } : {}),
+    ...(typeof record.errorMessage === 'string' ? { errorMessage: record.errorMessage } : {}),
   };
 }
 

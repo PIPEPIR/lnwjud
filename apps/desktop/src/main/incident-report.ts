@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { LogLine, TunnelLifecycleCategory, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { DEFAULT_DISPLAY_TIME_ZONE, formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
+import type { CrashEventHistoryRecord } from './crash-recovery.js';
 import type { TunnelIncidentRuntimeDiagnostics } from './tunnel-controller.js';
 
 const execFileAsync = promisify(execFile);
@@ -31,6 +32,7 @@ export interface IncidentEvidence {
   readonly tunnel: Pick<TunnelStatus, 'state' | 'source'> & { readonly message?: string | null; readonly health: IncidentHealth };
   readonly updaterEvents: readonly string[];
   readonly logLines: readonly IncidentLine[];
+  readonly crashEvents?: readonly CrashEventHistoryRecord[];
   readonly runtimeDiagnostics?: TunnelIncidentRuntimeDiagnostics;
   readonly relevantPids?: readonly number[];
   readonly relevantPidUnavailableReason?: string;
@@ -69,6 +71,7 @@ export interface IncidentReport {
   readonly runtimeDiagnostics: TunnelIncidentRuntimeDiagnostics | null;
   readonly transport: IncidentTransportDiagnostics;
   readonly mcpCalls: readonly IncidentCall[];
+  readonly desktopCrashEventTail: readonly CrashEventHistoryRecord[];
   readonly tunnelLogTail: readonly { readonly timestamp: string; readonly lifecycle: TunnelLifecycleCategory; readonly message: string; readonly instanceId?: string; readonly requestId?: string }[];
   readonly processTree: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly parentPid: number | null; readonly executable: string }[]; readonly error?: string };
   readonly tcpListeners: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly address: string; readonly port: number }[]; readonly error?: string };
@@ -299,6 +302,7 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
     runtimeDiagnostics,
     transport: extractTransportDiagnostics(evidence.logLines, runtimeDiagnostics),
     mcpCalls: pairMcpCalls(evidence.logLines).map(localizeIncidentCall),
+    desktopCrashEventTail: (evidence.crashEvents ?? []).slice(-64),
     tunnelLogTail: evidence.logLines.filter((line) => line.source === 'tunnel').slice(-MAX_ENTRIES).map((line) => {
       const tunnelCorrelation = line.correlation?.kind === 'tunnel' ? line.correlation : undefined;
       return {

@@ -55,6 +55,18 @@ describe('incident classification', () => {
     expect(result).toMatchObject({ classification: 'local_tool_failed' });
   });
 
+  it('keeps persisted desktop crash evidence when the restarted session has no MCP log history', async () => {
+    const report = await buildIncidentReport(evidence({
+      logLines: [],
+      crashEvents: [{ schemaVersion: 1, timestamp: timestamp(1), appVersion: '5.0.0', type: 'desktop-lifecycle', processType: 'main', reason: 'process-exit token=super-secret', exitCode: 1 }],
+    }));
+    expect(report.mcpCalls).toEqual([]);
+    expect(report.desktopCrashEventTail).toEqual([
+      expect.objectContaining({ schemaVersion: 1, appVersion: '5.0.0', type: 'desktop-lifecycle', exitCode: 1 }),
+    ]);
+    expect(JSON.stringify(report)).not.toContain('super-secret');
+  });
+
   it('does not call idle or periodic status a remote failure', () => {
     expect(classifyIncident(evidence({ logLines: [{ source: 'tunnel', text: 'periodic status: connected', timestamp: '2026-08-20T00:00:00.000Z' }] })).classification)
       .toBe('healthy_or_inconclusive');

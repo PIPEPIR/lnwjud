@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.1.1';
+export const APP_VERSION = '5.2.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -36,6 +36,7 @@ export const ipcChannels = {
   getRemoteMcpStatus: 'lnwjud:get-remote-mcp-status',
   installRemoteMcpProvider: 'lnwjud:install-remote-mcp-provider',
   saveRemoteMcpAuthtoken: 'lnwjud:save-remote-mcp-authtoken',
+  setRemoteMcpPublicOrigin: 'lnwjud:set-remote-mcp-public-origin',
   startRemoteMcp: 'lnwjud:start-remote-mcp',
   stopRemoteMcp: 'lnwjud:stop-remote-mcp',
   regenerateRemoteMcpPairingCode: 'lnwjud:regenerate-remote-mcp-pairing-code',
@@ -468,6 +469,7 @@ export interface RemoteMcpStatus {
   readonly localMcpUrl: string | null;
   readonly localGatewayUrl: string | null;
   readonly publicMcpUrl: string | null;
+  readonly configuredPublicOrigin: string | null;
   readonly pairingCode: string | null;
   readonly pairingCodeExpiresAt: string | null;
   readonly oauthProtected: boolean;
@@ -479,6 +481,10 @@ export interface RemoteMcpStatus {
 
 export interface SaveRemoteMcpAuthtokenRequest {
   readonly authtoken: string;
+}
+
+export interface SetRemoteMcpPublicOriginRequest {
+  readonly publicOrigin: string;
 }
 
 export interface TunnelStatus {
@@ -988,6 +994,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.getRemoteMcpStatus]: undefined;
   readonly [ipcChannels.installRemoteMcpProvider]: undefined;
   readonly [ipcChannels.saveRemoteMcpAuthtoken]: SaveRemoteMcpAuthtokenRequest;
+  readonly [ipcChannels.setRemoteMcpPublicOrigin]: SetRemoteMcpPublicOriginRequest;
   readonly [ipcChannels.startRemoteMcp]: undefined;
   readonly [ipcChannels.stopRemoteMcp]: undefined;
   readonly [ipcChannels.regenerateRemoteMcpPairingCode]: undefined;
@@ -1056,6 +1063,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.getRemoteMcpStatus]: RemoteMcpStatus;
   readonly [ipcChannels.installRemoteMcpProvider]: RemoteMcpStatus;
   readonly [ipcChannels.saveRemoteMcpAuthtoken]: RemoteMcpStatus;
+  readonly [ipcChannels.setRemoteMcpPublicOrigin]: RemoteMcpStatus;
   readonly [ipcChannels.startRemoteMcp]: RemoteMcpStatus;
   readonly [ipcChannels.stopRemoteMcp]: RemoteMcpStatus;
   readonly [ipcChannels.regenerateRemoteMcpPairingCode]: RemoteMcpStatus;
@@ -1126,6 +1134,7 @@ export interface LnwjudApi {
   getRemoteMcpStatus(): Promise<IpcResponseMap[typeof ipcChannels.getRemoteMcpStatus]>;
   installRemoteMcpProvider(): Promise<IpcResponseMap[typeof ipcChannels.installRemoteMcpProvider]>;
   saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise<IpcResponseMap[typeof ipcChannels.saveRemoteMcpAuthtoken]>;
+  setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<IpcResponseMap[typeof ipcChannels.setRemoteMcpPublicOrigin]>;
   startRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.startRemoteMcp]>;
   stopRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopRemoteMcp]>;
   regenerateRemoteMcpPairingCode(): Promise<IpcResponseMap[typeof ipcChannels.regenerateRemoteMcpPairingCode]>;

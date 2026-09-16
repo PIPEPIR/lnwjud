@@ -51,7 +51,15 @@
 
 ---
 
-## Current version: v5.1.1
+## Development target: v5.2.0 (unreleased)
+
+`dev` is preparing v5.2.0. The public release remains v5.1.1 until the normal `dev → main → tag → Release` gates are completed.
+
+- **Remote MCP / ngrok restart fix (#86):** observed runtime ngrok URLs are no longer persisted as launch configuration. `--url` is used only when the user explicitly saves a reserved Static/Custom Domain, with schema-v1 state migrating without pinning the previously observed URL.
+- **Incident evidence across restart:** Incident capture now includes bounded, sanitized persisted desktop crash/lifecycle history, so a restart no longer erases the evidence needed to diagnose the previous failure.
+- **Main-process CPU regression (#85):** the deterministic External MCP idle-session cleanup introduced in v5.1.1 remains covered by regression tests; v5.2.0 keeps that fix while the related runtime paths receive the current verification pass.
+
+## Current published version: v5.1.1
 
 `v5.1.1` is the current published release. The verified `dev → main → tag → Release` flow completed successfully, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.1.1) contains every target architecture, package format, checksum, and provenance file.
 
