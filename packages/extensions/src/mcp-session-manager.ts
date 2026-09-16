@@ -351,14 +351,17 @@ export class McpSessionManager {
   private async sweepIdle(): Promise<void> {
     if (this.idleSweep !== undefined) return this.idleSweep;
     this.idleSweep = (async (): Promise<void> => {
-      const now = Date.now();
-      for (const [name, managed] of this.sessions) {
-        if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
-      }
-      this.idleSweep = undefined;
-      if (this.sessions.size === 0 && this.idleTimer !== undefined) {
-        clearInterval(this.idleTimer);
-        this.idleTimer = undefined;
+      try {
+        const now = Date.now();
+        for (const [name, managed] of this.sessions) {
+          if (managed.inFlight === 0 && now - managed.lastUsedAt >= this.idleTimeoutMs) await this.drop(name);
+        }
+      } finally {
+        this.idleSweep = undefined;
+        if (this.sessions.size === 0 && this.idleTimer !== undefined) {
+          clearInterval(this.idleTimer);
+          this.idleTimer = undefined;
+        }
       }
     })();
     return this.idleSweep;
