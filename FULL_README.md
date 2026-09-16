@@ -411,13 +411,13 @@ Choose the guide for the host you will run lnwjud on:
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current published Windows 10/11 x64 v5.0.2 artifacts are `lnwjud-Setup-5.0.2.exe` (recommended installer) and `lnwjud-Portable-5.0.2.exe` (no installation required).
+   Current published Windows 10/11 x64 v5.1.0 artifacts are `lnwjud-Setup-5.1.0.exe` (recommended installer) and `lnwjud-Portable-5.1.0.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run the currently published `lnwjud-Portable-5.0.2.exe` directly.
+If you prefer not to install the app, run the currently published `lnwjud-Portable-5.1.0.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -524,12 +524,12 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ source target v5.1.0 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ จนกว่า v5.1.0 จะผ่าน release flow ให้ใช้ไฟล์ public v5.0.2 ด้านล่าง
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ v5.1.0 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.0.2.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.0.2.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.1.0.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.1.0.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
