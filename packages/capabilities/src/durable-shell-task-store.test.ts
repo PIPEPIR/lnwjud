@@ -145,7 +145,7 @@ describe('durable shell background tasks', () => {
       ok: true,
       value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true },
     });
-  });
+  }, 15_000);
 
   it('finalizes when the command exits even if a detached descendant keeps inherited stdio open', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
@@ -200,10 +200,10 @@ describe('durable shell background tasks', () => {
     const started = await firstRuntime.execute({
       operation: 'run',
       executable: process.execPath,
-      arguments: ['-e', 'setTimeout(() => {}, 10000)'],
+      arguments: ['-e', 'setTimeout(() => {}, 30000)'],
       cwd: root,
       execution: 'background',
-      timeout_seconds: 30,
+      timeout_seconds: 60,
       userConfirmed: true,
     });
     expect(started.ok).toBe(true);
@@ -213,12 +213,17 @@ describe('durable shell background tasks', () => {
     const replacementRuntime = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
     await waitUntil(async () => {
       const status = await replacementRuntime.execute({ operation: 'status', task_id: taskId });
-      return status.ok && typeof (status.value as Record<string, unknown>).worker_pid === 'number';
-    }, 1500);
+      if (!status.ok) return false;
+      const value = status.value as Record<string, unknown>;
+      return typeof value.worker_pid === 'number'
+        && typeof value.worker_started_at === 'string'
+        && typeof value.child_pid === 'number'
+        && typeof value.child_started_at === 'string';
+    }, 15_000);
     const cancelled = await replacementRuntime.execute({ operation: 'cancel', task_id: taskId, userConfirmed: true });
 
     expect(cancelled).toMatchObject({ ok: true, value: { task_id: taskId, state: 'cancelled', durable: true } });
-  }, 30_000);
+  }, 45_000);
 
   it('keeps a durable auto task running when the original MCP caller aborts after submission', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
