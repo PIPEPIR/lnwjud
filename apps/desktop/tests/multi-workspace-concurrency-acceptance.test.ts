@@ -162,10 +162,10 @@ describe('multi-workspace concurrency acceptance', () => {
         waitForTerminalShellTask(clientA, workspaceA.id, taskA),
         waitForTerminalShellTask(clientB, workspaceB.id, taskB),
       ]);
-      expect(shellDoneA.isError).not.toBe(true);
-      expect(shellDoneA.structuredContent).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'background-a' });
-      expect(shellDoneB.isError).not.toBe(true);
-      expect(shellDoneB.structuredContent).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'background-b' });
+      expect(shellDoneA.isError, JSON.stringify(shellDoneA.structuredContent)).not.toBe(true);
+      expect(shellDoneA.structuredContent, JSON.stringify(shellDoneA.structuredContent)).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'background-a' });
+      expect(shellDoneB.isError, JSON.stringify(shellDoneB.structuredContent)).not.toBe(true);
+      expect(shellDoneB.structuredContent, JSON.stringify(shellDoneB.structuredContent)).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'background-b' });
 
       const [gitA, gitB] = await Promise.all([
         clientA.callTool({ name: 'git_status', arguments: { workspaceId: workspaceA.id } }),
