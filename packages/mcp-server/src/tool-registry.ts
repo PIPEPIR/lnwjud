@@ -55,7 +55,7 @@ import { ToolSchemaRegistry } from './tool-schema-registry.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
 import { upgradeCatalogEntry } from './upgrade-catalog.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
-import { codexTools } from './tools/codex-tools.js';
+import { codexTools, CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { gitTools } from './tools/git-tools.js';
@@ -72,6 +72,26 @@ import type { McpApplicationServices, McpToolContext, McpToolDefinition } from '
 export type { McpApplicationServices } from './tools/tool-types.js';
 export type { ActiveProjectScope, WorkspaceScope } from './destructive-scope.js';
 export type AuthorizationMode = InvocationAuthorizationMode;
+
+const CODEX_DELEGATION_EXTRA_TOOL_NAMES = [
+  'agent_swarm_run',
+  'delegate',
+  'delegate_status',
+  'delegate_cancel',
+  'delegate_result',
+  'parallel_delegate',
+] as const;
+
+export const CODEX_DELEGATION_TOOL_NAMES = Object.freeze([
+  ...CODEX_TOOL_NAMES,
+  ...CODEX_DELEGATION_EXTRA_TOOL_NAMES,
+] as const);
+
+const CODEX_DELEGATION_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_DELEGATION_TOOL_NAMES);
+
+export function isCodexDelegationTool(name: string): boolean {
+  return name.startsWith('codex_') || CODEX_DELEGATION_TOOL_NAME_SET.has(name);
+}
 
 export interface ToolRegistryOptions {
   readonly diagnostic?: DiagnosticLogger;
@@ -218,14 +238,13 @@ export class ToolRegistry {
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
     const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
-      if ((tool.name.startsWith('codex_') || tool.name === 'agent_swarm_run') && options.codexToolsEnabled !== true) return false;
+      if (isCodexDelegationTool(tool.name) && options.codexToolsEnabled !== true) return false;
       if (tool.name === 'agent_swarm_run' && services.agentSwarm === undefined) return false;
       const catalogEntry = upgradeCatalogEntry(tool.name);
       return catalogEntry === undefined || isAdvertisedDeliveryState(catalogEntry.deliveryState);
     });
     const defaultExposedBaseTools = systemEligibleBaseTools.filter((tool) => {
-      if (tool.name.startsWith('codex_')) return options.codexToolsEnabled === true;
-      if (tool.name === 'agent_swarm_run') return options.codexToolsEnabled === true;
+      if (isCodexDelegationTool(tool.name)) return options.codexToolsEnabled === true;
       return true;
     });
     const exposedBatchTools = batchTools({
@@ -1194,7 +1213,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.0.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.0.2 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

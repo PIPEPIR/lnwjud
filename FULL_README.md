@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 246 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 241 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
 
   <em>อ่านที่เหลือใน Readme ได้เลยครับ ติดปัญหาทักมาได้ใน FB: Adisorn NM ได้ตลอดครับ / กำลังพัฒนาให้เรื่อยๆครับ ท่านที่ถามหาช่องสนับสนุนค่ากาแฟ แปะลิงค์ ไว้ให้แล้วครับ ขอบคุณครับ</em>
  https://easydonate.app/abcz
@@ -51,15 +51,21 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v5.0.1
+## Current version: v5.0.2
 
-The v5.0.1 release runtime contract contains **253 total MCP tool definitions**,
-with **246 advertised by default** and **all 253 advertised when the six `codex_*`
-delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
-the default surface still exposes every other current first-party definition. The earlier v4 tool-count snapshots remain
+The v5.0.2 release runtime contract contains **253 total MCP tool definitions**,
+with **241 advertised by default** and **all 253 advertised when Codex Delegation
+plus Agent Swarm is enabled**. The 12 Codex-backed delegation front doors are opt-in;
+the default surface still exposes every other current first-party definition. The earlier v4/v5 tool-count snapshots remain
 historical compatibility baselines rather than the current release contract.
 
-### What's new in v5.0.1
+### What's new in v5.0.2
+
+- Codex Delegation OFF now makes all Codex-backed entry points system-ineligible: the six `codex_*` tools, `agent_swarm_run`, `delegate`, `delegate_status`, `delegate_cancel`, `delegate_result`, and `parallel_delegate`.
+- Per-tool availability overrides cannot re-enable those tools while Codex Delegation is OFF, and Desktop readiness uses the same shared classifier as the MCP registry.
+- The v5.0.2 registry remains 253 total definitions, advertises 241 by default, and advertises all 253 when Codex Delegation plus Agent Swarm is enabled.
+
+### Historical: What's new in v5.0.1
 
 - Tunnel incident exports move to schema v2 and preserve sanitized process-exit, restart, OAuth-refresh, transport/network, client-version, and tunnel-log evidence for real disconnect diagnosis.
 - Persistent tunnel supervision records restart attempts/outcomes and last known process identity; native-managed runtimes report unavailable exit metadata explicitly instead of inventing it.
@@ -76,7 +82,7 @@ historical compatibility baselines rather than the current release contract.
 - ChatGPT continuation remains host-native: lnwjud never uses browser/DOM clicking, typing, scraping, or automatic new-chat creation as the compact/resume transport.
 - Bounded iteration has explicit limits and stale-intent fencing, while context pressure is reported as an estimate unless the provider exposes exact usage.
 - Settings multiline fields preserve draft newlines, and `LSP Commands — LANGUAGE=COMMAND` accepts incomplete draft text such as `typescript=` until validation/save.
-- The v5 release registry has 253 definitions, 246 advertised by default, and all 253 with Codex delegation plus Agent Swarm enabled.
+- The v5 release registry has 253 definitions, 241 advertised by default, and all 253 with Codex delegation plus Agent Swarm enabled.
 
 ### Historical: What's new in v4.70.1
 
@@ -405,7 +411,7 @@ Choose the guide for the host you will run lnwjud on:
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-5.0.1.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-5.0.2.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -459,7 +465,7 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
 5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no PIN entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket.
 6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship. A short-lived 6-digit PIN is generated only when an OAuth client does not match the supported ChatGPT callback contract.
-7. Confirm the connection discovers **246 tools by default** (or **253** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
+7. Confirm the connection discovers **241 tools by default** (or **253** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
 
@@ -512,12 +518,12 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำใน v5.0.1 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำใน v5.0.2 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-5.0.1.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.0.1.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-5.0.2.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.0.2.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -534,7 +540,7 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 5. **ฝั่ง Admin/Owner ของ Business:** ไป Workspace Settings → Apps → Create, ใส่ URL ที่คัดลอกมา เลือก **OAuth**, Scan Tools ให้ผ่าน แล้ว Create และ **Publish** แอป lnwjud ให้ Workspace. สมาชิกทั่วไปไม่ต้องเปิด Developer mode และไม่ต้องกรอก Server URL ซ้ำ
 6. **ฝั่งสมาชิก:** เปิดแอป lnwjud ที่ถูก Publish แล้วกด **Connect**. ถ้าเป็น callback ของ ChatGPT ที่รองรับ browser จะถูกส่งผ่าน one-time URL ที่ `127.0.0.1` ของเครื่องผู้ใช้ไปหา lnwjud Desktop โดยอัตโนมัติ แล้วจึงทำ DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT — **ไม่ต้องกรอก PIN และไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ไม่สามารถนำ localhost ticket นี้ไปแลกสิทธิ์แทนได้
 7. หลังเชื่อม lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย secure storage ของ host การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้องอนุมัติซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้างความสัมพันธ์ใหม่จริง ๆ. PIN 6 หลักจะถูกสร้างเฉพาะ fallback เมื่อ OAuth client ไม่ตรงกับ callback ChatGPT ที่รองรับ
-8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **246 tools**, หรือ **253** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
+8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **241 tools**, หรือ **253** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
 
@@ -791,8 +797,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.0.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.0.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.0.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.0.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1115,9 +1121,9 @@ For workspace <workspace-id>, show the project snapshot, Git status, and the top
 When a first-party tool is enabled or disabled, standards-compliant MCP clients receive `notifications/tools/list_changed` and can refresh the live list without restarting lnwjud. ChatGPT app/action catalogs may additionally use a host-managed approved snapshot: use the ChatGPT action refresh/tool-scan flow that is actually available for the workspace. A browser F5 alone is **not** guaranteed to update an approved/frozen action snapshot, and lnwjud does not claim host synchronization without evidence.
 
 <!-- BEGIN GENERATED README TOOL REGISTRY -->
-## Complete MCP tool catalog (253 total definitions; 246 advertised by default; 253 with Codex delegation plus Agent Swarm enabled)
+## Complete MCP tool catalog (253 total definitions; 241 advertised by default; 253 with Codex delegation plus Agent Swarm enabled)
 
-This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds seven opt-in definitions to the advertised surface.
+This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds 12 opt-in definitions to the advertised surface.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Runtime description |
 | ---: | --- | --- | --- | --- | --- | --- |
@@ -1304,11 +1310,11 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 181 | `task_cancel` | EXECUTE | default | operational | service_dispatch | Cancel a durable managed task by taskId using the same verified process-tree termination path as shell tasks. |
 | 182 | `task_result` | READ | default | operational | service_dispatch | Read the current durable managed task result and captured output by taskId. |
 | 183 | `task_list` | READ | default | operational | service_dispatch | List durable managed tasks owned by the current client/session/workspace. |
-| 184 | `delegate` | EXECUTE | default | dependency_gated | service_dispatch | Delegate one bounded read-only task through the owned agent-swarm provider when configured. |
-| 185 | `delegate_status` | READ | default | dependency_gated | service_dispatch | Read delegated agent state from the owned agent-swarm provider. |
-| 186 | `delegate_cancel` | EXECUTE | default | dependency_gated | service_dispatch | Cancel an owned delegated agent task. |
-| 187 | `delegate_result` | READ | default | dependency_gated | service_dispatch | Read an owned delegated agent result. |
-| 188 | `parallel_delegate` | EXECUTE | default | dependency_gated | service_dispatch | Run up to four isolated read-only agent tasks through the owned swarm provider with explicit dependency/collision metadata. |
+| 184 | `delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Delegate one bounded read-only task through the owned agent-swarm provider when configured. |
+| 185 | `delegate_status` | READ | Codex opt-in | dependency_gated | service_dispatch | Read delegated agent state from the owned agent-swarm provider. |
+| 186 | `delegate_cancel` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Cancel an owned delegated agent task. |
+| 187 | `delegate_result` | READ | Codex opt-in | dependency_gated | service_dispatch | Read an owned delegated agent result. |
+| 188 | `parallel_delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Run up to four isolated read-only agent tasks through the owned swarm provider with explicit dependency/collision metadata. |
 | 189 | `permission_check` | READ | default | operational | deterministic_operation | Evaluate an action class without limiting allowed context reads. |
 | 190 | `permission_profile` | READ | default | operational | deterministic_operation | Return the active Permission v2 profile. |
 | 191 | `live_logs_query` | READ | default | operational | truthful_unavailable | Query bounded structured MCP activity events with tool, workspace, phase, result, call/trace correlation filters. |

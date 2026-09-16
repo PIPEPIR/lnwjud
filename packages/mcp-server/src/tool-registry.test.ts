@@ -7,9 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { appError, err, ok } from '@lnwjud/domain';
 import { LocalCapabilityService, ShellCapabilityBackend } from '@lnwjud/capabilities';
 import { permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
-import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import type { ActivitySinkEvent } from './activity-tracker.js';
-import { ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
+import { CODEX_DELEGATION_TOOL_NAMES, isCodexDelegationTool, ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
 import { GoalRequestCancellationService } from '@lnwjud/application';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
@@ -110,7 +110,7 @@ describe('MCP tool registry', () => {
       'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
       ...UPGRADE_TOOL_CATALOG
-        .filter((entry) => entry.name !== 'agent_swarm_run' && isAdvertisedDeliveryState(entry.deliveryState))
+        .filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState))
         .map((entry) => entry.name),
       'tool_batch',
     ]);
@@ -135,7 +135,7 @@ describe('MCP tool registry', () => {
     }
   });
 
-  it('hides quota-consuming Codex tools and agent swarm by default and exposes them only when explicitly enabled', () => {
+  it('hides every Codex-backed delegation front door by default and exposes them only when explicitly enabled', () => {
     const services = {
       agentSwarm: {
         async start(): Promise<ReturnType<typeof ok>> { return ok({ swarmId: '00000000-0000-4000-8000-000000000001', state: 'running', tasks: [] }); },
@@ -147,11 +147,30 @@ describe('MCP tool registry', () => {
     } as unknown as McpApplicationServices;
     const hidden = new ToolRegistry(services, actor);
     const enabled = new ToolRegistry(services, actor, { codexToolsEnabled: true });
-    expect(hidden.list().filter((tool) => tool.name.startsWith('codex_'))).toHaveLength(0);
-    expect(hidden.list().map((tool) => tool.name)).not.toContain('agent_swarm_run');
+    const hiddenNames = hidden.list().map((tool) => tool.name);
+    const enabledNames = enabled.list().map((tool) => tool.name);
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) expect(hiddenNames).not.toContain(name);
     expect(enabled.list().filter((tool) => tool.name.startsWith('codex_')).map((tool) => tool.name)).toEqual([...CODEX_TOOL_NAMES]);
-    expect(enabled.list().map((tool) => tool.name)).toContain('agent_swarm_run');
-    expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_TOOL_NAMES.length + 1);
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) expect(enabledNames).toContain(name);
+    expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_DELEGATION_TOOL_NAMES.length);
+  });
+
+  it('keeps Codex delegation system-ineligible when per-tool overrides try to enable it', async () => {
+    const overrides = Object.fromEntries(
+      CODEX_DELEGATION_TOOL_NAMES.map((name) => [name, 'enabled' as const]),
+    ) as Record<string, 'enabled' | 'disabled'>;
+    const registry = new ToolRegistry({}, actor, {
+      codexToolsEnabled: false,
+      toolAvailabilitySnapshotProvider: (): ToolAvailabilitySnapshot => ({ version: 1, generation: 1, overrides }),
+    });
+    const advertised = registry.list().map((tool) => tool.name);
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(advertised).not.toContain(name);
+      await expect(registry.invoke(name, {})).resolves.toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: 'INVALID_INPUT', message: 'Unknown MCP tool' } },
+      });
+    }
   });
 
   it('applies live per-tool availability overrides to list and invoke without rebuilding the registry', async () => {

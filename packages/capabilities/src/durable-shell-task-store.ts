@@ -805,6 +805,8 @@ import { readFile, writeFile, open, rename, unlink } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const METADATA_IO_RETRY_ATTEMPTS = 6;
+const METADATA_IO_RETRY_BASE_MS = 15;
 
 const specPath = process.argv[2];
 if (!specPath) process.exit(64);
@@ -840,13 +842,26 @@ function appendBounded(handle, chunk, stream) {
   void pending.then(() => pendingWrites.delete(pending), () => pendingWrites.delete(pending));
 }
 
+function isTransientMetadataIoError(error) {
+  const code = error && typeof error === 'object' ? error.code : undefined;
+  return code === 'EACCES' || code === 'EPERM' || code === 'EBUSY' || code === 'EMFILE' || code === 'ENFILE';
+}
+
 async function persist() {
-  const temporaryPath = spec.metadataPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(16).slice(2);
-  try {
-    await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
-    await rename(temporaryPath, spec.metadataPath);
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
+  for (let attempt = 0; attempt < METADATA_IO_RETRY_ATTEMPTS; attempt += 1) {
+    const temporaryPath = spec.metadataPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(16).slice(2);
+    let retryDelayMs = 0;
+    try {
+      await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
+      await rename(temporaryPath, spec.metadataPath);
+      return;
+    } catch (error) {
+      if (attempt + 1 >= METADATA_IO_RETRY_ATTEMPTS || !isTransientMetadataIoError(error)) throw error;
+      retryDelayMs = METADATA_IO_RETRY_BASE_MS * (attempt + 1);
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   }
 }
 
