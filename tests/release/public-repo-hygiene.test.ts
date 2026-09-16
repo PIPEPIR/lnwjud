@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { ToolRegistry } from '@lnwjud/mcp-server';
 import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
@@ -65,7 +64,7 @@ describe('public repository hygiene', () => {
     expect(leaks, `developer-specific content found in: ${leaks.join(', ')}`).toEqual([]);
   }, 15_000);
 
-  it('documents the package version as the current development target without rewriting the public release', async () => {
+  it('[version-contract] documents the package version as the current development target without rewriting the public release', async () => {
     const [readme, expandedReadme, packagingWindows, usageTh] = await Promise.all([
       readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
@@ -90,6 +89,21 @@ describe('public repository hygiene', () => {
     expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
     expect(readme).not.toContain('current source/release candidate is');
     expect(readme).not.toContain('pending publication');
+  });
+
+  it('[version-contract] rejects an invalid semantic version before writing files', async () => {
+    const packagePath = path.join(repositoryRoot, 'package.json');
+    const before = await readFile(packagePath, 'utf8');
+    await expect(execFileAsync(process.execPath, [path.join(repositoryRoot, 'scripts', 'set-version.mjs'), 'not-a-version'], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    })).rejects.toMatchObject({ stderr: expect.stringContaining('Invalid semantic version') });
+    expect(await readFile(packagePath, 'utf8')).toBe(before);
+  });
+
+  it('documents the live tool catalog instead of a hand-maintained count', async () => {
+    const { ToolRegistry } = await import('@lnwjud/mcp-server');
+    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
     const actor = { clientId: 'public-repo-hygiene', clientName: 'public-repo-hygiene' };
     const defaultRegistry = new ToolRegistry({}, actor);
     const fullRegistry = new ToolRegistry({ agentSwarm: {} as never }, actor, { codexToolsEnabled: true });

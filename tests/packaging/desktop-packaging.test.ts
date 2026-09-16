@@ -14,14 +14,14 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('pins the product release to v5.2.0', async () => {
+  it('[version-contract] pins the product release to v5.2.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(rootPackage.version).toBe('5.2.0');
     expect(desktopPackage.version).toBe('5.2.0');
   });
 
-  it('keeps every workspace package and runtime version aligned', async () => {
+  it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
     const packageDirectories = [
       path.join(repositoryRoot, 'apps'),
       path.join(repositoryRoot, 'packages'),
@@ -49,7 +49,7 @@ describe('cross-platform desktop packaging', () => {
     expect(shared).toContain("APP_VERSION = '5.2.0'");
   });
 
-  it('keeps current-version documentation and runtime copy aligned with the root version', async () => {
+  it('[version-contract] keeps current-version documentation and runtime copy aligned with the root version', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const version = String(rootPackage.version);
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');

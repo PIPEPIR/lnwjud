@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targetVersion = process.argv[2];
+const semanticVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+if (targetVersion !== undefined && !semanticVersionPattern.test(targetVersion)) {
+  throw new Error(`Invalid semantic version: ${targetVersion}`);
+}
 
 async function updatePackageJson(filePath, newVersion) {
   const content = await readFile(filePath, 'utf8');
@@ -13,6 +18,19 @@ async function updatePackageJson(filePath, newVersion) {
   pkg.version = newVersion;
   await writeFile(filePath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
   console.log(`Updated ${path.relative(rootDir, filePath)} -> ${newVersion}`);
+}
+
+async function updatePackageJsonIfPresent(filePath, newVersion) {
+  try {
+    await updatePackageJson(filePath, newVersion);
+  } catch (error) {
+    if (isMissingPath(error)) return;
+    throw error;
+  }
+}
+
+function isMissingPath(error) {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 async function syncAllVersions() {
@@ -32,11 +50,7 @@ async function syncAllVersions() {
   for (const entry of appEntries) {
     if (entry.isDirectory()) {
       const pkgPath = path.join(appsDir, entry.name, 'package.json');
-      try {
-        await updatePackageJson(pkgPath, version);
-      } catch {
-        // skip if no package.json
-      }
+      await updatePackageJsonIfPresent(pkgPath, version);
     }
   }
 
@@ -46,11 +60,7 @@ async function syncAllVersions() {
   for (const entry of packageEntries) {
     if (entry.isDirectory()) {
       const pkgPath = path.join(packagesDir, entry.name, 'package.json');
-      try {
-        await updatePackageJson(pkgPath, version);
-      } catch {
-        // skip if no package.json
-      }
+      await updatePackageJsonIfPresent(pkgPath, version);
     }
   }
 
@@ -74,41 +84,32 @@ async function syncAllVersions() {
 
   // 6. Update tests/packaging/desktop-packaging.test.ts
   const testPackagingPath = path.join(rootDir, 'tests', 'packaging', 'desktop-packaging.test.ts');
-  try {
-    let testContent = await readFile(testPackagingPath, 'utf8');
-    testContent = testContent
-      .replace(/pins the product release to v[0-9.]+/g, `pins the product release to v${version}`)
-      .replace(/expect\(rootPackage\.version\)\.toBe\(['"][^'"]+['"]\);/g, `expect(rootPackage.version).toBe('${version}');`)
-      .replace(/expect\(desktopPackage\.version\)\.toBe\(['"][^'"]+['"]\);/g, `expect(desktopPackage.version).toBe('${version}');`)
-      .replace(/expect\(packageJson\.version, packagePath\)\.toBe\(['"][^'"]+['"]\);/g, `expect(packageJson.version, packagePath).toBe('${version}');`)
-      .replace(/expect\(ipcContracts\)\.toContain\(["']APP_VERSION = ['"][^'"]+['"]["']\);/g, `expect(ipcContracts).toContain("APP_VERSION = '${version}'");`)
-      .replace(/expect\(shared\)\.toContain\(["']APP_VERSION = ['"][^'"]+['"]["']\);/g, `expect(shared).toContain("APP_VERSION = '${version}'");`);
-    await writeFile(testPackagingPath, testContent, 'utf8');
-    console.log(`Updated tests/packaging/desktop-packaging.test.ts -> v${version}`);
-  } catch {
-    // skip if missing
-  }
+  let testContent = await readFile(testPackagingPath, 'utf8');
+  testContent = testContent
+    .replace(/pins the product release to v[0-9.]+/g, `pins the product release to v${version}`)
+    .replace(/expect\(rootPackage\.version\)\.toBe\(['"][^'"]+['"]\);/g, `expect(rootPackage.version).toBe('${version}');`)
+    .replace(/expect\(desktopPackage\.version\)\.toBe\(['"][^'"]+['"]\);/g, `expect(desktopPackage.version).toBe('${version}');`)
+    .replace(/expect\(packageJson\.version, packagePath\)\.toBe\(['"][^'"]+['"]\);/g, `expect(packageJson.version, packagePath).toBe('${version}');`)
+    .replace(/expect\(ipcContracts\)\.toContain\(["']APP_VERSION = ['"][^'"]+['"]["']\);/g, `expect(ipcContracts).toContain("APP_VERSION = '${version}'");`)
+    .replace(/expect\(shared\)\.toContain\(["']APP_VERSION = ['"][^'"]+['"]["']\);/g, `expect(shared).toContain("APP_VERSION = '${version}'");`);
+  await writeFile(testPackagingPath, testContent, 'utf8');
+  console.log(`Updated tests/packaging/desktop-packaging.test.ts -> v${version}`);
 
   // 7. Update Desktop UI version assertion.
   const mutationSafetyUiTestPath = path.join(rootDir, 'apps', 'desktop', 'tests', 'mutation-safety-ui.test.ts');
-  try {
-    let testContent = await readFile(mutationSafetyUiTestPath, 'utf8');
-    testContent = testContent
-      .replace(/renders the actual [0-9.]+ application version/g, `renders the actual ${version} application version`)
-      .replace(/expect\(APP_VERSION\)\.toBe\(['"][^'"]+['"]\);/g, `expect(APP_VERSION).toBe('${version}');`)
-      .replace(/expect\(markup\)\.toContain\(['"]v[0-9.]+['"]\);/g, `expect(markup).toContain('v${version}');`);
-    await writeFile(mutationSafetyUiTestPath, testContent, 'utf8');
-    console.log(`Updated apps/desktop/tests/mutation-safety-ui.test.ts -> v${version}`);
-  } catch {
-    // skip if missing
-  }
+  let mutationSafetyUiTestContent = await readFile(mutationSafetyUiTestPath, 'utf8');
+  mutationSafetyUiTestContent = mutationSafetyUiTestContent
+    .replace(/renders the actual [0-9.]+ application version/g, `renders the actual ${version} application version`)
+    .replace(/expect\(APP_VERSION\)\.toBe\(['"][^'"]+['"]\);/g, `expect(APP_VERSION).toBe('${version}');`)
+    .replace(/expect\(markup\)\.toContain\(['"]v[0-9.]+['"]\);/g, `expect(markup).toContain('v${version}');`);
+  await writeFile(mutationSafetyUiTestPath, mutationSafetyUiTestContent, 'utf8');
+  console.log(`Updated apps/desktop/tests/mutation-safety-ui.test.ts -> v${version}`);
 
   // 8. Update concise and expanded README current-version references without rewriting release history.
   const readmePaths = [path.join(rootDir, 'README.md'), path.join(rootDir, 'FULL_README.md')];
   for (const readmePath of readmePaths) {
-    try {
-      let readmeContent = await readFile(readmePath, 'utf8');
-      readmeContent = readmeContent
+    let readmeContent = await readFile(readmePath, 'utf8');
+    readmeContent = readmeContent
       .replace(/## Development target: v[0-9.]+ \(unreleased\)/g, `## Development target: v${version} (unreleased)`)
       .replace(/## Current (?:version|source \/ release candidate|release): v[0-9.]+/g, `## Current version: v${version}`)
       .replace(/(`dev` (?:branch is )?preparing )v[0-9.]+/g, `$1v${version}`)
@@ -120,11 +121,8 @@ async function syncAllVersions() {
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`)
       .replace(/current v[0-9.]+ `ToolRegistry`/g, 'current v' + version + ' `ToolRegistry`');
-      await writeFile(readmePath, readmeContent, 'utf8');
-      console.log(`Updated ${path.basename(readmePath)} -> v${version}`);
-    } catch {
-      // skip if missing
-    }
+    await writeFile(readmePath, readmeContent, 'utf8');
+    console.log(`Updated ${path.basename(readmePath)} -> v${version}`);
   }
 
   // 9. Update current-version Markdown references without rewriting release history.
@@ -150,8 +148,9 @@ async function syncAllVersions() {
       const content = await readFile(targetPath, 'utf8');
       await writeFile(targetPath, update(content), 'utf8');
       console.log(`Updated ${relativePath} -> v${version}`);
-    } catch {
-      // optional/local documentation may be absent in a public checkout
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      // Optional/local documentation may be absent in a public checkout.
     }
   }
 
