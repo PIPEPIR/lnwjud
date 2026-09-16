@@ -117,6 +117,8 @@ export class McpSessionManager {
       managed = await this.ensure(server, config, signal);
       if (isAborted(signal)) return cancelledCall();
       const refreshed = await this.refreshCatalog(server, managed, signal);
+      managed.lastUsedAt = Date.now();
+      this.scheduleIdleSweep();
       return ok({
         connected: true,
         tools: managed.tools,
