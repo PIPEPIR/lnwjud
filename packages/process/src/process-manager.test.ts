@@ -5,7 +5,8 @@ import { ok } from '@lnwjud/domain';
 import { PathExecutableResolver, ProcessManager, type ExecutableResolver, type ProcessTreeTerminator } from './index.js';
 
 async function waitForState(manager: ProcessManager, processId: string, state: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // Process-tree termination can exceed one second on loaded Windows runners.
+  for (let attempt = 0; attempt < 500; attempt += 1) {
     const result = manager.status(processId);
     if (result.ok && result.value.state === state) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

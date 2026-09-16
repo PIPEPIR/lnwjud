@@ -411,20 +411,22 @@ describe('LocalExtensionsService MCP bridge', () => {
     const manager = new McpSessionManager({
       clientFactory: { connect: async (): Promise<McpClientSession> => session },
       callTimeoutMs: 500,
-      idleTimeoutMs: 25,
+      // Keep the timer above the shortest host scheduling quantum. The
+      // cleanup contract is eventual and is verified with a bounded poll.
+      idleTimeoutMs: 100,
     });
 
     try {
       await expect(manager.describe('mock', { command: 'node' })).resolves.toMatchObject({ ok: true });
       expect(manager.isConnected('mock')).toBe(true);
-      // CI runners can pause a worker long enough to miss several 25 ms sweeps.
+      // CI runners can pause a worker long enough to miss several sweeps.
       // The contract is eventual idle cleanup, not a sub-second scheduling SLA.
-      await expect.poll(() => closes, { timeout: 2_000 }).toBe(1);
+      await expect.poll(() => closes, { timeout: 10_000 }).toBe(1);
       expect(manager.isConnected('mock')).toBe(false);
     } finally {
       await manager.close();
     }
-  });
+  }, 15_000);
 
   it('does not evict an in-flight child operation at the idle deadline', async () => {
     let release!: () => void;
