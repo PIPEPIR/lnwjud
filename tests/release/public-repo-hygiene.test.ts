@@ -65,19 +65,25 @@ describe('public repository hygiene', () => {
     expect(leaks, `developer-specific content found in: ${leaks.join(', ')}`).toEqual([]);
   }, 15_000);
 
-  it('documents the package version as the current v4 runtime rather than a stale release', async () => {
-    const [readme, expandedReadme, packagingWindows] = await Promise.all([
+  it('documents the package version as the current development target without rewriting the public release', async () => {
+    const [readme, expandedReadme, packagingWindows, usageTh] = await Promise.all([
       readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'docs', 'development', 'PACKAGING_WINDOWS.md'), 'utf8'),
+      readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8'),
     ]);
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(typeof rootPackage.version).toBe('string');
     const version = rootPackage.version as string;
 
-    expect(readme).toContain(`## Current version: v${version}`);
-    expect(readme).toContain(`\`v${version}\` is the current public release line.`);
-    expect(expandedReadme).toContain(`## Current version: v${version}`);
+    expect(readme.includes(`## Development target: v${version}`) || readme.includes(`## Current version: v${version}`)).toBe(true);
+    expect(expandedReadme.includes(`## Development target: v${version}`) || expandedReadme.includes(`## Current version: v${version}`)).toBe(true);
+    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
+      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
+    expect(publishedVersion).toBeTruthy();
+    expect(expandedReadme.includes(`## Current published version: v${publishedVersion}`)
+      || expandedReadme.includes(`## Current version: v${publishedVersion}`)).toBe(true);
+    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
     expect(packagingWindows).toContain(`lnwjud-Setup-${version}.exe`);
     expect(packagingWindows).toContain(`lnwjud-Portable-${version}.exe`);
     expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);

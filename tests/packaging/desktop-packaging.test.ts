@@ -56,6 +56,8 @@ describe('cross-platform desktop packaging', () => {
     const fullReadme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
     expect(readme.includes(`Development target: v${version}`) || readme.includes(`Current version: v${version}`)).toBe(true);
     expect(fullReadme.includes(`Development target: v${version}`) || fullReadme.includes(`Current version: v${version}`)).toBe(true);
+    expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
+    expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
 
     const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
       ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
