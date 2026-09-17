@@ -62,6 +62,11 @@ export function detectUpdaterDistribution(
   return 'unsupported';
 }
 
+/** Use electron-updater's native quit/install path only for formats it owns. */
+export function usesElectronUpdaterInstall(distribution: UpdaterDistribution): boolean {
+  return distribution === 'installer' || distribution === 'macos' || distribution === 'linux-appimage';
+}
+
 export function currentPortableExecutablePath(
   environment: NodeJS.ProcessEnv = process.env,
   fallbackExecutablePath: string = process.execPath,

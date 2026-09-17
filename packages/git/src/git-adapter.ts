@@ -50,6 +50,22 @@ export class GitAdapter {
 
   public async status(cwd: string, signal?: AbortSignal): Promise<Result<GitStatusResult>> {
     const result = await this.runner.run(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      cwd,
+      this.signalOptions(signal),
+    );
+    const error = this.mapError(result);
+    if (error !== null) return error;
+    return ok({ entries: parsePorcelainStatus(result.stdout) });
+  }
+
+
+  /**
+   * Lightweight status for continuously refreshed UI summaries. Collapsing
+   * untracked directories avoids enumerating very large generated trees.
+   */
+  public async statusSummary(cwd: string, signal?: AbortSignal): Promise<Result<GitStatusResult>> {
+    const result = await this.runner.run(
       ['status', '--porcelain=v1', '-z', '--untracked-files=normal'],
       cwd,
       this.signalOptions(signal),

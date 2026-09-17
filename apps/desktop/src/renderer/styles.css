@@ -192,10 +192,17 @@ input:focus, select:focus {
   background: #07090e;
   border-bottom: 1px solid var(--border);
   padding: 0 12px;
-  /* Space reserved for Windows native titleBarOverlay buttons (Minimize, Maximize, Close) */
-  padding-right: 146px;
   user-select: none;
   z-index: 1000;
+}
+
+/* Keep the custom titlebar clear of native window controls on each host. */
+[data-host-platform='win32'] .custom-titlebar {
+  padding-right: 146px;
+}
+
+[data-host-platform='darwin'] .custom-titlebar {
+  padding-left: 82px;
 }
 
 .titlebar-drag-region {

@@ -81,8 +81,8 @@ import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { DesktopIpcDrainBarrier } from './desktop-ipc-drain.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
-import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
-import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, shouldHideMainWindowOnClose } from './tray.js';
+import { createLogViewerWindow, createMainWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
+import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTrayIconPath, shouldHideMainWindowOnClose } from './tray.js';
 import { confirmTunnelStopForUpdate, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
@@ -93,6 +93,7 @@ import {
   detectUpdaterDistribution,
   launchPortableReplacement,
   preparePortableReplacement,
+  usesElectronUpdaterInstall,
 } from './portable-update.js';
 import { platformCompatibilityProfile, supportedHostPlatform } from './platform-compatibility.js';
 import { atomicWrite, type IncidentReport } from './incident-report.js';
@@ -1571,13 +1572,27 @@ function setDesktopLocale(locale: UiLocale): void {
 }
 
 function createDesktopTray(): void {
-  const iconPath = getWindowIconPath();
+  const iconPath = getTrayIconPath();
   if (iconPath === undefined) {
     console.error('lnwjud tray icon was not found');
     return;
   }
+  const sourceImage = nativeImage.createFromPath(iconPath);
+  if (sourceImage.isEmpty()) {
+    console.error(`lnwjud tray icon could not be loaded: ${iconPath}`);
+    return;
+  }
+  const trayImage = process.platform === 'darwin'
+    ? sourceImage.resize({ width: 18, height: 18, quality: 'best' })
+    : sourceImage;
+  if (process.platform === 'darwin') {
+    // macOS menu-bar icons are template images: AppKit derives the correct
+    // light/dark appearance from the alpha mask instead of rendering the
+    // full-color application artwork directly.
+    trayImage.setTemplateImage(true);
+  }
   tray?.destroy();
-  tray = new Tray(nativeImage.createFromPath(iconPath));
+  tray = new Tray(trayImage);
   tray.setToolTip(createTrayToolTip(desktopLocale));
   refreshDesktopTrayMenu();
   tray.on('click', revealMainWindow);
@@ -1755,7 +1770,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
           void runtime.createBackup('pre-update').catch((error: unknown) => {
             console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
           }).finally(() => {
-            if (windowsDistribution === 'installer') {
+            if (usesElectronUpdaterInstall(updaterDistribution)) {
               void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
               return;
             }
@@ -2292,6 +2307,13 @@ function configureDesktopShutdown(runtime: DesktopRuntime): void {
     onDeferred: (error): void => {
       desktopIpcDrainBarrier.resume();
       quitRequested = false;
+      if (currentUpdateStatus.phase === 'installing' && currentUpdateStatus.availableVersion !== null) {
+        patchUpdateStatus({
+          phase: 'ready',
+          message: nativeMessages(desktopLocale).updateReadyStatus(currentUpdateStatus.availableVersion),
+          canInstall: true,
+        });
+      }
       console.error(`Desktop shutdown deferred: ${error.message}`);
       broadcastToAllWindows(pushChannels.logEvent, {
         id: Date.now(),

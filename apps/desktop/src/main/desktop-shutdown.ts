@@ -12,6 +12,23 @@ interface PendingQuitIntent {
 }
 
 /**
+ * Keeps successful shutdown idempotent while allowing a failed shutdown to be
+ * attempted again. Concurrent callers share the same in-flight attempt.
+ */
+export function createRetryableShutdown(closeRuntime: () => Promise<void>): () => Promise<void> {
+  let closing: Promise<void> | null = null;
+  return (): Promise<void> => {
+    if (closing !== null) return closing;
+    const attempt = closeRuntime();
+    closing = attempt;
+    void attempt.catch(() => {
+      if (closing === attempt) closing = null;
+    });
+    return attempt;
+  };
+}
+
+/**
  * Serializes every app/update quit through the owned-runtime shutdown. A
  * failed shutdown is deliberately retryable: the application keeps running
  * with its ownership state intact instead of falling through to app.quit().

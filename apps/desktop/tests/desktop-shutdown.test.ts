@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { DesktopShutdownCoordinator } from '../src/main/desktop-shutdown.js';
+import { createRetryableShutdown, DesktopShutdownCoordinator } from '../src/main/desktop-shutdown.js';
 
 describe('Desktop main shutdown coordinator', () => {
   it('allows app quit only after runtime shutdown is confirmed', async () => {
@@ -24,6 +25,31 @@ describe('Desktop main shutdown coordinator', () => {
     await expect(Promise.all([coordinator.requestQuit(quit), coordinator.requestQuit(quit)])).resolves.toEqual(['quit', 'quit']);
     expect(closeRuntime).toHaveBeenCalledOnce();
     expect(quit).toHaveBeenCalledOnce();
+  });
+
+  it('retries a failed runtime shutdown without re-running a successful shutdown', async () => {
+    const closeRuntime = vi.fn()
+      .mockRejectedValueOnce(new Error('transient shutdown verification failure'))
+      .mockResolvedValueOnce(undefined);
+    const close = createRetryableShutdown(closeRuntime);
+
+    await expect(close()).rejects.toThrow('transient shutdown verification failure');
+    await expect(close()).resolves.toBeUndefined();
+    await expect(close()).resolves.toBeUndefined();
+    expect(closeRuntime).toHaveBeenCalledTimes(2);
+  });
+
+  it('verifies tunnel shutdown before tearing down unrelated desktop runtime services', () => {
+    const source = readFileSync(new URL('../src/main/desktop-services.ts', import.meta.url), 'utf8');
+    const closeStart = source.indexOf('const closeRuntime = createRetryableShutdown');
+    const tunnelShutdown = source.indexOf('await tunnelController.shutdownForDesktopExit();', closeStart);
+    const watcherStop = source.indexOf('stopToolAvailabilityWatch();', closeStart);
+    const remoteClose = source.indexOf('await remoteMcpController.close();', closeStart);
+
+    expect(closeStart).toBeGreaterThanOrEqual(0);
+    expect(tunnelShutdown).toBeGreaterThan(closeStart);
+    expect(watcherStop).toBeGreaterThan(tunnelShutdown);
+    expect(remoteClose).toBeGreaterThan(watcherStop);
   });
 
   it('upgrades an in-flight ordinary quit to quitAndInstall before cleanup completes', async () => {

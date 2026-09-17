@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { workspaceScopeMatches, type LiveLogExportReference, type LogLine, type LogSource, type TunnelAuthStatus, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { workspaceScopeMatches, type DashboardSnapshot, type LiveLogExportReference, type LogLine, type LogSource, type TunnelAuthStatus, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
 import { appendLogBatch, applyLogSnapshot, rememberLogId } from './log-buffer.js';
@@ -10,6 +10,7 @@ const sources: readonly LogSource[] = ['tunnel', 'mcp', 'process'];
 
 export function StandaloneLogViewer(): ReactElement {
   const [locale, setLocale] = useState<UiLocale>('th');
+  const [hostPlatform, setHostPlatform] = useState<DashboardSnapshot['hostPlatform'] | 'unknown'>('unknown');
   const t = createTranslator(locale);
   const [lines, setLines] = useState<readonly LogLine[]>([]);
   const [tunnelLogPath, setTunnelLogPath] = useState<string | null>(null);
@@ -60,7 +61,9 @@ export function StandaloneLogViewer(): ReactElement {
       if (!disposed) setWorkspaces(nextWorkspaces);
     }).catch(() => undefined);
     void window.lnwjud.getDashboard().then((dashboard) => {
-      if (!disposed) setLocale(dashboard.locale);
+      if (disposed) return;
+      setLocale(dashboard.locale);
+      setHostPlatform(dashboard.hostPlatform);
     }).catch(() => undefined);
     const unsubscribe = window.lnwjud.onLogEvent((line) => {
       appendLine(line);
@@ -112,7 +115,7 @@ export function StandaloneLogViewer(): ReactElement {
   }
 
   return (
-    <div className="window-container log-viewer-window">
+    <div className="window-container log-viewer-window" data-host-platform={hostPlatform}>
       <header className="custom-titlebar">
         <div className="titlebar-drag-region">
           <div className="titlebar-brand">
