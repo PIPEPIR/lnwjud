@@ -45,6 +45,14 @@ export class GitService {
     return this.adapter.status(workspace.value.realRootPath, signal);
   }
 
+
+  public async statusSummary(actor: FileActor, workspaceId: string, signal?: AbortSignal): Promise<Result<GitStatusResult>> {
+    void actor;
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok) return workspace;
+    return this.adapter.statusSummary(workspace.value.realRootPath, signal);
+  }
+
   public async branch(actor: FileActor, workspaceId: string): Promise<Result<string | null>> {
     void actor;
     const workspace = await this.getWorkspace(workspaceId);

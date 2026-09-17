@@ -51,7 +51,11 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## What's new in v5.2.1
+## Development target: v5.2.2 (unreleased)
+
+## Current published version: v5.2.1
+
+### What's new in v5.2.1
 
 - Git status uses normal untracked reporting, so an untracked directory is represented once instead of expanding every descendant. Dashboard summaries use Git numstat only and defer bounded untracked-file reads until the user opens that file's diff.
 - Backup-manifest and portable-scheduler discovery process filesystem-derived lists without unbounded concurrent reads.
@@ -820,8 +824,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.2.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.2.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.2.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.2.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

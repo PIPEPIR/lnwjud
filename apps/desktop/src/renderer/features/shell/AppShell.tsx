@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import type { UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
+import type { DashboardSnapshot, UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import type { MessageKey } from '../../i18n/messages.js';
 
@@ -8,6 +8,7 @@ export type Screen = 'home' | 'projects' | 'tools' | 'git' | 'worklog' | 'live' 
 interface AppShellProps {
   readonly locale: UiLocale;
   readonly appVersion: string;
+  readonly hostPlatform: DashboardSnapshot['hostPlatform'];
   readonly mcpRunning: boolean;
   readonly desktopFullBypassOn: boolean;
   readonly stdioFullBypassOn: boolean;
@@ -34,7 +35,7 @@ export function AppShell(props: AppShellProps): ReactElement {
   const t = createTranslator(props.locale);
   const platformLabel = desktopPlatformLabel();
   return (
-    <div className="window-container">
+    <div className="window-container" data-host-platform={props.hostPlatform}>
       {/* Modern Luxury Dark Gold Titlebar */}
       <header className="custom-titlebar">
         <div className="titlebar-drag-region">

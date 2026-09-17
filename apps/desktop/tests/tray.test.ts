@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { UpdateStatus } from '@lnwjud/ipc-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { nativeMessages } from '../src/main/native-i18n.js';
@@ -5,6 +6,7 @@ import {
   createTrayMenuTemplate,
   createTrayToolTip,
   createTrayUpdateLabel,
+  getTrayIconPath,
   shouldHideMainWindowOnClose,
 } from '../src/main/tray.js';
 
@@ -87,6 +89,24 @@ describe('desktop tray behavior', () => {
     expect(createTrayUpdateLabel(downloading, 'en')).toBe('Downloading v4.6.2 42%');
     expect(createTrayToolTip('th')).toBe('lnwjud — ทำงานเบื้องหลัง');
     expect(createTrayToolTip('en')).toBe('lnwjud — running in background');
+  });
+
+  it('uses a PNG source for the macOS menu-bar icon instead of the Windows ICO', () => {
+    const iconPath = getTrayIconPath('darwin');
+    expect(iconPath).toBeDefined();
+    expect(iconPath?.toLowerCase().endsWith('.png')).toBe(true);
+  });
+
+  it('uses a PNG source for Linux status trays instead of the Windows ICO', () => {
+    const iconPath = getTrayIconPath('linux');
+    expect(iconPath).toBeDefined();
+    expect(iconPath?.toLowerCase().endsWith('.png')).toBe(true);
+  });
+
+  it('marks the macOS menu-bar image as a template image for native light/dark rendering', () => {
+    const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
+    expect(main).toContain("process.platform === 'darwin'");
+    expect(main).toContain('trayImage.setTemplateImage(true);');
   });
 
   it('respects the configured close behavior while still allowing an intentional quit', () => {

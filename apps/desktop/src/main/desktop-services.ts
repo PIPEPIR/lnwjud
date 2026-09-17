@@ -176,6 +176,7 @@ import { projectExternalMcpTools } from './tool-catalog/external-tool-catalog-ad
 import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
 import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentReport } from './incident-report.js';
 import { readCrashEventHistory } from './crash-recovery.js';
+import { createRetryableShutdown } from './desktop-shutdown.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
 import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
@@ -1539,7 +1540,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
   };
 
-  let closePromise: Promise<void> | undefined;
+  const closeRuntime = createRetryableShutdown(async (): Promise<void> => {
+    // The tunnel shutdown is the one step allowed to defer quitting. Run it
+    // before tearing down unrelated runtime services so a failed verification
+    // leaves the still-open Desktop usable for a retry.
+    await tunnelController.shutdownForDesktopExit();
+    stopToolAvailabilityWatch();
+    await remoteMcpController.close();
+    logHub.stop();
+    await mcpLifecycle.close();
+    await extensionsService.close().catch(() => undefined);
+    await workspaceIndex.close().catch(() => undefined);
+    await startupBackup;
+    database.close();
+  });
 
   return {
     services,
@@ -1619,20 +1633,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       readSettings().tunnelAutoReconnect,
     ),
     autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
-    close: (): Promise<void> => {
-      closePromise ??= (async (): Promise<void> => {
-        stopToolAvailabilityWatch();
-        await remoteMcpController.close();
-        await tunnelController.shutdownForDesktopExit();
-        logHub.stop();
-        await mcpLifecycle.close();
-        await extensionsService.close().catch(() => undefined);
-        await workspaceIndex.close().catch(() => undefined);
-        await startupBackup;
-        database.close();
-      })();
-      return closePromise;
-    },
+    close: closeRuntime,
   };
 }
 
@@ -1891,7 +1892,7 @@ async function buildGitSummary(
   gitService: GitService,
   fileActor: FileActor,
 ): Promise<DashboardSnapshot['gitSummary']> {
-  const result = await gitService.status(fileActor, workspace.id);
+  const result = await gitService.statusSummary(fileActor, workspace.id);
   if (!result.ok) {
     return {
       branch: null,

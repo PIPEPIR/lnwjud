@@ -1,6 +1,33 @@
 import type { MenuItemConstructorOptions } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { CloseBehavior, UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { nativeMessages } from './native-i18n.js';
+
+const mainDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+export function getTrayIconPath(platform: NodeJS.Platform = process.platform): string | undefined {
+  const pngCandidates = [
+    path.resolve(mainDirectory, '..', 'renderer', 'logo.png'),
+    path.resolve(mainDirectory, '..', 'renderer', 'logo-192.png'),
+    path.resolve(mainDirectory, '..', '..', 'build', 'icon.png'),
+    path.resolve(mainDirectory, '..', '..', 'src', 'renderer', 'public', 'logo.png'),
+  ];
+  const windowsCandidates = [
+    path.resolve(mainDirectory, '..', 'renderer', 'favicon.ico'),
+    path.resolve(mainDirectory, '..', '..', 'build', 'icon.ico'),
+    ...pngCandidates,
+  ];
+  // Linux desktop trays are most consistently backed by PNG pixmaps while
+  // Windows keeps ICO as its native first choice. macOS also needs PNG so it
+  // can be converted to a template image by the Tray composition code.
+  const candidates = platform === 'win32' ? windowsCandidates : pngCandidates;
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
 
 export interface TrayMenuActions {
   readonly locale: UiLocale;

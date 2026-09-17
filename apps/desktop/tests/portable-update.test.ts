@@ -8,6 +8,7 @@ import {
   detectWindowsDistribution,
   detectUpdaterDistribution,
   portableReplacementScript,
+  usesElectronUpdaterInstall,
 } from '../src/main/portable-update.js';
 
 describe('Windows distribution-aware auto updater', () => {
@@ -17,6 +18,14 @@ describe('Windows distribution-aware auto updater', () => {
     expect(detectUpdaterDistribution(true, 'linux', {})).toBe('unsupported');
     expect(detectUpdaterDistribution(true, 'freebsd', {})).toBe('unsupported');
     expect(detectUpdaterDistribution(false, 'darwin', {})).toBe('unsupported');
+  });
+
+  it('routes Windows installers, macOS, and Linux AppImage through electron-updater install while keeping portable/unsupported formats out', () => {
+    expect(usesElectronUpdaterInstall('installer')).toBe(true);
+    expect(usesElectronUpdaterInstall('macos')).toBe(true);
+    expect(usesElectronUpdaterInstall('linux-appimage')).toBe(true);
+    expect(usesElectronUpdaterInstall('portable')).toBe(false);
+    expect(usesElectronUpdaterInstall('unsupported')).toBe(false);
   });
 
   it('distinguishes electron-builder portable launches from installed builds', () => {

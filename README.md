@@ -51,7 +51,11 @@
 
 ---
 
-## What's new in v5.2.1
+## Development target: v5.2.2 (unreleased)
+
+## Current published version: v5.2.1
+
+### What's new in v5.2.1
 
 - **Responsive Git summaries:** untracked directories stay collapsed, and dashboard refresh no longer reads every untracked file to count lines.
 - **Bounded filesystem scans:** backup and portable-scheduler discovery no longer starts an unbounded batch of file reads.

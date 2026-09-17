@@ -48,10 +48,17 @@ describe('GitAdapter integration', () => {
 
     const adapter = new GitAdapter(new DirectGitRunner());
     const status = await adapter.status(root);
+    const summary = await adapter.statusSummary(root);
     const diff = await adapter.diff(root, { path: filename });
     const log = await adapter.log(root, { maxCommits: 20 });
 
     expect(status).toMatchObject({ ok: true, value: { entries: [
+      { path: filename, kind: 'modified' },
+      { path: 'artifacts/nested/two.txt', kind: 'untracked' },
+      { path: 'artifacts/one.txt', kind: 'untracked' },
+      { path: 'untracked file.txt', kind: 'untracked' },
+    ] } });
+    expect(summary).toMatchObject({ ok: true, value: { entries: [
       { path: filename, kind: 'modified' },
       { path: 'artifacts/', kind: 'untracked' },
       { path: 'untracked file.txt', kind: 'untracked' },

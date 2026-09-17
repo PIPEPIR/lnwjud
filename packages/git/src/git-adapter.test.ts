@@ -18,6 +18,14 @@ describe('GitAdapter', () => {
     const result = await new GitAdapter(runner).status('C:\\workspace');
 
     expect(result).toMatchObject({ ok: true, value: { entries: [{ path: 'file.txt', kind: 'modified' }] } });
+    expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd: 'C:\\workspace' }]);
+  });
+
+  it('uses collapsed untracked directories for lightweight status summaries', async () => {
+    const runner = new FakeGitRunner({ exitCode: 0, stdout: '?? artifacts/\0', stderr: '' });
+    const result = await new GitAdapter(runner).statusSummary('C:\\workspace');
+
+    expect(result).toMatchObject({ ok: true, value: { entries: [{ path: 'artifacts/', kind: 'untracked' }] } });
     expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], cwd: 'C:\\workspace' }]);
   });
 

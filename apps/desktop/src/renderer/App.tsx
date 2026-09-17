@@ -69,6 +69,7 @@ export function App(): ReactElement {
   const [incidentNotice, setIncidentNotice] = useState<string | null>(null);
   const [incidentBusy, setIncidentBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const updateInstallTransitionRef = useRef(false);
   const [firstRunTunnelTipOpen, setFirstRunTunnelTipOpen] = useState(false);
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
@@ -110,10 +111,16 @@ export function App(): ReactElement {
   useEffect(() => {
     let disposed = false;
     void window.lnwjud.getUpdateStatus().then((status) => {
-      if (!disposed) setUpdateStatus(status);
+      if (!disposed) {
+        updateInstallTransitionRef.current = status.phase === 'installing';
+        setUpdateStatus(status);
+      }
     }).catch(() => undefined);
     const unsubscribe = window.lnwjud.onUpdateStatus((status) => {
-      if (!disposed) setUpdateStatus(status);
+      if (!disposed) {
+        updateInstallTransitionRef.current = status.phase === 'installing';
+        setUpdateStatus(status);
+      }
     });
     return (): void => {
       disposed = true;
@@ -223,7 +230,7 @@ export function App(): ReactElement {
   }
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (refreshBusyRef.current) return;
+    if (refreshBusyRef.current || updateInstallTransitionRef.current) return;
     refreshBusyRef.current = true;
     try {
       const [dashboardResult, workspacesResult] = await Promise.allSettled([
@@ -242,17 +249,21 @@ export function App(): ReactElement {
       } else {
         failures.push(errorMessage(workspacesResult.reason, createTranslator(locale)('error.desktopService')));
       }
-      setBootError(failures.length === 0 ? null : failures.join(' · '));
+      setBootError(updateInstallTransitionRef.current || failures.length === 0 ? null : failures.join(' · '));
     } finally {
       refreshBusyRef.current = false;
     }
   }, [locale]);
 
   useEffect(() => {
+    if (updateStatus?.phase === 'installing') {
+      setBootError(null);
+      return;
+    }
     void refresh();
     const interval = window.setInterval(() => { void refresh(); }, 2_000);
     return (): void => { window.clearInterval(interval); };
-  }, [refresh]);
+  }, [refresh, updateStatus?.phase]);
 
   useEffect(() => {
     if (selectedWorkspaceId === null) {
@@ -368,12 +379,15 @@ export function App(): ReactElement {
   async function handleUpdateAction(): Promise<void> {
     try {
       if (updateStatus?.canInstall === true) {
+        updateInstallTransitionRef.current = true;
         const result = await window.lnwjud.installUpdate();
+        updateInstallTransitionRef.current = result.status.phase === 'installing';
         setUpdateStatus(result.status);
         return;
       }
       setUpdateStatus(await window.lnwjud.checkForUpdates());
     } catch (cause: unknown) {
+      updateInstallTransitionRef.current = false;
       setError(errorMessage(cause, locale === 'th' ? 'ไม่สามารถตรวจอัปเดตได้' : 'Unable to check for updates'));
     }
   }
@@ -821,6 +835,7 @@ export function App(): ReactElement {
     <AppShell
       locale={locale}
       appVersion={dashboard.appVersion}
+      hostPlatform={dashboard.hostPlatform}
       mcpRunning={dashboard.mcp.running}
       desktopFullBypassOn={dashboard.permissionProfile === 'full' && dashboard.settings?.desktopFullBypassAll === true}
       stdioFullBypassOn={dashboard.stdioPermissionProfile === 'full' && dashboard.settings?.stdioFullBypassAll === true}
