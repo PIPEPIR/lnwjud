@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.1.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.2.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.1.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.2.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.1.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.2.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.2.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.2.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.2.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.1.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.2.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,113 +51,11 @@
 
 ---
 
-## Development target: v5.2.0 (unreleased)
+## What's new in v5.2.0
 
-`dev` is preparing v5.2.0. The public release remains v5.1.1 until the normal `dev → main → tag → Release` gates are completed.
-
-- **Remote MCP / ngrok restart fix (#86):** observed runtime ngrok URLs are no longer persisted as launch configuration. `--url` is used only when the user explicitly saves a reserved Static/Custom Domain, with schema-v1 state migrating without pinning the previously observed URL.
-- **Incident evidence across restart:** Incident capture now includes bounded, sanitized persisted desktop crash/lifecycle history, so a restart no longer erases the evidence needed to diagnose the previous failure.
-- **Main-process CPU / idle cleanup (#85):** fixes an idle-sweeper completion race that could permanently suppress later cleanup passes when the first pass ran before the deadline, with a deterministic regression that exercises that exact ordering.
-
-## Current published version: v5.1.1
-
-`v5.1.1` is the current published release. The verified `dev → main → tag → Release` flow completed successfully, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.1.1) contains every target architecture, package format, checksum, and provenance file.
-
-### What's new in v5.1.1
-
-- **Deterministic MCP idle cleanup:** the manager no longer waits on an already-settled connection queue while closing an idle session. This removes the intermittent sweep stall that could leave a Serena/External MCP process alive after its idle deadline; active in-flight calls still receive the bounded close grace period.
-
-### Historical: What's new in v5.1.0
-
-- **Bounded retained memory:** completed process history is capped at 32 records and each completed log is compacted to its newest 256 KiB; stale process-owner entries are pruned when the underlying process no longer exists.
-- **Clean, bounded Live Logs:** terminal ANSI/VT control sequences are stripped at shared log and audit-detail boundaries before UI, copy, and export, with an 8 KiB line limit, an 8 MiB budget per main-process source, and a 24 MiB serialized-payload budget in each renderer window.
-- **External MCP lifecycle hardening:** idle close is in-flight aware; pending connections are aborted during shutdown/reconcile; POSIX children run in an owned `setsid` process group; Windows uses verified `taskkill /T /F`; settings changes disconnect stale sessions immediately; and `mcp_list`/Doctor expose `termination_unverified` instead of hiding an unproven cleanup.
-- **Cross-platform evidence:** production stdio has a ten-cycle connect/use/close soak regression, and target-native package gates passed for Windows, macOS (arm64/x64), Linux (arm64/x64), plus macOS 26 compatibility.
-
-### Historical: What's new in v5.0.2
-
-- **Codex Delegation hard-off:** when Codex Delegation is disabled, every Codex-backed front door is system-ineligible, including `codex_*`, `agent_swarm_run`, `delegate`, `delegate_status`, `delegate_cancel`, `delegate_result`, and `parallel_delegate`.
-- **Override-safe feature boundary:** a stale per-tool `enabled` override cannot re-expose Codex-backed delegation while the feature is OFF; Desktop readiness and MCP runtime now share the same classifier.
-- **Tool catalog contract:** the registry still contains 253 definitions, advertises 241 by default, and advertises all 253 when Codex Delegation plus Agent Swarm is enabled.
-
-### Historical: What's new in v5.0.1
-
-- **Tunnel incident diagnostics v2:** exported incidents now preserve process exit/restart evidence, OAuth refresh diagnostics, transport/network clues, client-version probe results, and sanitized tunnel log messages without storing credentials.
-- **Reconnect evidence:** persistent tunnel supervision records restart attempts, outcomes, last known process IDs, and managed-runtime limitations so disconnects can be diagnosed instead of collapsing into a generic stopped state.
-- **Version probing fallback:** Windows tunnel-client inspection falls back to the runtime `--version` command when file-version metadata is unavailable.
-- **Consistent timestamps:** UI/log copy and incident evidence use the shared Asia/Bangkok 24-hour display contract, while incident JSON records its timezone and offset-aware timestamps explicitly.
-
-### Historical: What's new in v5.0.0
-
-- **Durable Goal Plan + acceptance:** authoritative goal state now exposes a user-facing plan projection, explicit acceptance criteria/evidence, and completion gates instead of treating prose checkpoints as the finish line.
-- **Newest user intent wins:** `userIntentRevision` fences stale generated work, while durable delivery receipts track reserved, attempted, ambiguous-dispatch, confirmed, completed, cancelled, and retired states without blind replay.
-- **Context Capsule / compact state:** bounded immutable capsules preserve objective, steering, completed/remaining work, decisions, validation, changed files, artifacts, blockers, and next action without storing private chain-of-thought.
-- **Goal-first handoff:** `session_handoff` uses Durable Goal + the latest Context Capsule first, then Git/workspace state and only then the optional legacy phase tracker.
-- **Native-only ChatGPT continuation:** compact/resume state never clicks, types into, scrapes, or creates ChatGPT browser conversations. Long-running continuation stays on supported Native ChatGPT Scheduled Tasks plus local durable state.
-- **Bounded review loops:** iteration has explicit limits and stale-intent fences instead of an unbounded autonomous browser-message loop; context-pressure reporting is explicitly an estimate unless the provider exposes exact usage.
-- **Settings text editing fix:** multiline configuration fields keep newlines while editing, and `LSP Commands — LANGUAGE=COMMAND` accepts incomplete draft text such as `typescript=` before validation/save.
-- **253-tool contract:** the MCP registry contains 253 definitions, advertises 241 by default, and advertises all 253 when Codex delegation plus Agent Swarm are enabled.
-
-### Historical: What's new in v4.70.1
-
-- **Progressive log rendering:** Work Log and Live Logs render bounded batches while scrolling instead of mounting thousands of rows at once; Recovery lists use the same progressive pattern for large histories.
-- **Fresh visible log sessions:** reopening the desktop starts Work Log and file-backed Live Log views from the new session boundary without deleting persisted SQLite audit history or existing log files.
-- **Human-readable log exports:** exported Work Log and Live Log files default to `.log`, retain optional `.txt` output, and use structured headers, numbered entries, localized labels, readable spacing, and preserved technical metadata/detail.
-- **Clearer tunnel settings:** Persistent Tunnel Runtime now lives inside the Tunnel block instead of appearing as a third top-level connection method beside OAuth and Tunnel.
-
-### Historical: What's new in v4.70.0
-
-- **Full ECC provider integration:** lnwjud can inventory and selectively load pinned ECC agents, skills, command shims, layered rules, hooks, workflows, MCP templates, instincts, and supporting resources without granting imported content extra runtime authority.
-- **ECC Memory Vault:** new `ecc_memory_*` tools provide bounded local `ecc.memory.v1` save/search/read/doctor workflows with create-only unreviewed memory, explicit user-scope opt-in, completeness checks, and no automatic promotion into policy.
-- **AgentShield security boundary:** `ecc_security_scan` runs the pinned bundled AgentShield scanner with bounded JSON output and no auto-fix, network expansion, or imported hook/workflow execution.
-- **Packaged ECC provenance:** Windows, macOS, and Linux packaging materialize the pinned ECC runtime and security scanner as verified resources with third-party/license provenance instead of depending on ambient global installs.
-- **Historical v4.70.0 242-tool contract:** that release contained 242 definitions, advertised 235 by default, and advertised all 242 when Codex delegation plus Agent Swarm were enabled.
-
-### Historical: What's new in v4.62.2
-
-- **OAuth-aware Doctor:** when OAuth-protected Remote MCP is the active ChatGPT connection, Doctor no longer reports Secure MCP Tunnel runtime/auth/health failures for the intentionally unused transport.
-- **macOS 26 community-package launch fix:** ad-hoc Electron main/helper process signatures keep hardened runtime but add the scoped `disable-library-validation` entitlement required for ad-hoc Electron Framework loading on macOS 26. Developer ID builds keep normal Library Validation and must retain one Team ID.
-- **macOS 26 exact-artifact release gate:** macOS arm64/x64 packages continue to build on macOS 15, then the same DMG/ZIP bytes are downloaded, provenance-verified, signature-policy-verified, launched through LaunchServices, and smoke-tested on `macos-26` / `macos-26-intel` before publication.
-- **Ponytail FULL activation fix:** the canonical bundled `skills_read` path now carries workspace/goal scope and counts as activation evidence, so a correct Ponytail load no longer loops on the same mutation-blocking error.
-- **Cross-platform capture completion:** carries forward the pending Windows/macOS/Linux window/display capture, DPI/coordinate mapping, native capture, and MCP image-delivery hardening that was present locally but had not been committed into v4.62.1.
-
-### Historical: What's new in v4.62.1
-
-- **External MCP error passthrough:** child `tools/call` now bypasses the SDK layer's eager output-schema validation so a real `isError: true` result reaches lnwjud unchanged; successful structured output and the MCP result envelope are still validated, with regression coverage for the exact SDK-layer failure path reported in Issue #53.
-- **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
-- **Image integrity guard:** Windows Vision validates the encoded PNG before returning it and attaches byte-length/SHA-256 metadata; the MCP result mapper rejects truncated, malformed, dimension-mismatched, or checksum-mismatched image payloads instead of silently handing a corrupted image to the model.
-- **Stable search during live refresh:** Work Log and Live Logs now freeze workspace metadata together with the visible log snapshot, so background dashboard polling cannot restart full-detail search or flash between results, loading, and empty states while a query is active. New activity resumes when search is cleared.
-- **External MCP image passthrough:** `mcp_call` now preserves child MCP `image` and `text` content blocks instead of flattening the child `CallToolResult` into JSON text, so screenshots from Serena/custom MCP servers can reach the model as images.
-- **Window capture targeting:** `vision:capture_window` now accepts natural `app.name` selectors, prefers a visible non-minimized matching HWND when apps expose several helper windows, and reports minimized/hidden-window states directly instead of collapsing them into generic `Operation failed` errors.
-- **Manual Tunnel stop precedence:** an explicit **Stop Tunnel** persists the desired stopped state and now stays visually stopped even when an external liveness probe is temporarily unverifiable; Auto Reconnect does not override that operator stop, while the next explicit Start still fails closed if duplicate-process liveness cannot be proven.
-- **Calmer Tunnel startup UX:** transient managed-runtime readiness retries stay internal while the Home card simply shows the normal starting state; only genuine Tunnel failures are surfaced as red alerts.
-- **Zero-click ChatGPT OAuth:** Business custom apps using supported `chatgpt.com` OAuth callbacks—including newly created Plugin/App callbacks shaped as `/connector/oauth/<redirect_id>`—complete DCR + Authorization Code + PKCE through a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener, so workspace members press **Connect** without copying a PIN. The public gateway never grants trust from the callback URI alone; the 6-digit PIN remains only as a fail-closed fallback for non-ChatGPT OAuth clients.
-- **Simpler Home UX:** Home now presents one **ChatGPT Connection** area with Remote MCP OAuth as the primary path and Secure MCP Tunnel as an advanced option, moves Desktop Agent stop/restart/incident actions behind an overflow menu, labels the sidebar **Desktop Agent · Windows/macOS/Linux**, and removes the redundant `MODE / WORK` status card.
-- **Stable Remote MCP public URL:** ngrok Free already provides an assigned development domain. lnwjud now remembers the first successful HTTPS origin in encrypted Remote MCP state and reuses that origin through ngrok `--url` on later starts/updates, refusing to silently switch the ChatGPT endpoint if it drifts. Users do not need to buy/register their own domain; custom domains remain optional, and re-saving the ngrok authtoken intentionally resets the remembered origin for account/domain changes.
-- **Secure Tunnel multi-chat headroom:** one lnwjud Desktop + one Secure Tunnel can serve multiple simultaneous ChatGPT chats without creating a profile per chat. v4.62.0 raises the bundled tunnel transport's active MCP-request allowance from tunnel-client's default 10 to 32 and adds a real 3-session/12-request concurrency regression. Multi-host routing is separate: Mac/Windows hosts that must be independently selectable should use distinct Tunnel IDs/ChatGPT connections because replicas sharing one Tunnel ID consume queued work from whichever host polls first.
-- **macOS signing normalization (superseded by v4.62.2 for macOS 26):** v4.62.1 normalized Electron's nested ad-hoc signatures and rejected mixed Team-ID state, but Issue #59 proved that normalization alone was insufficient for community ad-hoc packages on macOS 26.
-- **Regression coverage:** mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge tests cover image delivery and reliable window targeting.
-
-### Historical: What's new in v4.61.0
-
-- **Stable log search and pause:** Work Log and every Live Logs tab freeze the visible feed while a search is active, so newly arriving events cannot jump into or reorder the result list while you type or inspect matches. Clearing search resumes the current live feed. Live Logs **Pause** now freezes the feed itself, and **Follow** resumes only when no search is holding the snapshot.
-- **Durable background-task lifecycle:** shell tasks finalize from the direct command's terminal state instead of being stranded by detached descendants that keep inherited stdio handles open.
-- **External MCP lifecycle hardening:** pending child connections are fenced during shutdown, so a late Serena/custom MCP connection cannot resurrect a session after the session manager has closed.
-- **Windows and WSL correctness:** Windows Event Log runtime-contract checks use deterministic runtime evidence, while WSL translates supported Windows working directories before Linux execution.
-- **Persistence and diagnostics:** secret recovery, SQLite close ownership, tunnel restart/terminal handling, Doctor applicability, and bounded/path-guarded Git diff behavior are hardened for the release.
-- **External MCP compatibility:** child MCP servers auto-negotiate their protocol version, covering legacy/2025-era servers such as Serena as well as current MCP `2026-07-28`, while lnwjud's own inbound MCP contract remains unchanged. External MCP definitions saved in Settings are applied live, so adding or changing Serena/custom servers does not require restarting lnwjud.
-- **Cross-platform hardening:** Windows, macOS, and Linux now use explicit host/architecture capability gates instead of Windows-shaped fallbacks. Unsupported OS/architecture combinations fail closed.
-- **Native Ponytail coding policy:** optional `OFF / LITE / FULL / ULTRA` modes default to OFF, resolve `Current Goal > Workspace > Global`, and use exact bundled Ponytail skills rather than relying on discovery ranking. Active modes require the exact bundled primary skill before code mutation; FULL/ULTRA durable coding goals additionally require a fresh bundled Ponytail review before completion. Full Bypass does not bypass this correctness gate, while explicit session suppression remains available without changing persisted policy.
-- **macOS package verification:** release checks stage the app from the actual DMG, launch it through macOS LaunchServices, verify nested code signing, and distinguish Developer ID Team-ID requirements from development ad-hoc signing.
-- **Runtime dependencies:** target-native assets are selected by exact `(platform, architecture)` tuples. Current pins include OpenAI `tunnel-client 0.0.14`, `ripgrep 15.2.0`, and Windows Poppler `26.07.0-0`, with checksum/provenance/version checks before packaging.
-- **Remote MCP / ngrok:** ngrok discovery now works across Windows, macOS, and Linux. Automatic installation is shown only when the host has a supported installer path; unsupported installer actions are hidden instead of pretending they work.
-- **PDF providers:** PDF tooling can use a configured native `pdftotext` where supported; the bundled Poppler auto-installer remains Windows x64-only and is hidden on unsupported hosts.
-- **Recovery and persistence:** MCP settings, backup/checkpoint/recovery paths, secret-storage boundaries, tunnel state, cross-host restore metadata, and data-root selection were audited for Windows/macOS/Linux semantics. Recovery Trash/checkpoint retention now defaults to **30 days only when the user has never configured it**; existing explicit values, including `Never` (`0`), are preserved.
-- **Unified timestamps:** Thai UI uses Bangkok time with 24-hour display; English uses the host timezone with AM/PM presentation, while machine timestamps remain absolute internally.
-- **Responsiveness:** heavy ripgrep output and Live Log traffic are bounded/batched to reduce Electron `Not Responding` hangs and runaway memory churn.
-- **Release verification:** v4.61.0 is gated by full workspace tests, Electron acceptance/E2E, packaging and release-gate suites, plus exact-commit target-native Windows/macOS/Linux CI before tagging.
-
-> Public `v4.61.0` should be tagged only after the exact-main Windows/macOS/Linux release matrix, SHA-scoped artifacts, and packaged-app smoke checks are green for the exact commit.
+- **Remote MCP reliability:** fixed ngrok restart failures and made Static/Custom Domain handling explicit and stable.
+- **Better incident diagnostics:** crash and lifecycle evidence now survives app restarts, making previous failures easier to investigate.
+- **Lower idle CPU and more reliable cleanup:** fixed an External MCP idle-sweeper race that could suppress later cleanup passes and leave sessions running.
 
 ## Install
 

@@ -54,17 +54,15 @@ describe('cross-platform desktop packaging', () => {
     const version = String(rootPackage.version);
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
     const fullReadme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
-    expect(readme.includes(`Development target: v${version}`) || readme.includes(`Current version: v${version}`)).toBe(true);
-    expect(fullReadme.includes(`Development target: v${version}`) || fullReadme.includes(`Current version: v${version}`)).toBe(true);
+    expect(readme).toContain(`What's new in v${version}`);
+    expect(fullReadme).toContain(`What's new in v${version}`);
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
 
-    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
-      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
-    expect(publishedVersion).toBeTruthy();
+
     const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
-    expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
-    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
+    expect(usageTh).toContain(`lnwjud v${version} (ภาษาไทย)`);
+    expect(usageTh).toContain(`public release \`v${version}\``);
 
     const expectedReferences: ReadonlyArray<readonly [string, string]> = [
       ['docs/INSTALL_MACOS.md', `v${version} native macOS release target`],
