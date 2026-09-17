@@ -50,7 +50,7 @@ export class GitAdapter {
 
   public async status(cwd: string, signal?: AbortSignal): Promise<Result<GitStatusResult>> {
     const result = await this.runner.run(
-      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      ['status', '--porcelain=v1', '-z', '--untracked-files=normal'],
       cwd,
       this.signalOptions(signal),
     );

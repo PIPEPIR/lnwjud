@@ -805,10 +805,15 @@ function validDataSchemaVersion(value: unknown): value is number {
 async function listManifests(directory: string): Promise<BackupManifest[]> {
   await mkdir(directory, { recursive: true });
   const names = await readdir(directory);
-  const values = await Promise.all(names.filter((name) => name.startsWith('backup-') && name.endsWith('.json')).map(async (name) => {
-    try { return parseManifest(await readFile(path.join(directory, name), 'utf8'), directory); } catch { return null; }
-  }));
-  return values.filter((value): value is BackupManifest => value !== null).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const manifests: BackupManifest[] = [];
+  for (const name of names) {
+    if (!name.startsWith('backup-') || !name.endsWith('.json')) continue;
+    try {
+      const manifest = parseManifest(await readFile(path.join(directory, name), 'utf8'), directory);
+      if (manifest !== null) manifests.push(manifest);
+    } catch { /* Ignore invalid manifests. */ }
+  }
+  return manifests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 async function readStoredManifestById(directory: string, id: string): Promise<StoredBackupManifest | null> {

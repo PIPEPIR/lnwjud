@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.2.0', async () => {
+  it('[version-contract] pins the product release to v5.2.1', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.2.0');
-    expect(desktopPackage.version).toBe('5.2.0');
+    expect(rootPackage.version).toBe('5.2.1');
+    expect(desktopPackage.version).toBe('5.2.1');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,28 +41,35 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.2.0');
+      expect(packageJson.version, packagePath).toBe('5.2.1');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.2.0'");
-    expect(shared).toContain("APP_VERSION = '5.2.0'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.2.1'");
+    expect(shared).toContain("APP_VERSION = '5.2.1'");
   });
 
-  it('[version-contract] keeps current-version documentation and runtime copy aligned with the root version', async () => {
+  it('[version-contract] keeps published-version documentation and runtime copy aligned with the root version', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const version = String(rootPackage.version);
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
     const fullReadme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
-    expect(readme).toContain(`What's new in v${version}`);
-    expect(fullReadme).toContain(`What's new in v${version}`);
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
 
 
     const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
-    expect(usageTh).toContain(`lnwjud v${version} (ภาษาไทย)`);
-    expect(usageTh).toContain(`public release \`v${version}\``);
+    const developmentVersion = readme.match(/^## Development target: v([0-9.]+) \(unreleased\)$/m)?.[1];
+    const publishedVersion = readme.match(/^## Current published version: v([0-9.]+)$/m)?.[1]
+      ?? readme.match(/^## What's new in v([0-9.]+)$/m)?.[1];
+    expect(publishedVersion).toBeTruthy();
+    if (developmentVersion === undefined) expect(publishedVersion).toBe(version);
+    else expect(developmentVersion).toBe(version);
+    expect(fullReadme).toContain(developmentVersion === undefined
+      ? `## What's new in v${publishedVersion}`
+      : `## Current published version: v${publishedVersion}`);
+    expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
+    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
 
     const expectedReferences: ReadonlyArray<readonly [string, string]> = [
       ['docs/INSTALL_MACOS.md', `v${version} native macOS release target`],

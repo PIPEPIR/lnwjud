@@ -26,6 +26,7 @@ native/windows-ocr/obj/
 # Test & Coverage
 coverage/
 test-results/
+artifacts/
 .local-artifacts/
 
 # Environment Variables & Secrets

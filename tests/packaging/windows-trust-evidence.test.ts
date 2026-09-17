@@ -81,7 +81,7 @@ describe('Windows release trust evidence', () => {
     expect(ci).toContain('WINDOWS_CSC_KEY_PASSWORD');
     expect(release).toContain('native-darwin-arm64-$sha');
     expect(release).toContain('native-linux-arm64-$sha');
-    expect(release).toContain('RELEASE_MANIFEST.json');
+    expect(release).toContain('collect-release-assets.mjs');
     expect(release).not.toContain('Get-AuthenticodeSignature');
     expect(release).toContain('LNWJUD_EXPECTED_COMMIT_SHA');
     expect(release).toContain('verify-release-evidence.mjs');

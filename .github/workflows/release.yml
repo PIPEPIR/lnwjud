@@ -134,6 +134,17 @@ jobs:
           LNWJUD_RELEASE_COMMIT: ${{ github.sha }}
         run: node scripts/collect-release-assets.mjs
 
+      - name: Generate standardized release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/release-notes.mjs \
+            --tag "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${GITHUB_SHA}" \
+            --output release-notes.md
+
       - name: Publish verified cross-platform release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -141,10 +152,7 @@ jobs:
           fail_on_unmatched_files: true
           draft: false
           prerelease: false
-          generate_release_notes: true
-          body: |
-            Published from the exact successful CI commit `${{ github.sha }}`.
-
-            The release contains target-native Windows, macOS (arm64/x64), and Linux (x64/arm64) artifacts. `RELEASE_MANIFEST.json`, per-target provenance, and aggregate SHA-256 evidence describe the artifact set. No package or build step runs in this tag workflow.
+          generate_release_notes: false
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

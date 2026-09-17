@@ -151,4 +151,31 @@ describe('context engine', () => {
     expect(second.value.economy?.ledgerHits).toBeGreaterThan(0);
     expect(second.value.economy?.previouslySeenBytesAvoided).toBeGreaterThan(0);
   });
+
+  it('bounds concurrent context file reads', async () => {
+    let activeReads = 0;
+    let peakReads = 0;
+    const base = services();
+    const engine = new ContextEngine({
+      ...base,
+      file: {
+        async readFile(_actor, _workspaceId, request): Promise<ReturnType<typeof ok>> {
+          activeReads += 1;
+          peakReads = Math.max(peakReads, activeReads);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activeReads -= 1;
+          return ok({ path: request.path, content: '', startLine: 1, endLine: 1, encoding: 'utf8' as const });
+        },
+      },
+    }, actor);
+
+    const result = await engine.readMany({
+      workspaceId: 'workspace-1',
+      files: Array.from({ length: 20 }, (_, index) => ({ path: `file-${index}.txt` })),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(peakReads).toBeGreaterThan(1);
+    expect(peakReads).toBeLessThanOrEqual(8);
+  });
 });
