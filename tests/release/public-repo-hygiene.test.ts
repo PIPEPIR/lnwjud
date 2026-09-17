@@ -64,7 +64,7 @@ describe('public repository hygiene', () => {
     expect(leaks, `developer-specific content found in: ${leaks.join(', ')}`).toEqual([]);
   }, 15_000);
 
-  it('[version-contract] documents the package version as the current development target without rewriting the public release', async () => {
+  it('[version-contract] documents the package version as the current public release', async () => {
     const [readme, expandedReadme, packagingWindows, usageTh] = await Promise.all([
       readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
@@ -75,14 +75,9 @@ describe('public repository hygiene', () => {
     expect(typeof rootPackage.version).toBe('string');
     const version = rootPackage.version as string;
 
-    expect(readme.includes(`## Development target: v${version}`) || readme.includes(`## Current version: v${version}`)).toBe(true);
-    expect(expandedReadme.includes(`## Development target: v${version}`) || expandedReadme.includes(`## Current version: v${version}`)).toBe(true);
-    const publishedVersion = readme.match(/## Current published version: v([0-9.]+)/)?.[1]
-      ?? readme.match(/## Current version: v([0-9.]+)/)?.[1];
-    expect(publishedVersion).toBeTruthy();
-    expect(expandedReadme.includes(`## Current published version: v${publishedVersion}`)
-      || expandedReadme.includes(`## Current version: v${publishedVersion}`)).toBe(true);
-    expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
+    expect(readme).toContain(`## What's new in v${version}`);
+    expect(expandedReadme).toContain(`## What's new in v${version}`);
+    expect(usageTh).toContain(`public release \`v${version}\``);
     expect(packagingWindows).toContain(`lnwjud-Setup-${version}.exe`);
     expect(packagingWindows).toContain(`lnwjud-Portable-${version}.exe`);
     expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
