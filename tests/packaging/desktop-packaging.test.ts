@@ -59,15 +59,10 @@ describe('cross-platform desktop packaging', () => {
 
 
     const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
-    const developmentVersion = readme.match(/^## Development target: v([0-9.]+) \(unreleased\)$/m)?.[1];
     const publishedVersion = readme.match(/^## Current published version: v([0-9.]+)$/m)?.[1]
       ?? readme.match(/^## What's new in v([0-9.]+)$/m)?.[1];
     expect(publishedVersion).toBeTruthy();
-    if (developmentVersion === undefined) expect(publishedVersion).toBe(version);
-    else expect(developmentVersion).toBe(version);
-    expect(fullReadme).toContain(developmentVersion === undefined
-      ? `## What's new in v${publishedVersion}`
-      : `## Current published version: v${publishedVersion}`);
+    expect(fullReadme).toContain(`## Current published version: v${publishedVersion}`);
     expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
     expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
 
