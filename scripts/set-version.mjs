@@ -33,15 +33,6 @@ function isMissingPath(error) {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
-function markDevelopmentTarget(content, version) {
-  if (/## Development target: v[^\r\n]+ \(unreleased\)/.test(content)) {
-    return content.replace(/## Development target: v[^\r\n]+ \(unreleased\)/, `## Development target: v${version} (unreleased)`);
-  }
-  return content.replace(/## What's new in v([0-9A-Za-z.+-]+)/, (heading, publishedVersion) => publishedVersion === version
-    ? heading
-    : `## Development target: v${version} (unreleased)\n\n## Current published version: v${publishedVersion}\n\n### What's new in v${publishedVersion}`);
-}
-
 async function syncAllVersions() {
   const rootPkgPath = path.join(rootDir, 'package.json');
   const rootPkg = JSON.parse(await readFile(rootPkgPath, 'utf8'));
@@ -118,7 +109,7 @@ async function syncAllVersions() {
   const readmePaths = [path.join(rootDir, 'README.md'), path.join(rootDir, 'FULL_README.md')];
   for (const readmePath of readmePaths) {
     let readmeContent = await readFile(readmePath, 'utf8');
-    readmeContent = markDevelopmentTarget(readmeContent, version)
+    readmeContent = readmeContent
       .replace(/## Current (?:version|source \/ release candidate|release): v[0-9.]+/g, `## Current version: v${version}`)
       .replace(/(`dev` (?:branch is )?preparing )v[0-9.]+/g, `$1v${version}`)
       .replace(/The v[0-9.]+ development runtime contract/g, `The v${version} development runtime contract`)
