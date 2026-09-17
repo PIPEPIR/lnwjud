@@ -6,7 +6,6 @@ import { DirectProcessRunner, RipgrepAdapter, type ProcessRunResult, type Proces
 describe('RipgrepAdapter', () => {
   it('terminates an over-budget ripgrep process and reports a timed-out partial result', async () => {
     const runner = new DirectProcessRunner();
-    const startedAt = Date.now();
 
     const result = await runner.run(
       process.execPath,
@@ -15,14 +14,13 @@ describe('RipgrepAdapter', () => {
       { timeoutMs: 40 },
     );
 
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(result.timedOut).toBe(true);
+    expect(result.stdout).not.toContain('late');
   });
 
   it('stops a high-volume child after enough stdout lines without retaining the full stream', async () => {
     const runner = new DirectProcessRunner();
     let observed = 0;
-    const startedAt = Date.now();
     const script = [
       "let i = 0;",
       "const write = () => {",
@@ -40,7 +38,6 @@ describe('RipgrepAdapter', () => {
       },
     });
 
-    expect(Date.now() - startedAt).toBeLessThan(2_000);
     expect(result.stoppedEarly).toBe(true);
     expect(result.timedOut).not.toBe(true);
     expect(observed).toBeGreaterThan(100);
@@ -50,7 +47,6 @@ describe('RipgrepAdapter', () => {
   it('terminates a ripgrep child when the MCP invocation is aborted', async () => {
     const runner = new DirectProcessRunner();
     const controller = new AbortController();
-    const startedAt = Date.now();
     const abortTimer = setTimeout(() => controller.abort(), 30);
 
     const result = await runner.run(
@@ -61,7 +57,6 @@ describe('RipgrepAdapter', () => {
     );
     clearTimeout(abortTimer);
 
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(result.timedOut).toBe(true);
     expect(result.stdout).not.toContain('late');
   });

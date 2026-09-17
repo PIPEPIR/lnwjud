@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -42,6 +42,9 @@ describe('GitAdapter integration', () => {
     await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root, windowsHide: true });
     await writeFile(path.join(root, filename), 'changed\n', 'utf8');
     await writeFile(path.join(root, 'untracked file.txt'), 'new\n', 'utf8');
+    await mkdir(path.join(root, 'artifacts', 'nested'), { recursive: true });
+    await writeFile(path.join(root, 'artifacts', 'one.txt'), 'one\n', 'utf8');
+    await writeFile(path.join(root, 'artifacts', 'nested', 'two.txt'), 'two\n', 'utf8');
 
     const adapter = new GitAdapter(new DirectGitRunner());
     const status = await adapter.status(root);
@@ -50,6 +53,7 @@ describe('GitAdapter integration', () => {
 
     expect(status).toMatchObject({ ok: true, value: { entries: [
       { path: filename, kind: 'modified' },
+      { path: 'artifacts/', kind: 'untracked' },
       { path: 'untracked file.txt', kind: 'untracked' },
     ] } });
     expect(diff).toMatchObject({ ok: true, value: { patch: expect.stringContaining('changed'), truncated: false } });

@@ -37,4 +37,16 @@ describe('desktop performance contract', () => {
     expect(capabilities).toContain('const wslAvailabilityCache = new AsyncTtlCache<import(\'@lnwjud/domain\').Result<unknown>>(15_000);');
     expect(capabilities).toContain('wslAvailabilityCache.get(async () =>');
   });
+
+  it('does not fan out filesystem reads from unbounded Git, backup, or scheduler lists', () => {
+    const desktop = readFileSync(new URL('../src/main/desktop-services.ts', import.meta.url), 'utf8');
+    const gitSummary = desktop.slice(desktop.indexOf('async function buildGitSummary'), desktop.indexOf('async function buildCodexSummary'));
+    const backups = readFileSync(new URL('../../../packages/storage/src/backup-service.ts', import.meta.url), 'utf8');
+    const schedulers = readFileSync(new URL('../../../packages/capabilities/src/portable-scheduler-backend.ts', import.meta.url), 'utf8');
+
+    expect(gitSummary).not.toContain('Promise.all');
+    expect(gitSummary).not.toContain('readBoundedGitTextFile');
+    expect(backups).not.toContain('Promise.all(names.filter');
+    expect(schedulers).not.toContain('Promise.all(names.map');
+  });
 });

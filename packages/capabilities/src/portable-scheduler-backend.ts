@@ -83,14 +83,15 @@ export class MacosSchedulerCapabilityBackend extends PortableSchedulerCapability
     await this.command('launchctl', ['list'], signal);
     try {
       const names = (await readdir(this.agentsDirectory)).filter((name) => /^com\.lnwjud\.[\w.-]+\.plist$/u.test(name));
-      const tasks = await Promise.all(names.map(async (name) => {
+      const tasks: Record<string, unknown>[] = [];
+      for (const name of names) {
         const plistPath = path.join(this.agentsDirectory, name);
         const contents = await readSchedulerFile(plistPath).catch(() => null);
-        return contents !== null && hasMacOwnershipMarker(contents)
-          ? { name: name.slice('com.lnwjud.'.length, -'.plist'.length), path: plistPath, backend: 'launchd' }
-          : null;
-      }));
-      return tasks.filter((task) => task !== null);
+        if (contents !== null && hasMacOwnershipMarker(contents)) {
+          tasks.push({ name: name.slice('com.lnwjud.'.length, -'.plist'.length), path: plistPath, backend: 'launchd' });
+        }
+      }
+      return tasks;
     } catch { return []; }
   }
 
@@ -132,14 +133,15 @@ export class LinuxSchedulerCapabilityBackend extends PortableSchedulerCapability
     await this.command('systemctl', ['--user', 'list-units', '--type=timer', '--all', '--no-pager', '--plain'], signal);
     try {
       const names = (await readdir(this.unitsDirectory)).filter((name) => /^lnwjud-[\w.-]+\.(service|timer)$/u.test(name));
-      const tasks = await Promise.all(names.map(async (name) => {
+      const tasks: Record<string, unknown>[] = [];
+      for (const name of names) {
         const unitPath = path.join(this.unitsDirectory, name);
         const contents = await readSchedulerFile(unitPath).catch(() => null);
-        return contents !== null && hasLinuxOwnershipMarker(name, contents)
-          ? { name, path: unitPath, backend: 'systemd-user' }
-          : null;
-      }));
-      return tasks.filter((task) => task !== null);
+        if (contents !== null && hasLinuxOwnershipMarker(name, contents)) {
+          tasks.push({ name, path: unitPath, backend: 'systemd-user' });
+        }
+      }
+      return tasks;
     } catch { return []; }
   }
 

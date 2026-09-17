@@ -162,6 +162,7 @@ interface ScanContinuation {
 
 const DEFAULT_RESPONSE_TARGET_BYTES = 256 * 1024;
 const MAX_RESPONSE_TARGET_BYTES = 8 * 1024 * 1024;
+const MAX_FILE_READ_CONCURRENCY = 8;
 const DEFAULT_PAGE_SIZE: Record<ContextMode, number> = { optimized: 12, full: 50, exhaustive: 200 };
 const SEARCH_LIMIT: Record<ContextMode, number> = { optimized: 100, full: 300, exhaustive: 500 };
 
@@ -333,7 +334,7 @@ export class ContextEngine {
     if (!workspaceIds.ok) return workspaceIds;
     const workspaceId = request.workspaceId ?? workspaceIds.value[0];
     if (workspaceId === undefined) return err({ code: 'WORKSPACE_NOT_FOUND', message: 'No workspace is available', recoverable: false });
-    const settled = await Promise.allSettled(request.files.map(async (file) => {
+    const files = await mapInBatches(request.files, MAX_FILE_READ_CONCURRENCY, async (file) => {
       try {
         const result = await this.services.file!.readFile(this.actor, workspaceId, file);
         return result.ok
@@ -342,10 +343,7 @@ export class ContextEngine {
       } catch {
         return { workspaceId, path: file.path, error: { code: 'INTERNAL_ERROR', message: 'File read failed' } };
       }
-    }));
-    const files = settled.map((entry, index) => entry.status === 'fulfilled'
-      ? entry.value
-      : { workspaceId, path: request.files[index]?.path ?? '', error: { code: 'INTERNAL_ERROR', message: 'File read failed' } });
+    });
     return ok({ files, totalFiles: files.length, failedFiles: files.filter((file) => file.error !== undefined).length });
   }
 
@@ -535,7 +533,7 @@ export class ContextEngine {
     const targetBytes = normalizeResponseTarget(request.responseTargetBytes);
     const selectedCandidates = candidates.slice(0, pageSize);
     const contextId = randomUUID();
-    const selected = await Promise.all(selectedCandidates.map((candidate) => this.readCandidate(candidate, request, contextId)));
+    const selected = await mapInBatches(selectedCandidates, MAX_FILE_READ_CONCURRENCY, (candidate) => this.readCandidate(candidate, request, contextId));
     let consumed = selected.length;
     let estimatedBytes = selected.reduce((total, file) => total + Buffer.byteLength(JSON.stringify(file), 'utf8'), 0);
     while (selected.length > 1 && estimatedBytes > targetBytes) {
@@ -670,6 +668,14 @@ function validateRequest(request: WorkspaceContextRequest): Result<void> {
 
 function normalizePageSize(value: number): number {
   return Math.max(1, Math.min(500, Math.floor(value)));
+}
+
+async function mapInBatches<T, R>(values: readonly T[], batchSize: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    results.push(...await Promise.all(values.slice(offset, offset + batchSize).map(mapper)));
+  }
+  return results;
 }
 
 function normalizeResponseTarget(value: number | undefined): number {

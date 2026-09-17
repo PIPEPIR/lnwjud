@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import console from 'node:console';
 import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -72,7 +73,7 @@ function runGhJson(args) {
 
 function stripHeadingDecoration(value) {
   return value
-    .replace(/[🚀🐛🐞🪲🧹📝🔧⚙️]/gu, '')
+    .replace(/(?:🚀|🐛|🐞|🪲|🧹|📝|🔧|⚙️?)/gu, '')
     .trim()
     .toLowerCase();
 }

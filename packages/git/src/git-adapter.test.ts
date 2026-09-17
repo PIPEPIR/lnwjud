@@ -18,7 +18,7 @@ describe('GitAdapter', () => {
     const result = await new GitAdapter(runner).status('C:\\workspace');
 
     expect(result).toMatchObject({ ok: true, value: { entries: [{ path: 'file.txt', kind: 'modified' }] } });
-    expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd: 'C:\\workspace' }]);
+    expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], cwd: 'C:\\workspace' }]);
   });
 
   it('queries the current branch name', async () => {

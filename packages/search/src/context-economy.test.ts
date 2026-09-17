@@ -19,6 +19,10 @@ describe('context economy policy', () => {
       discoverable: false,
       tier: 0,
     });
+    expect(classifyContextPath('artifacts/test-output/result.json', 'automatic')).toMatchObject({
+      discoverable: false,
+      tier: 0,
+    });
     expect(classifyContextPath('node_modules/pkg/index.js', 'explicit')).toMatchObject({
       discoverable: true,
       tier: 3,
@@ -52,6 +56,7 @@ describe('context economy policy', () => {
         '!**/.git/**',
         '!**/dist/**',
         '!**/build/**',
+        '!**/artifacts/**',
         '!**/coverage/**',
         '!**/*.map',
       ]),

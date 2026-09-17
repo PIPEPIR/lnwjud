@@ -1166,7 +1166,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
-        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor, pathGuard));
+        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor));
       const codexToolsEnabled = readSettings().codexToolsEnabled;
       const codex = codexToolsEnabled
         ? await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery))
@@ -1890,7 +1890,6 @@ async function buildGitSummary(
   workspace: Workspace,
   gitService: GitService,
   fileActor: FileActor,
-  pathGuard: WorkspacePathGuard,
 ): Promise<DashboardSnapshot['gitSummary']> {
   const result = await gitService.status(fileActor, workspace.id);
   if (!result.ok) {
@@ -1929,28 +1928,18 @@ async function buildGitSummary(
     message: result.value.entries.length === 0 ? 'Clean working tree' : `${result.value.entries.length} changed file(s)`,
     repositoryPath: workspace.realRootPath,
     isRepo: true,
-    entries: await Promise.all(result.value.entries.map(async (entry) => {
+    entries: result.value.entries.map((entry) => {
       const normalizedPath = entry.path.replace(/\\/g, '/');
       const stats = numstatMap.get(normalizedPath);
-      let additions = stats?.additions;
-      let deletions = stats?.deletions;
-      if (additions === undefined && deletions === undefined && (entry.kind === 'untracked' || entry.worktreeStatus === '?')) {
-        const guarded = await pathGuard.resolveForRead(workspace, entry.path);
-        const content = guarded.ok && guarded.value.realPath !== undefined
-          ? await readBoundedGitTextFile(guarded.value.realPath)
-          : null;
-        additions = content === null ? 0 : (content.length === 0 ? 0 : content.split('\n').length);
-        deletions = 0;
-      }
       return {
         path: entry.path,
         kind: entry.kind,
         indexStatus: entry.indexStatus,
         worktreeStatus: entry.worktreeStatus,
-        additions: additions ?? 0,
-        deletions: deletions ?? 0,
+        additions: stats?.additions ?? 0,
+        deletions: stats?.deletions ?? 0,
       };
-    })),
+    }),
   };
 }
 
