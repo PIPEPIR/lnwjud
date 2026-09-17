@@ -183,11 +183,16 @@ describe('MVP release verification gate', () => {
       expect(releaseProcess).toContain(required);
     }
     expect(contributing).toContain('docs/development/RELEASE_PROCESS.md');
+    for (const heading of ['## Features', '## Bug Fixes', '## Other Changes', '**Full Changelog**']) {
+      expect(releaseProcess).toContain(heading);
+    }
+    expect(releaseProcess).toContain('scripts/release-notes.mjs');
   });
 
   it('uploads every verified target-native package once in CI and reuses exact SHA artifacts for releases', async () => {
     const ci = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
     const release = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const releaseNotes = await readFile(path.join(repositoryRoot, 'scripts', 'release-notes.mjs'), 'utf8');
 
     expect(ci).toContain('actions/upload-artifact@v4');
     expect(ci).toContain('apps/desktop/dist/installers/latest.yml');
@@ -213,7 +218,12 @@ describe('MVP release verification gate', () => {
     expect(release).toContain('LNWJUD_RELEASE_INSTALLER_DIRECTORY');
     expect(release).toContain('node scripts/collect-release-assets.mjs');
     expect(release).toContain('release-assets/*');
-    expect(release).toContain('RELEASE_MANIFEST.json');
+    expect(releaseNotes).toContain('`RELEASE_MANIFEST.json`');
+    expect(release).toContain('Generate standardized release notes');
+    expect(release).toContain('node scripts/release-notes.mjs');
+    expect(release).toContain('generate_release_notes: false');
+    expect(release).toContain('body_path: release-notes.md');
+    expect(release).not.toContain('generate_release_notes: true');
     expect(release).toContain("LNWJUD_RELEASE_ARTIFACT_ONLY: '1'");
     expect(release.indexOf('Download verified target-native CI artifacts')).toBeLessThan(release.indexOf('Verify each downloaded release evidence bundle'));
     expect(release.indexOf('Verify each downloaded release evidence bundle')).toBeLessThan(release.indexOf('Aggregate target-native artifacts and update feeds'));
