@@ -5,6 +5,7 @@ import {
   MIN_GOAL_LEASE_SECONDS,
 } from '@lnwjud/application';
 import { ok } from '@lnwjud/domain';
+import { rankSkillMatches, selectAutoSkillMatches } from '../skill-routing.js';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 
 const goalKey = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
@@ -196,6 +197,37 @@ export const GOAL_TOOL_NAMES = [
   'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
 ] as const;
 
+const MAX_GOAL_SKILL_PREFLIGHT_BYTES = 48 * 1024;
+
+async function loadGoalSkillPreflight(context: McpToolContext, objective: string | undefined): Promise<Readonly<Record<string, unknown>> | undefined> {
+  const query = objective?.trim();
+  const extensions = context.services.extensions;
+  if (query === undefined || query.length === 0 || extensions === undefined) return undefined;
+
+  const listed = await extensions.listSkills({});
+  if (!listed.ok) return { status: 'unavailable', mode: 'auto', loadedSkills: [] };
+  const ranked = rankSkillMatches(listed.value.skills, query, 8);
+  const selected = selectAutoSkillMatches(ranked);
+  if (selected.length === 0) return { status: 'no_match', mode: 'auto', loadedSkills: [] };
+
+  const mode = selected.some((match) => match.explicit) ? 'explicit' : 'auto';
+  const loadedSkills: unknown[] = [];
+  let loadedBytes = 0;
+  for (const match of selected) {
+    const loaded = await extensions.readSkill({ skillId: match.skill.id });
+    if (!loaded.ok) continue;
+    const bytes = Buffer.byteLength(loaded.value.content, 'utf8');
+    if (bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES || loadedBytes + bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES) continue;
+    loadedSkills.push(loaded.value);
+    loadedBytes += bytes;
+  }
+  return {
+    status: loadedSkills.length > 0 ? 'loaded' : 'unavailable',
+    mode,
+    loadedSkills,
+  };
+}
+
 export function goalTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
@@ -224,6 +256,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
           ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         });
         if (!result.ok) return result;
+        const skillPreflight = await loadGoalSkillPreflight(context, input.objective);
         const active = result.value.status === 'active';
         const scheduledContinuation = input.scheduledContinuation ?? 'auto';
         const auto = scheduledContinuation === 'auto';
@@ -247,6 +280,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
                   : 'not_confirmed';
         return ok({
           ...result.value,
+          ...(skillPreflight === undefined ? {} : { skillPreflight }),
           ...(!result.value.acquired && result.value.retryAfterSeconds !== undefined && result.value.retryAfterSeconds <= 60
             ? {
                 leaseGuidance: `Previous worker appears inactive. The bounded stale-recovery grace expires in ${result.value.retryAfterSeconds}s. Wait ${result.value.retryAfterSeconds}s and call run_goal again to take over the lease; do not yield or treat as occupied.`,
