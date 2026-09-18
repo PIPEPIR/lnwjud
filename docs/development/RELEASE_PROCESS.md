@@ -219,9 +219,10 @@ for release. In either case, the run must complete all of these target boundarie
   gate and uploads `windows-release-<main merge SHA>`.
 - `Native Platform Contract` passes on Windows, macOS, and Linux, including
   Swift protocol tests on macOS and locked Cargo tests on Linux.
-- `Native Package Verification` passes on macOS 14 arm64, macOS 13 x64,
-  Ubuntu 24.04 x64, and Ubuntu 24.04 arm64, and uploads the four
-  `native-<platform>-<arch>-<main merge SHA>` artifacts.
+- `Native Package Verification` builds on macOS 15 arm64, macOS 15 Intel x64,
+  Ubuntu 24.04 x64, and Ubuntu 24.04 arm64, then the exact macOS artifacts
+  must also pass the macOS 26 arm64/x64 compatibility gate before release;
+  the package jobs upload the four `native-<platform>-<arch>-<main merge SHA>` artifacts.
 
 Each target artifact must contain its matching versioned package, update
 metadata, `SHA256SUMS.txt`, and `PROVENANCE.json`. The expected update files

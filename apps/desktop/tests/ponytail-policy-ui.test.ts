@@ -34,7 +34,7 @@ describe('Ponytail scoped settings UI', () => {
 
     expect(markup.match(/id="ponytail-global-mode"/g)?.length).toBe(1);
     expect(markup.match(/id="ponytail-workspace-mode"/g)?.length).toBe(1);
-    expect(markup).toContain('EFFECTIVE FULL');
+    expect(markup).toContain('EFFECTIVE Full');
     expect(markup).toContain('Workspace override');
     expect(markup).toContain('Current Goal overrides');
     expect(markup).toContain('Inherit Global');

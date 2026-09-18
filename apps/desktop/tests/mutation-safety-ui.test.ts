@@ -195,7 +195,8 @@ describe('mutation safety UI contract', () => {
     expect(markup).toContain('With Full Bypass off');
     expect(markup).toContain('safeguards to deletes, data-loss actions, and out-of-scope work');
     expect(markup).toContain('With Full Bypass on');
-    expect(markup).toContain('only lnwjud safeguards are skipped');
+    expect(markup).toContain('lnwjud approval, command policy, Active Project, and allowed-root checks are skipped');
+    expect(markup).toContain('current goalLease ownership proof is still required for an active rolling scheduled/durable goal');
     expect(markup).toContain('Windows/macOS/Linux and external services can still deny an action');
   });
 
@@ -207,7 +208,8 @@ describe('mutation safety UI contract', () => {
     expect(markup).toContain('ถ้า Full Bypass ปิด');
     expect(markup).toContain('ป้องกันงานลบ งานที่อาจทำข้อมูลหาย และงานนอกขอบเขต');
     expect(markup).toContain('ถ้า Full Bypass เปิด');
-    expect(markup).toContain('ข้ามเฉพาะตัวป้องกันของ lnwjud เท่านั้น');
+    expect(markup).toContain('ข้าม approval, command policy, Active Project และ allowed-root checks ของ lnwjud');
+    expect(markup).toContain('ไม่ข้าม current goalLease ownership proof ของ active rolling scheduled/durable goal');
     expect(markup).toContain('Windows/macOS/Linux และบริการภายนอกยังสามารถปฏิเสธคำสั่งได้');
   });
 
@@ -223,6 +225,6 @@ describe('mutation safety UI contract', () => {
     expect(markup).toContain('<option value="ultra">Ultra</option>');
     expect(markup).toContain('Advanced overrides — optional');
     expect(markup).toContain('Inherit Global');
-    expect(markup).toContain('Effective: OFF · Global');
+    expect(markup).toContain('Effective: Off · Global');
   });
 });
