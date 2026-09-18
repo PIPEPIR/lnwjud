@@ -21,6 +21,7 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
   ) => (await window.lnwjud.searchActivityTargetDetails({ query, candidates })).matchingIds, []);
   return (
     <div className="page-content viewport-list-page worklog-page">
+      <p className="page-subtitle">{t('workLog.subtitle')}</p>
       <WorkLogPanel
         locale={props.locale}
         title={t('workLog.title')}
@@ -44,7 +45,7 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
         workspaceLabel={t('scope.workspace')}
         sessionLabel={t('scope.session')}
         scopeAllLabel={t('scope.all')}
-        searchPlaceholder={props.locale === 'th' ? 'ค้นหาบันทึกการทำงาน...' : 'Search work log...'}
+        searchPlaceholder={t('workLog.searchPlaceholder')}
         copyLabel={t('mcp.copy')}
         copiedLabel={t('mcp.copied')}
         showMoreLabel={t('logDetail.showMore')}

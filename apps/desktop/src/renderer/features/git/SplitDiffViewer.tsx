@@ -1,5 +1,6 @@
 import { Fragment, useRef, useState, type ReactElement } from 'react';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
+import { createTranslator } from '../../i18n/index.js';
 
 export interface DiffRow {
   readonly oldLineNumber: number | null;
@@ -182,6 +183,7 @@ export function SplitDiffViewer({
   newLabel = 'Working Tree',
   onClose,
 }: SplitDiffViewerProps): ReactElement {
+  const t = createTranslator(locale);
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -215,7 +217,6 @@ export function SplitDiffViewer({
     });
   };
 
-  const isTh = locale === 'th';
 
   return (
     <div className="split-diff-viewer">
@@ -225,18 +226,18 @@ export function SplitDiffViewer({
             type="button"
             className="diff-back-btn"
             onClick={onClose}
-            title={isTh ? 'กลับไปยังรายการไฟล์' : 'Back to file list'}
+            title={t('diff.backTitle')}
           >
-            ← {isTh ? 'กลับ' : 'Back'}
+            ← {t('diff.back')}
           </button>
           <span className="diff-file-title" title={filePath}>
             📄 {filePath}
           </span>
           <div className="diff-stats-badges">
-            <span className="diff-badge-add" title={isTh ? 'บรรทัดที่เพิ่ม' : 'Lines added'}>
+            <span className="diff-badge-add" title={t('diff.linesAdded')}>
               +{additionsCount}
             </span>
-            <span className="diff-badge-del" title={isTh ? 'บรรทัดที่ลบ' : 'Lines deleted'}>
+            <span className="diff-badge-del" title={t('diff.linesDeleted')}>
               -{deletionsCount}
             </span>
           </div>
@@ -249,30 +250,30 @@ export function SplitDiffViewer({
               className={`toggle-btn ${viewMode === 'split' ? 'active' : ''}`}
               onClick={() => { setViewMode('split'); }}
             >
-              {isTh ? 'แยก 2 จอ (Split)' : 'Split View'}
+              {t('diff.splitView')}
             </button>
             <button
               type="button"
               className={`toggle-btn ${viewMode === 'unified' ? 'active' : ''}`}
               onClick={() => { setViewMode('unified'); }}
             >
-              {isTh ? 'รวม (Unified)' : 'Unified View'}
+              {t('diff.unifiedView')}
             </button>
           </div>
           <button
             type="button"
             className="diff-close-btn"
             onClick={onClose}
-            aria-label={isTh ? 'ปิดหน้าต่าง diff' : 'Close diff'}
+            aria-label={t('diff.closeAria')}
           >
-            {isTh ? 'ปิด' : 'Close'}
+            {t('diff.close')}
           </button>
         </div>
       </div>
 
       {parsed.hunks.length === 0 ? (
         <div className="diff-empty-notice">
-          <p>{isTh ? 'ไม่มีความเปลี่ยนแปลงของบรรทัดโค้ดในไฟล์นี้' : 'No changes in this file.'}</p>
+          <p>{t('diff.noChanges')}</p>
         </div>
       ) : viewMode === 'split' ? (
         <div className="diff-split-container">
@@ -280,11 +281,11 @@ export function SplitDiffViewer({
           <div className="diff-pane-titles">
             <div className="diff-pane-title old-title">
               <span className="dot red-dot" />
-              <span>{isTh ? `ก่อนแก้ไข (${oldLabel})` : `Original (${oldLabel})`}</span>
+              <span>{t('diff.original', { label: oldLabel })}</span>
             </div>
             <div className="diff-pane-title new-title">
               <span className="dot green-dot" />
-              <span>{isTh ? `หลังแก้ไข (${newLabel})` : `Modified (${newLabel})`}</span>
+              <span>{t('diff.modified', { label: newLabel })}</span>
             </div>
           </div>
 

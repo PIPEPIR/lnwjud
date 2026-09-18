@@ -256,6 +256,13 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
     await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBeGreaterThan(0);
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
+    await expect.poll(async () => {
+      try {
+        return await page.evaluate(() => typeof window.lnwjud?.getDashboard === 'function');
+      } catch {
+        return false;
+      }
+    }, { timeout: 30_000, intervals: [50, 100, 250, 500] }).toBe(true);
     return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
   } catch (cause: unknown) {
     await browser?.close().catch(() => undefined);

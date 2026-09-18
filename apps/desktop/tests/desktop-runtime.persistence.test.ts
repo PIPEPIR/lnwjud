@@ -315,11 +315,23 @@ describe('DesktopRuntime persistence', () => {
         .resolves.toMatchObject({ restored: true, path: 'delete-policy.txt' });
       await expect(readFile(path.join(workspaceRoot, 'delete-policy.txt'), 'utf8')).resolves.toBe('payload');
 
+      await expect(runtime.services.setPermissionProfile({ profile: 'full' })).resolves.toEqual({ profile: 'full' });
+      const fullSettings = (await runtime.services.getDashboard()).settings;
+      if (fullSettings === undefined) throw new Error('User settings were not available');
+      await expect(runtime.services.setUserSettings({ settings: { ...fullSettings, desktopFullBypassAll: true, stdioFullBypassAll: true } }))
+        .resolves.toMatchObject({ settings: { desktopFullBypassAll: true, stdioFullBypassAll: true } });
+      await expect(runtime.services.setPermissionProfile({ profile: 'balanced' })).resolves.toEqual({ profile: 'balanced' });
+      await expect(runtime.services.getDashboard()).resolves.toMatchObject({ settings: { desktopFullBypassAll: false, stdioFullBypassAll: true } });
+
       await expect(runtime.services.setStdioPolicy({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] }))
         .resolves.toMatchObject({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] });
       await expect(runtime.services.getDashboard()).resolves.toMatchObject({
         allowAiDelete: true, destructiveDeletePolicy: { approvals: { delete_file: true, git_rm: false } }, stdioPermissionProfile: 'safe', stdioStrictRoots: true, stdioAllowedRoots: [workspaceRoot],
+        settings: { desktopFullBypassAll: false, stdioFullBypassAll: false },
       });
+      await expect(runtime.services.setPermissionProfile({ profile: 'full' })).resolves.toEqual({ profile: 'full' });
+      await expect(runtime.services.setStdioPolicy({ profile: 'full', strictRoots: false, allowedRoots: [] })).resolves.toMatchObject({ profile: 'full' });
+      await expect(runtime.services.getDashboard()).resolves.toMatchObject({ settings: { desktopFullBypassAll: false, stdioFullBypassAll: false } });
     } finally {
       await runtime.close();
     }
@@ -327,7 +339,7 @@ describe('DesktopRuntime persistence', () => {
     const restarted = createDesktopRuntime(dataRoot);
     try {
       await expect(restarted.services.getDashboard()).resolves.toMatchObject({
-        allowAiDelete: true, stdioPermissionProfile: 'safe', stdioStrictRoots: true, stdioAllowedRoots: [workspaceRoot],
+        allowAiDelete: true, stdioPermissionProfile: 'full', stdioStrictRoots: false, stdioAllowedRoots: [],
       });
     } finally {
       await restarted.close();

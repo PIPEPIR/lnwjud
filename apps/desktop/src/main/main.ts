@@ -1,12 +1,15 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, crashReporter, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { access, lstat, readFile } from 'node:fs/promises';
 import { autoUpdater } from 'electron-updater';
 import {
   APP_NAME,
   APP_VERSION,
+  EMPTY_REMOTE_MCP_STATUS,
+  EMPTY_TUNNEL_STATUS,
   ipcChannels,
   pushChannels,
   type AddWorkspaceRequest,
@@ -96,10 +99,13 @@ import {
   usesElectronUpdaterInstall,
 } from './portable-update.js';
 import { platformCompatibilityProfile, supportedHostPlatform } from './platform-compatibility.js';
-import { atomicWrite, type IncidentReport } from './incident-report.js';
+import { atomicWrite, type IncidentDesktopMemory, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPolicy } from './crash-recovery.js';
+import { DesktopSessionDiagnostics } from './desktop-session-diagnostics.js';
+import { configureNativeCrashDiagnostics, pruneNativeCrashDumpsForDataPath } from './native-crash-diagnostics.js';
+import { RuntimeDiagnosticsHistoryRecorder, type RuntimeDiagnosticsSample } from './runtime-diagnostics-history.js';
 import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
@@ -162,7 +168,7 @@ export interface DesktopIpcServices {
   setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<RemoteMcpStatus>;
   startRemoteMcp(): Promise<RemoteMcpStatus>;
   stopRemoteMcp(): Promise<RemoteMcpStatus>;
-  regenerateRemoteMcpPairingCode(): Promise<RemoteMcpStatus>;
+  resetRemoteMcpOAuth(): Promise<RemoteMcpStatus>;
   setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }>;
   setLocale(request: SetLocaleRequest): Promise<{ readonly locale: UiLocale }>;
   setUserSettings(request: SetUserSettingsRequest): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }>;
@@ -200,21 +206,8 @@ const defaultDestructiveDeletePolicy: DestructiveDeletePolicy = {
   approvals: { delete_file: false, git_rm: false, git_clean: false, git_reset_restore: false, shell_rm_unlink: false, shell_rmdir: false, shell_del_erase: false, wsl_rm_unlink: false, wsl_rmdir: false },
 };
 
-const emptyTunnel: TunnelStatus = {
-  state: 'stopped',
-  source: 'desktop',
-  hasApiKey: false,
-  clientPath: null,
-  profileExists: false,
-  message: null,
-  logPath: null,
-  persistent: null,
-};
-const emptyRemoteMcp: RemoteMcpStatus = {
-  state: 'stopped', provider: 'ngrok', installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
-  localMcpUrl: null, localGatewayUrl: null, publicMcpUrl: null, configuredPublicOrigin: null, pairingCode: null, pairingCodeExpiresAt: null,
-  oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
-};
+const emptyTunnel: TunnelStatus = EMPTY_TUNNEL_STATUS;
+const emptyRemoteMcp: RemoteMcpStatus = EMPTY_REMOTE_MCP_STATUS;
 const defaultUserSettings: UserSettings = {
   customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
   desktopFullBypassAll: false,
@@ -337,7 +330,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   setRemoteMcpPublicOrigin: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   startRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   stopRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
-  regenerateRemoteMcpPairingCode: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
+  resetRemoteMcpOAuth: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   setTunnelClientPath: async (request): Promise<{ readonly clientPath: string }> => ({ clientPath: request.clientPath }),
   setLocale: async (request): Promise<{ readonly locale: UiLocale }> => ({ locale: request.locale }),
   setUserSettings: async (request): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }> => ({ settings: request.settings, restartRequired: false }),
@@ -368,7 +361,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   searchActivityTargetDetails: async (): Promise<readonly string[]> => [],
   streamWorkLogExportRows: (): AsyncIterable<string> => emptySerializedRows(),
   captureIncident: async (): Promise<IncidentReport> => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     capturedAt: formatOffsetIsoTimestamp(new Date(), DEFAULT_DISPLAY_TIME_ZONE),
     timeZone: DEFAULT_DISPLAY_TIME_ZONE,
     appVersion: APP_VERSION,
@@ -604,10 +597,10 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return services.stopRemoteMcp();
   });
-  registerHandler(ipcChannels.regenerateRemoteMcpPairingCode, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.resetRemoteMcpOAuth, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
-    return services.regenerateRemoteMcpPairingCode();
+    return services.resetRemoteMcpOAuth();
   });
   registerHandler(ipcChannels.setTunnelClientPath, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -1334,6 +1327,8 @@ const updaterDistribution = detectUpdaterDistribution(app.isPackaged, process.pl
 const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
+let desktopSessionDiagnostics: DesktopSessionDiagnostics | null = null;
+let runtimeDiagnosticsHistory: RuntimeDiagnosticsHistoryRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
 const rendererRecoveryBarrier = new RendererRecoveryBarrier();
 let crashRecoveryConfigured = false;
@@ -2012,6 +2007,111 @@ function defaultStdioCommand(profile: PermissionProfileName): string {
   return `${launcher} --profile ${profile}`;
 }
 
+function collectIncidentMemory(): IncidentDesktopMemory {
+  const main = process.memoryUsage();
+  const processes = app.getAppMetrics().map((metric) => {
+    const toBytes = (value: number | undefined): number | null => value === undefined ? null : Math.max(0, value) * 1024;
+    return {
+      pid: metric.pid,
+      type: String(metric.type),
+      name: metric.name ?? null,
+      creationTime: metric.creationTime,
+      percentCPUUsage: metric.cpu.percentCPUUsage,
+      idleWakeupsPerSecond: metric.cpu.idleWakeupsPerSecond,
+      workingSetBytes: toBytes(metric.memory.workingSetSize),
+      peakWorkingSetBytes: toBytes(metric.memory.peakWorkingSetSize),
+      privateBytes: toBytes(metric.memory.privateBytes),
+    };
+  });
+  return {
+    capturedAt: new Date().toISOString(),
+    main: {
+      rssBytes: main.rss,
+      heapTotalBytes: main.heapTotal,
+      heapUsedBytes: main.heapUsed,
+      externalBytes: main.external,
+      arrayBuffersBytes: main.arrayBuffers,
+    },
+    processes,
+    totalWorkingSetBytes: processes.reduce((total, metric) => total + (metric.workingSetBytes ?? 0), 0),
+  };
+}
+
+function collectRuntimeDiagnosticsSample(runtime: DesktopRuntime): Omit<RuntimeDiagnosticsSample, 'schemaVersion' | 'capturedAt'> {
+  const memory = collectIncidentMemory();
+  const cpu = process.cpuUsage();
+  const eventLoop = performance.eventLoopUtilization();
+  const getActiveResourcesInfo = (process as typeof process & { getActiveResourcesInfo?: () => string[] }).getActiveResourcesInfo;
+  const activeResources: Record<string, number> = {};
+  for (const resource of getActiveResourcesInfo?.call(process) ?? []) {
+    activeResources[resource] = (activeResources[resource] ?? 0) + 1;
+  }
+
+  const byProcessType: Record<string, { count: number; workingSetBytes: number; privateBytes: number; percentCPUUsage: number }> = {};
+  for (const metric of memory.processes) {
+    const current = byProcessType[metric.type] ?? { count: 0, workingSetBytes: 0, privateBytes: 0, percentCPUUsage: 0 };
+    current.count += 1;
+    current.workingSetBytes += metric.workingSetBytes ?? 0;
+    current.privateBytes += metric.privateBytes ?? 0;
+    current.percentCPUUsage += metric.percentCPUUsage;
+    byProcessType[metric.type] = current;
+  }
+
+  const telemetry = runtime.activityTracker.telemetrySnapshot();
+  const inFlightByTool: Record<string, number> = {};
+  for (const call of runtime.activityTracker.listInFlight()) {
+    inFlightByTool[call.toolName] = (inFlightByTool[call.toolName] ?? 0) + 1;
+  }
+
+  return {
+    sessionId: desktopSessionDiagnostics?.snapshot().current.sessionId ?? null,
+    uptimeSeconds: process.uptime(),
+    memory: {
+      rssBytes: memory.main.rssBytes,
+      heapTotalBytes: memory.main.heapTotalBytes,
+      heapUsedBytes: memory.main.heapUsedBytes,
+      externalBytes: memory.main.externalBytes,
+      arrayBuffersBytes: memory.main.arrayBuffersBytes,
+      totalWorkingSetBytes: memory.totalWorkingSetBytes,
+      desktopProcessCount: memory.processes.length,
+      byProcessType,
+    },
+    system: {
+      totalMemoryBytes: os.totalmem(),
+      freeMemoryBytes: os.freemem(),
+    },
+    cpu: {
+      userMicros: cpu.user,
+      systemMicros: cpu.system,
+    },
+    eventLoop: {
+      idleMs: eventLoop.idle,
+      activeMs: eventLoop.active,
+      utilization: eventLoop.utilization,
+    },
+    activeResources,
+    logs: runtime.logHub.telemetrySnapshot(),
+    mcp: {
+      toolAvailabilityListeners: runtime.toolAvailabilityService.listenerCount(),
+      calls: telemetry.calls,
+      completed: telemetry.completed,
+      successes: telemetry.successes,
+      errors: telemetry.errors,
+      cancellations: telemetry.cancellations,
+      active: telemetry.active,
+      recentErrorClasses: telemetry.recentErrorClasses,
+      inFlightByTool,
+    },
+  };
+}
+
+function configureRuntimeDiagnosticsHistory(dataPath: string, runtime: DesktopRuntime): void {
+  if (runtimeDiagnosticsHistory !== null) return;
+  const recorder = new RuntimeDiagnosticsHistoryRecorder(dataPath, () => collectRuntimeDiagnosticsSample(runtime));
+  recorder.start();
+  runtimeDiagnosticsHistory = recorder;
+}
+
 async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
   recordDesktopStartup('runtime-secrets:begin');
   const secrets = await resolveDesktopRuntimeSecrets(dataPath);
@@ -2021,6 +2121,8 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
+    collectIncidentMemory,
+    captureRuntimeDiagnostics: () => { runtimeDiagnosticsHistory?.captureNow(); },
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
@@ -2028,6 +2130,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     watchToolAvailability: true,
   });
   recordDesktopStartup('runtime-create:end');
+  configureRuntimeDiagnosticsHistory(dataPath, runtime);
   return runtime;
 }
 
@@ -2063,11 +2166,20 @@ function createElectronNativeCapabilityApi(windowProvider: () => BrowserWindow |
     },
     readClipboardText: () => clipboard.readText(),
     writeClipboardText: (value) => clipboard.writeText(value),
-    readClipboardImageBase64: (): string | null => {
-      const image = clipboard.readImage();
-      return image.isEmpty() ? null : image.toPNG().toString('base64');
+    readClipboardImageBase64: async (): Promise<string | null> => {
+      const items = await clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith('image/'));
+        if (imageType === undefined) continue;
+        const blob = await item.getType(imageType);
+        if (blob instanceof Blob) return Buffer.from(await blob.arrayBuffer()).toString('base64');
+      }
+      return null;
     },
-    writeClipboardImageBase64: (value) => clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(value, 'base64'))),
+    writeClipboardImageBase64: async (value): Promise<void> => {
+      const bytes = Buffer.from(value, 'base64');
+      await clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+    },
     captureDesktop: captureElectronDesktop,
     hasWindow: () => windowProvider() !== null,
   };
@@ -2345,6 +2457,7 @@ function handleDesktopWindowsClosed(scope: 'desktop' | 'log-viewer'): void {
 }
 
 function handleDesktopBeforeQuit(event: Electron.Event): void {
+  desktopSessionDiagnostics?.markShutdownRequested('before-quit');
   const coordinator = desktopShutdownCoordinator;
   crashDiagnostics?.record({
     type: 'desktop-lifecycle',
@@ -2362,10 +2475,33 @@ function handleDesktopBeforeQuit(event: Electron.Event): void {
   event.preventDefault();
   quitRequested = true;
   void coordinator.requestQuit(() => {
+    desktopSessionDiagnostics?.markCleanExit();
     app.exit(0);
   }).then((result) => {
     if (result === 'deferred') quitRequested = false;
   });
+}
+
+function configureDesktopSessionDiagnostics(dataPath: string): void {
+  if (desktopSessionDiagnostics !== null) return;
+  try {
+    configureNativeCrashDiagnostics(dataPath, APP_VERSION, crashReporter, (directory) => app.setPath('crashDumps', directory));
+  } catch (error: unknown) {
+    console.error(`Native crash diagnostics setup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+  }
+  const diagnostics = new DesktopSessionDiagnostics(dataPath, APP_VERSION, () => new Date(), (error) => {
+    console.error(`Desktop session diagnostics write failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+  });
+  diagnostics.start();
+  desktopSessionDiagnostics = diagnostics;
+  const previous = diagnostics.snapshot().previous;
+  if (previous !== null && previous.state !== 'clean_exit') {
+    crashDiagnostics?.record({
+      type: 'desktop-lifecycle',
+      processType: 'main',
+      reason: `previous-session-ended-uncleanly:pid=${previous.pid}:last-heartbeat=${previous.lastHeartbeatAt}`,
+    });
+  }
 }
 
 function configureCrashRecovery(dataPath: string): void {
@@ -2389,12 +2525,16 @@ function configureCrashRecovery(dataPath: string): void {
   process.once('SIGTERM', () => handleTerminationSignal('SIGTERM'));
   process.once('SIGINT', () => handleTerminationSignal('SIGINT'));
   app.on('will-quit', () => {
+    runtimeDiagnosticsHistory?.captureNow();
+    runtimeDiagnosticsHistory?.stop();
+    desktopSessionDiagnostics?.markCleanExit();
     crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: `will-quit:${quitRequested ? 'requested' : 'external'}` });
   });
   app.on('quit', (_event, exitCode) => {
     crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'quit', exitCode });
   });
   app.on('child-process-gone', (_event, details) => {
+    try { pruneNativeCrashDumpsForDataPath(dataPath); } catch { /* diagnostics must never terminate the app */ }
     crashDiagnostics?.record({
       type: 'child-process-gone',
       processType: details.type,
@@ -2403,6 +2543,7 @@ function configureCrashRecovery(dataPath: string): void {
     });
   });
   app.on('render-process-gone', (_event, webContents, details) => {
+    try { pruneNativeCrashDumpsForDataPath(dataPath); } catch { /* diagnostics must never terminate the app */ }
     const shouldRecover = !quitRequested && rendererRecoveryPolicy.shouldRecover(details.reason);
     crashDiagnostics?.record({
       type: 'renderer-gone',
@@ -2496,6 +2637,7 @@ if (configuredUserDataPath !== undefined) recordDesktopStartup(`instance-lock:en
 if (!gotInstanceLock) {
   app.quit();
 } else {
+  if (configuredUserDataPath !== undefined) configureDesktopSessionDiagnostics(configuredUserDataPath);
   if (holdsSingleInstanceLock) {
     app.on('second-instance', (_event, argv) => {
       const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;

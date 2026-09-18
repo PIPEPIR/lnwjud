@@ -60,10 +60,10 @@ export interface ElectronNativeCapabilityApi {
   readonly showNotification?: (title: string, body: string) => Promise<void> | void;
   readonly showOpenDialog?: (options: NativeDialogOptions) => Promise<NativeDialogResult>;
   readonly showSaveDialog?: (options: NativeDialogOptions) => Promise<NativeDialogResult>;
-  readonly readClipboardText?: () => string;
-  readonly writeClipboardText?: (value: string) => void;
-  readonly readClipboardImageBase64?: () => string | null;
-  readonly writeClipboardImageBase64?: (value: string) => void;
+  readonly readClipboardText?: () => Promise<string> | string;
+  readonly writeClipboardText?: (value: string) => Promise<void> | void;
+  readonly readClipboardImageBase64?: () => Promise<string | null> | string | null;
+  readonly writeClipboardImageBase64?: (value: string) => Promise<void> | void;
   readonly hasWindow?: () => boolean;
   readonly captureDesktop?: (request: NativeDesktopCaptureRequest) => Promise<NativeDesktopCaptureResult>;
 }
@@ -117,7 +117,7 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
         case 'system_info': return this.systemInfo(action);
         case 'notification': return await this.notification(input, signal);
         case 'file_dialog': return await this.fileDialog(action, input, signal, authorization);
-        case 'clipboard': return this.clipboard(action, input);
+        case 'clipboard': return await this.clipboard(action, input);
         case 'vision': return await this.vision(action, input, signal);
       }
     } catch (error: unknown) {
@@ -216,28 +216,28 @@ export class ElectronNativeCapabilityBackend implements CapabilityBackend {
     return ok({ canceled: false, paths });
   }
 
-  private clipboard(action: string, input: Record<string, unknown>): Result<unknown> {
+  private async clipboard(action: string, input: Record<string, unknown>): Promise<Result<unknown>> {
     if (action === 'get_text') {
       if (this.api.readClipboardText === undefined) return unavailable('clipboard', 'Clipboard is unavailable in headless mode');
-      return ok({ text: boundedString(this.api.readClipboardText(), '', MAX_TEXT_BYTES) });
+      return ok({ text: boundedString(await this.api.readClipboardText(), '', MAX_TEXT_BYTES) });
     }
     if (action === 'set_text') {
       if (this.api.writeClipboardText === undefined) return unavailable('clipboard', 'Clipboard is unavailable in headless mode');
       const text = boundedString(input.text, '', MAX_TEXT_BYTES);
       if (typeof input.text !== 'string') return err(appError('INVALID_INPUT', 'clipboard text is required'));
-      this.api.writeClipboardText(text);
+      await this.api.writeClipboardText(text);
       return ok({ written: true, bytes: Buffer.byteLength(text, 'utf8') });
     }
     if (action === 'get_image') {
       if (this.api.readClipboardImageBase64 === undefined) return unavailable('clipboard', 'Clipboard image access is unavailable');
-      const data = this.api.readClipboardImageBase64();
+      const data = await this.api.readClipboardImageBase64();
       return ok({ format: 'png', data_base64: data ?? null, empty: data === null || data.length === 0 });
     }
     if (action === 'set_image') {
       if (this.api.writeClipboardImageBase64 === undefined) return unavailable('clipboard', 'Clipboard image access is unavailable');
       const data = input.data_base64;
       if (typeof data !== 'string' || data.length === 0 || Buffer.byteLength(data, 'base64') > MAX_IMAGE_BYTES) return err(appError('INVALID_INPUT', 'clipboard image must be a bounded base64 PNG'));
-      this.api.writeClipboardImageBase64(data);
+      await this.api.writeClipboardImageBase64(data);
       return ok({ written: true, bytes: Buffer.byteLength(data, 'base64') });
     }
     return err(appError('INVALID_INPUT', 'clipboard action is invalid'));

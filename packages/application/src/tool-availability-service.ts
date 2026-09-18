@@ -32,6 +32,10 @@ export class ToolAvailabilityService {
     return (): void => { this.listeners.delete(listener); };
   }
 
+  public listenerCount(): number {
+    return this.listeners.size;
+  }
+
   public setToolEnabled(name: string, enabled: boolean): ToolAvailabilitySnapshot {
     const normalizedName = normalizeToolName(name);
     const preference: ToolAvailabilityOverride = enabled ? 'enabled' : 'disabled';

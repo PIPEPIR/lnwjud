@@ -43,7 +43,7 @@ describe('Projects page lifecycle controls', () => {
     expect(markup).toContain('Remove</button>');
     expect(markup).toContain('managed automatically by lnwjud');
     expect(markup.match(/>Remove<\/button>/g)?.length).toBe(2);
-    expect(markup).toContain('title="At least one Active Project is required"');
+    expect(markup).toContain('title="At least one active project is required"');
   });
 
   it('explains that registration removal never deletes project files', () => {

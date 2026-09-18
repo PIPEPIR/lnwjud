@@ -1,16 +1,43 @@
-import { readFileSync } from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-
-const settingsSource = readFileSync(new URL('../src/renderer/features/settings/SettingsPage.tsx', import.meta.url), 'utf8');
-const settingsCssSource = readFileSync(new URL('../src/renderer/settings-extra.css', import.meta.url), 'utf8');
+import { PonytailPolicyEditor } from '../src/renderer/features/settings/PonytailPolicyEditor.js';
 
 describe('Ponytail scoped settings UI', () => {
-  it('keeps Current Goal text and mode controls in a bounded responsive grid', () => {
-    expect(settingsSource).toContain('backup-item ponytail-goal-item');
-    expect(settingsSource).toContain('ponytail-goal-copy');
-    expect(settingsSource).toContain('settings-select ponytail-goal-select');
-    expect(settingsCssSource).toContain('grid-template-columns: minmax(0, 1fr) minmax(180px, 240px)');
-    expect(settingsCssSource).toContain('@media (max-width: 760px)');
-    expect(settingsCssSource).toContain('grid-template-columns: minmax(0, 1fr)');
+  it('inherits Global Full into Workspace and Goal without requiring duplicate Full selections', () => {
+    const markup = renderToStaticMarkup(createElement(PonytailPolicyEditor, {
+      locale: 'en',
+      globalMode: 'full',
+      context: {
+        workspaceId: 'workspace-1',
+        globalMode: 'full',
+        workspaceMode: 'inherit',
+        effectiveWorkspaceMode: 'full',
+        effectiveWorkspaceSource: 'global',
+        activeGoals: [{
+          goalId: 'goal-1',
+          goalKey: 'demo-goal',
+          mode: 'inherit',
+          revision: 7,
+          effectiveMode: 'full',
+          effectiveSource: 'global',
+          editable: true,
+          editBlockedReason: null,
+        }],
+      },
+      busy: false,
+      error: null,
+      onGlobalModeChange: async () => undefined,
+      onWorkspaceModeChange: async () => undefined,
+      onGoalModeChange: async () => undefined,
+    }));
+
+    expect(markup.match(/id="ponytail-global-mode"/g)?.length).toBe(1);
+    expect(markup.match(/id="ponytail-workspace-mode"/g)?.length).toBe(1);
+    expect(markup).toContain('EFFECTIVE Full');
+    expect(markup).toContain('Workspace override');
+    expect(markup).toContain('Current Goal overrides');
+    expect(markup).toContain('Inherit Global');
+    expect(markup).toContain('Inherit Workspace');
   });
 });

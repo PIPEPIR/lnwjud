@@ -68,6 +68,11 @@ describe('LogHub', () => {
     expect(snapshot.lines).toHaveLength(3);
     expect(snapshot.lines.map((line) => line.text)).toEqual(['first', 'second', 'proc line']);
     expect(snapshot.tunnelLogExists).toBe(false);
+    const telemetry = hub.telemetrySnapshot();
+    expect(telemetry.totalLines).toBe(3);
+    expect(telemetry.totalRetainedBytes).toBeGreaterThan(0);
+    expect(telemetry.sources.mcp).toMatchObject({ lines: 2, seenKeys: 2 });
+    expect(telemetry.sources.process.lines).toBe(1);
   });
 
   it('removes terminal control sequences before logs reach the UI or exports', () => {

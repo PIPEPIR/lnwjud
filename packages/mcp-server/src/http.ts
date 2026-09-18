@@ -195,21 +195,108 @@ async function transformModernJsonResponse(
   }
 }
 
+async function closeModernMcpServer(server: McpServer): Promise<void> {
+  try {
+    await server.close();
+  } catch (error: unknown) {
+    writeDiagnostic(error instanceof Error ? error : new Error('Failed to close per-request MCP server'));
+  }
+}
+
+async function finalizeModernResponse(response: Response, server: McpServer | undefined): Promise<Response> {
+  if (server === undefined) return response;
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (response.body === null || !contentType.includes('text/event-stream')) {
+    await closeModernMcpServer(server);
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  let finalized = false;
+  const finalize = async (): Promise<void> => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending read owns the lock until it settles; server teardown is still safe.
+    }
+    await closeModernMcpServer(server);
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          controller.close();
+          await finalize();
+          return;
+        }
+        controller.enqueue(next.value);
+      } catch (error: unknown) {
+        controller.error(error);
+        await finalize();
+      }
+    },
+    async cancel(reason): Promise<void> {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        await finalize();
+      }
+    },
+  });
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandler {
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
   const endpointFallbackSessionId = randomUUID();
-  const factory = (request?: Request): McpServer => createMcpServer({
-    ...options,
-    runBudgetGuard,
-    incrementalVerifier,
-    setOfMarksStore,
-    ponytailActivationLedger,
-    legacyTasksProtocol: false,
-    requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
-  });
+  const modernServersByRequest = new WeakMap<Request, McpServer>();
+  const activeModernServers = new Set<McpServer>();
+
+  const factory = (request?: Request): McpServer => {
+    const server = createMcpServer({
+      ...options,
+      runBudgetGuard,
+      incrementalVerifier,
+      setOfMarksStore,
+      ponytailActivationLedger,
+      legacyTasksProtocol: false,
+      requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
+    });
+    if (request !== undefined) {
+      modernServersByRequest.set(request, server);
+      activeModernServers.add(server);
+      const closeServer = server.close.bind(server);
+      let lifecycleClosed = false;
+      server.close = async (): Promise<void> => {
+        if (!lifecycleClosed) {
+          lifecycleClosed = true;
+          activeModernServers.delete(server);
+        }
+        await closeServer();
+      };
+    }
+    return server;
+  };
+
+  const takeActiveModernServer = (request: Request): McpServer | undefined => {
+    const server = modernServersByRequest.get(request);
+    modernServersByRequest.delete(request);
+    return server !== undefined && activeModernServers.has(server) ? server : undefined;
+  };
+
   const modernHandler = createMcpHandler((context) => factory(context.requestInfo), { legacy: 'reject', onerror: writeDiagnostic });
   const sessions = new Map<string, LegacySession>();
   let closed = false;
@@ -264,13 +351,29 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
     async fetch(request, requestOptions): Promise<Response> {
       if (!(await isLegacyRequest(request))) {
         const requestMessage = await readJsonRpcRequest(request);
-        if (requestMessage === undefined) return modernHandler.fetch(request, requestOptions);
+        if (requestMessage === undefined) {
+          try {
+            const result = await modernHandler.fetch(request, requestOptions);
+            return finalizeModernResponse(result, takeActiveModernServer(request));
+          } catch (error: unknown) {
+            const server = takeActiveModernServer(request);
+            if (server !== undefined) await closeModernMcpServer(server);
+            throw error;
+          }
+        }
         const requestScope = createHttpRequestScope({ request, fallbackSessionId: endpointFallbackSessionId });
         const protocol = new ModernTasksProtocol(options.services, { actor: actorForRequestScope(options.actor, requestScope) });
         const taskResponse = await maybeHandleModernTasksWireRequest(protocol, requestMessage);
         if (taskResponse !== undefined) return Response.json(taskResponse, { headers: { 'cache-control': 'no-store' } });
-        const result = await modernHandler.fetch(request, requestOptions);
-        return transformModernJsonResponse(protocol, requestMessage, result);
+        try {
+          const result = await modernHandler.fetch(request, requestOptions);
+          const transformed = await transformModernJsonResponse(protocol, requestMessage, result);
+          return finalizeModernResponse(transformed, takeActiveModernServer(request));
+        } catch (error: unknown) {
+          const server = takeActiveModernServer(request);
+          if (server !== undefined) await closeModernMcpServer(server);
+          throw error;
+        }
       }
 
       const sessionId = request.headers.get('mcp-session-id')?.trim();
@@ -289,6 +392,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       if (closed) return;
       closed = true;
       await modernHandler.close();
+      await Promise.all([...activeModernServers].map(closeModernMcpServer));
       const activeSessions = [...sessions.entries()];
       sessions.clear();
       await Promise.allSettled(activeSessions.map(([, session]) => session.server.close()));

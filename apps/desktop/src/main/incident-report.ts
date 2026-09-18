@@ -5,6 +5,9 @@ import { promisify } from 'node:util';
 import type { LogLine, TunnelLifecycleCategory, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { DEFAULT_DISPLAY_TIME_ZONE, formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
 import type { CrashEventHistoryRecord } from './crash-recovery.js';
+import type { DesktopSessionSnapshot } from './desktop-session-diagnostics.js';
+import type { NativeCrashDumpMetadata } from './native-crash-diagnostics.js';
+import type { RuntimeDiagnosticsHistory } from './runtime-diagnostics-history.js';
 import type { TunnelIncidentRuntimeDiagnostics } from './tunnel-controller.js';
 
 const execFileAsync = promisify(execFile);
@@ -19,10 +22,17 @@ const ASSIGNED_SECRET_VALUE = new RegExp(`(^|[?&\\s;,{])(${SENSITIVE_KEY})(\\s*[
 const PREFIXED_ENV_SECRET_VALUE = /(^|[?&\s;,{])([a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:access_token|refresh_token|id_token|auth_token|x_api_key|api_key|client_secret|password|token|secret))(\s*=\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\r\n,;&}\]]+)/gi;
 const CLI_SECRET_VALUE = /(^|\s)(--(?:api-key|token|access-token|refresh-token|id-token|auth-token|client-secret))(?:\s*=\s*|\s+)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;]+)/gi;
 const KNOWN_SECRET_PREFIX = /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]+)\b/g;
+const PREVIOUS_SESSION_RELEVANCE_MS = 10 * 60 * 1000;
 
-export type IncidentClassification = 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
+export type IncidentClassification = 'desktop_session_ended_uncleanly' | 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
 export type TunnelHealthState = 'live' | 'unhealthy' | 'unavailable' | 'unknown';
 export interface IncidentHealth { readonly state: TunnelHealthState; readonly message: string | null; }
+export interface IncidentDesktopMemory {
+  readonly capturedAt: string;
+  readonly main: { readonly rssBytes: number; readonly heapTotalBytes: number; readonly heapUsedBytes: number; readonly externalBytes: number; readonly arrayBuffersBytes: number };
+  readonly processes: readonly { readonly pid: number; readonly type: string; readonly name: string | null; readonly creationTime: number; readonly percentCPUUsage: number; readonly idleWakeupsPerSecond: number; readonly workingSetBytes: number | null; readonly peakWorkingSetBytes: number | null; readonly privateBytes: number | null }[];
+  readonly totalWorkingSetBytes: number;
+}
 type IncidentLine = Pick<LogLine, 'source' | 'text' | 'timestamp' | 'correlation'> & { readonly id?: number };
 export interface IncidentEvidence {
   readonly triggeredByUser: boolean;
@@ -33,6 +43,10 @@ export interface IncidentEvidence {
   readonly updaterEvents: readonly string[];
   readonly logLines: readonly IncidentLine[];
   readonly crashEvents?: readonly CrashEventHistoryRecord[];
+  readonly desktopSession?: DesktopSessionSnapshot;
+  readonly crashDumps?: NativeCrashDumpMetadata;
+  readonly desktopMemory?: IncidentDesktopMemory;
+  readonly runtimeHistory?: RuntimeDiagnosticsHistory;
   readonly runtimeDiagnostics?: TunnelIncidentRuntimeDiagnostics;
   readonly relevantPids?: readonly number[];
   readonly relevantPidUnavailableReason?: string;
@@ -52,7 +66,7 @@ export interface IncidentTransportDiagnostics {
   readonly evidenceSources: readonly ('process_stderr' | 'tunnel_log')[];
 }
 export interface IncidentReport {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly capturedAt: string;
   readonly timeZone: string;
   readonly appVersion: string;
@@ -72,12 +86,16 @@ export interface IncidentReport {
   readonly transport: IncidentTransportDiagnostics;
   readonly mcpCalls: readonly IncidentCall[];
   readonly desktopCrashEventTail: readonly CrashEventHistoryRecord[];
+  readonly desktopSession?: DesktopSessionSnapshot;
+  readonly crashDumps?: NativeCrashDumpMetadata;
+  readonly desktopMemory?: IncidentDesktopMemory;
+  readonly runtimeHistory?: RuntimeDiagnosticsHistory;
   readonly tunnelLogTail: readonly { readonly timestamp: string; readonly lifecycle: TunnelLifecycleCategory; readonly message: string; readonly instanceId?: string; readonly requestId?: string }[];
   readonly processTree: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly parentPid: number | null; readonly executable: string }[]; readonly error?: string };
   readonly tcpListeners: { readonly available: boolean; readonly entries: readonly { readonly pid: number; readonly address: string; readonly port: number }[]; readonly error?: string };
 }
 
-export function classifyIncident(evidence: Pick<IncidentEvidence, 'triggeredByUser' | 'tunnel' | 'logLines'>): { readonly classification: IncidentClassification; readonly reasons: readonly string[] } {
+export function classifyIncident(evidence: Pick<IncidentEvidence, 'triggeredByUser' | 'tunnel' | 'logLines' | 'desktopSession'>): { readonly classification: IncidentClassification; readonly reasons: readonly string[] } {
   const latestCall = pairMcpCalls(evidence.logLines).reduce<IncidentCall | undefined>((latest, call) => latest === undefined || call.lastEvidenceSequence >= latest.lastEvidenceSequence ? call : latest, undefined);
   if (latestCall?.completionState === 'failure' && !latestCall.incomplete) return { classification: 'local_tool_failed', reasons: ['latest_structured_mcp_terminal_failed'] };
   let latestFailure = -1;
@@ -97,8 +115,20 @@ export function classifyIncident(evidence: Pick<IncidentEvidence, 'triggeredByUs
     && evidence.tunnel.state === 'running'
     && evidence.tunnel.health.state === 'live';
   if (currentlyFailed || (latestFailure >= 0 && !explicitlyRecovered)) return { classification: 'tunnel_disconnected', reasons: ['explicit_tunnel_disconnect_evidence'] };
+  const previousSession = evidence.desktopSession?.previous;
+  if (previousSession !== null && previousSession !== undefined && previousSession.state !== 'clean_exit' && previousSessionStillRelevant(evidence.desktopSession)) {
+    return { classification: 'desktop_session_ended_uncleanly', reasons: [`previous_desktop_session_${previousSession.state}`] };
+  }
   if (evidence.triggeredByUser && latestCall?.completionState === 'success' && !latestCall.incomplete && evidence.tunnel.state === 'running' && evidence.tunnel.health.state === 'live') return { classification: 'remote_turn_stopped', reasons: ['manual_capture_after_structured_success_with_live_tunnel'] };
   return { classification: 'healthy_or_inconclusive', reasons: [evidence.tunnel.state === 'starting' ? 'tunnel_starting' : evidence.tunnel.health.state === 'unavailable' ? 'tunnel_health_unavailable' : 'insufficient_non_conflicting_evidence'] };
+}
+
+function previousSessionStillRelevant(snapshot: DesktopSessionSnapshot | undefined): boolean {
+  if (snapshot === undefined || snapshot.previous === null || snapshot.previous.state === 'clean_exit') return false;
+  const startedAt = Date.parse(snapshot.current.startedAt);
+  const lastHeartbeatAt = Date.parse(snapshot.current.lastHeartbeatAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(lastHeartbeatAt) || lastHeartbeatAt < startedAt) return true;
+  return lastHeartbeatAt - startedAt <= PREVIOUS_SESSION_RELEVANCE_MS;
 }
 
 export function pairMcpCalls(lines: readonly IncidentLine[]): readonly IncidentCall[] {
@@ -289,7 +319,7 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
   const correlations = parseTunnelCorrelations(evidence.logLines);
   const runtimeDiagnostics = localizeRuntimeDiagnostics(evidence.runtimeDiagnostics);
   const report: IncidentReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     capturedAt: formatOffsetIsoTimestamp(new Date(), DEFAULT_DISPLAY_TIME_ZONE),
     timeZone: DEFAULT_DISPLAY_TIME_ZONE,
     appVersion: evidence.appVersion,
@@ -303,6 +333,10 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
     transport: extractTransportDiagnostics(evidence.logLines, runtimeDiagnostics),
     mcpCalls: pairMcpCalls(evidence.logLines).map(localizeIncidentCall),
     desktopCrashEventTail: (evidence.crashEvents ?? []).slice(-64),
+    ...(evidence.desktopSession === undefined ? {} : { desktopSession: evidence.desktopSession }),
+    ...(evidence.crashDumps === undefined ? {} : { crashDumps: evidence.crashDumps }),
+    ...(evidence.desktopMemory === undefined ? {} : { desktopMemory: evidence.desktopMemory }),
+    ...(evidence.runtimeHistory === undefined ? {} : { runtimeHistory: evidence.runtimeHistory }),
     tunnelLogTail: evidence.logLines.filter((line) => line.source === 'tunnel').slice(-MAX_ENTRIES).map((line) => {
       const tunnelCorrelation = line.correlation?.kind === 'tunnel' ? line.correlation : undefined;
       return {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -77,7 +77,6 @@ export interface RemoteMcpControllerOptions {
 }
 
 const NGROK_API = 'http://127.0.0.1:4040/api/tunnels';
-const PAIRING_TTL_MS = 15 * 60_000;
 const CODE_TTL_MS = 5 * 60_000;
 const ACCESS_TTL_MS = 8 * 60 * 60_000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
@@ -105,9 +104,6 @@ export class RemoteMcpController {
   private ngrokProbeAt = 0;
   private runState: RemoteMcpStatus['state'] = 'stopped';
   private message: string | null = null;
-  private pairingCode: string | null = null;
-  private pairingExpiresAt = 0;
-  private pairingFailures = 0;
   private readonly clients = new Map<string, RegisteredClient>();
   private readonly authCodes = new Map<string, AuthorizationCode>();
   private readonly accessTokens = new Map<string, AccessGrant>();
@@ -135,10 +131,6 @@ export class RemoteMcpController {
     const executable = this.ngrokPath;
     const automaticInstaller = await resolveNgrokAutomaticInstaller();
     const hasAuthtoken = await this.hasAuthtoken();
-    if (this.pairingCode !== null && this.now() >= this.pairingExpiresAt) {
-      this.pairingCode = null;
-      this.pairingExpiresAt = 0;
-    }
     return {
       state: this.runState,
       provider: 'ngrok',
@@ -151,11 +143,8 @@ export class RemoteMcpController {
       localGatewayUrl: this.gatewayUrl,
       publicMcpUrl: this.publicOrigin === null ? null : `${this.publicOrigin}/mcp`,
       configuredPublicOrigin: this.configuredPublicOrigin,
-      pairingCode: this.runState === 'running' ? this.pairingCode : null,
-      pairingCodeExpiresAt: this.runState === 'running' && this.pairingExpiresAt > 0 ? new Date(this.pairingExpiresAt).toISOString() : null,
       oauthProtected: true,
       oauthConnected: this.hasTrustedClient(),
-      pairingRequired: this.runState === 'running' && this.pairingCode !== null,
       autoStartEnabled: this.desiredRunning,
       message: this.message,
     };
@@ -223,7 +212,7 @@ export class RemoteMcpController {
     return this.status();
   }
 
-  public async regeneratePairingCode(): Promise<RemoteMcpStatus> {
+  public async resetOAuthTrust(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
     this.authorizationGeneration += 1;
     await this.closeLocalApprovalServers();
@@ -231,9 +220,6 @@ export class RemoteMcpController {
     this.authCodes.clear();
     this.accessTokens.clear();
     this.refreshTokens.clear();
-    this.pairingCode = null;
-    this.pairingExpiresAt = 0;
-    this.pairingFailures = 0;
     await this.persistState();
     this.message = 'ChatGPT authorization was reset. The next supported ChatGPT OAuth connection will complete automatically through the local Desktop handoff.';
     return this.status();
@@ -267,9 +253,6 @@ export class RemoteMcpController {
       if (recoveredStaleNgrok) this.message = 'Recovered a stale lnwjud ngrok runtime from a previous Desktop session';
       await this.startGateway(localMcpUrl);
       if (this.gatewayUrl === null) throw new Error('Remote MCP gateway did not start');
-      this.pairingCode = null;
-      this.pairingExpiresAt = 0;
-      this.pairingFailures = 0;
       this.publicOrigin = null;
       let lastNgrokDiagnostic: string | null = null;
       let ngrokDiagnosticBuffer = '';
@@ -318,7 +301,7 @@ export class RemoteMcpController {
       await this.persistState();
       this.message = this.hasTrustedClient()
         ? 'Remote MCP is online. ChatGPT authorization is trusted and will reconnect automatically.'
-        : 'Remote MCP is online. Connect the published lnwjud app from ChatGPT; supported ChatGPT OAuth clients complete through a local Desktop handoff with no PIN.';
+        : 'Remote MCP is online. Connect the published lnwjud app from ChatGPT; supported ChatGPT OAuth clients complete through a local Desktop handoff without manual code entry.';
       return this.status();
     } catch (error) {
       await this.stopOwnedRuntime();
@@ -482,32 +465,11 @@ export class RemoteMcpController {
       return;
     }
     if (!client.trusted) {
-      const submitted = params.get('pairing_code');
-      if (submitted === null) {
-        if (this.pairingCode === null || this.now() >= this.pairingExpiresAt) this.issuePairingCode();
-        html(
-          response,
-          200,
-          authorizePairingPage({
-            clientName: client.clientName ?? 'OAuth client',
-            clientId,
-            redirectUri,
-            state,
-            challenge,
-          }),
-          [new URL(redirectUri).origin],
-        );
-        return;
-      }
-      if (!this.verifyPairingCode(submitted)) {
-        html(response, 403, pairingErrorPage());
-        return;
-      }
-      this.clients.set(clientId, { ...client, trusted: true });
-      this.pairingCode = null;
-      this.pairingExpiresAt = 0;
-      this.message = 'OAuth client authorized. This connection is remembered for future starts.';
-      await this.persistState();
+      json(response, 403, {
+        error: 'access_denied',
+        error_description: 'This OAuth client is not supported by lnwjud Desktop. Connect from ChatGPT so authorization can complete through the local Desktop handoff.',
+      });
+      return;
     }
     this.redirectAuthorizationCode({ clientId, redirectUri, state, challenge }, response);
   }
@@ -554,9 +516,6 @@ export class RemoteMcpController {
         }
         consumed = true;
         this.clients.set(input.clientId, { ...client, trusted: true });
-        this.pairingCode = null;
-        this.pairingExpiresAt = 0;
-        this.pairingFailures = 0;
         this.message = 'ChatGPT authorized through local Desktop confirmation. This OAuth connection is remembered for future starts.';
         await this.persistState();
         this.redirectAuthorizationCode(input, response);
@@ -632,24 +591,6 @@ export class RemoteMcpController {
     if (grant === undefined) return false;
     if (grant.expiresAt <= this.now()) { this.accessTokens.delete(value); return false; }
     return true;
-  }
-
-  private issuePairingCode(): void {
-    this.pairingCode = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    this.pairingExpiresAt = this.now() + PAIRING_TTL_MS;
-    this.pairingFailures = 0;
-  }
-
-  private verifyPairingCode(value: string): boolean {
-    if (this.pairingCode === null || this.now() >= this.pairingExpiresAt || !/^\d{6}$/.test(value)) return false;
-    const accepted = timingSafeEqual(Buffer.from(value), Buffer.from(this.pairingCode));
-    if (accepted) return true;
-    this.pairingFailures += 1;
-    if (this.pairingFailures >= 5) {
-      this.pairingCode = null;
-      this.pairingExpiresAt = 0;
-    }
-    return false;
   }
 
   private requirePublicOrigin(): string {
@@ -740,8 +681,6 @@ export class RemoteMcpController {
     const child = this.ngrok;
     this.ngrok = null;
     this.publicOrigin = null;
-    this.pairingCode = null;
-    this.pairingExpiresAt = 0;
     if (child !== null && child.exitCode === null) {
       child.kill();
       await new Promise<void>((resolve) => { const timer = setTimeout(resolve, 1_500); child.once('exit', () => { clearTimeout(timer); resolve(); }); });
@@ -1121,62 +1060,6 @@ function html(response: ServerResponse, status: number, body: string, formAction
   response.end(body);
 }
 
-function authorizePairingPage(input: { readonly clientName: string; readonly clientId: string; readonly redirectUri: string; readonly state: string; readonly challenge: string }): string {
-  const escaped = escapeHtml;
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>Authorize ${escaped(input.clientName)} · lnwjud</title>
-  <style>
-    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f6f7fb;background:#070a10}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:radial-gradient(circle at 50% -10%,rgba(220,180,72,.14),transparent 34%),linear-gradient(180deg,#080b12 0%,#05070b 100%);color:#f6f7fb}
-    .shell{width:min(100%,560px)}.brand{display:flex;align-items:center;justify-content:space-between;margin:0 0 14px;padding:0 4px;color:#d8ae42;font-weight:800;letter-spacing:.02em}.version{font-size:12px;color:#8b95a7;font-weight:650}
-    .card{border:1px solid rgba(219,181,78,.22);border-radius:22px;background:linear-gradient(180deg,rgba(19,24,34,.97),rgba(10,14,21,.98));box-shadow:0 24px 70px rgba(0,0,0,.48),inset 0 1px rgba(255,255,255,.035);overflow:hidden}
-    .accent{height:3px;background:linear-gradient(90deg,#8b681d,#edc55e,#8b681d)}.content{padding:30px}.eyebrow{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(87,204,135,.25);border-radius:999px;padding:6px 10px;background:rgba(54,163,101,.08);color:#75dda0;font-size:12px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.dot{width:7px;height:7px;border-radius:50%;background:#61d993;box-shadow:0 0 14px rgba(97,217,147,.55)}
-    h1{font-size:30px;line-height:1.1;margin:18px 0 10px;letter-spacing:-.035em}p{margin:0;color:#aeb7c7;line-height:1.65}.client{color:#f8d873}.steps{margin:24px 0 20px;padding:15px 16px;border:1px solid #232b39;border-radius:14px;background:#0a0e15;color:#9fa9ba;font-size:13px;line-height:1.6}.steps strong{color:#d8dee8}
-    label{display:block;margin:0 0 9px;color:#dce2ec;font-size:13px;font-weight:700}.code{width:100%;height:66px;border:1px solid #30394a;border-radius:14px;background:#070a0f;color:#f4d06a;outline:none;padding:0 18px;font:800 28px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.34em;text-align:center;transition:border-color .15s,box-shadow .15s}.code:focus{border-color:#d6ad43;box-shadow:0 0 0 4px rgba(214,173,67,.1)}
-    button{width:100%;height:50px;margin-top:14px;border:1px solid #d9b54f;border-radius:13px;background:linear-gradient(180deg,#e7c35e,#bc8e29);color:#171109;font:800 15px/1 inherit;cursor:pointer;box-shadow:0 8px 22px rgba(187,140,35,.2)}button:hover{filter:brightness(1.06)}button:active{transform:translateY(1px)}
-    .security{display:flex;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid #202735;color:#7f8a9c;font-size:12px;line-height:1.55}.shield{color:#6bdc99;font-size:15px}.foot{margin-top:12px;text-align:center;color:#5f6978;font-size:11px}
-    @media (max-width:520px){body{padding:16px}.content{padding:23px 20px}h1{font-size:26px}.code{font-size:24px;letter-spacing:.26em}}
-  </style>
-</head>
-<body>
-  <main class="shell">
-    <div class="brand"><span>◈ lnwjud</span><span class="version">REMOTE MCP · OAUTH</span></div>
-    <section class="card" aria-labelledby="authorize-title">
-      <div class="accent"></div>
-      <div class="content">
-        <div class="eyebrow"><span class="dot"></span> Fallback pairing</div>
-        <h1 id="authorize-title">Authorize <span class="client">${escaped(input.clientName)}</span></h1>
-        <p>This OAuth client is not a recognized ChatGPT callback, so lnwjud requires a one-time fallback PIN.</p>
-        <div class="steps"><strong>Where to find it:</strong> lnwjud Desktop → Settings → Remote MCP &amp; Tunnel. ChatGPT connections normally skip this step.</div>
-        <form method="post" action="/oauth/authorize">
-          <input type="hidden" name="response_type" value="code">
-          <input type="hidden" name="client_id" value="${escaped(input.clientId)}">
-          <input type="hidden" name="redirect_uri" value="${escaped(input.redirectUri)}">
-          <input type="hidden" name="state" value="${escaped(input.state)}">
-          <input type="hidden" name="code_challenge" value="${escaped(input.challenge)}">
-          <input type="hidden" name="code_challenge_method" value="S256">
-          <label for="pairing-code">Fallback PIN</label>
-          <input id="pairing-code" class="code" autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" name="pairing_code" required aria-describedby="pairing-help">
-          <button type="submit">Authorize OAuth client</button>
-        </form>
-        <div id="pairing-help" class="security"><span class="shield">◆</span><span>The fallback PIN is verified locally by lnwjud. Supported ChatGPT callbacks bypass this page and complete OAuth automatically.</span></div>
-      </div>
-    </section>
-    <div class="foot">lnwjud Remote MCP · OAuth 2.0 + PKCE</div>
-  </main>
-</body>
-</html>`;
-}
-
-function pairingErrorPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Fallback PIN rejected · lnwjud</title><style>:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eef1f6;background:#070a10}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#070a10}.card{width:min(100%,520px);padding:30px;border:1px solid rgba(221,80,80,.3);border-radius:20px;background:#10151e;box-shadow:0 24px 70px rgba(0,0,0,.45)}.mark{color:#ff7d7d;font-size:28px}h1{margin:12px 0 8px;font-size:28px}p{margin:0;color:#aeb7c7;line-height:1.65}.hint{margin-top:18px;padding:13px 14px;border-radius:12px;background:#0a0e15;border:1px solid #242d3a;color:#d5b861;font-size:13px}</style></head><body><main class="card"><div class="mark">◇</div><h1>Fallback PIN rejected</h1><p>The PIN is invalid or expired. Restart authorization to receive a fresh fallback PIN in lnwjud Desktop.</p><div class="hint">ChatGPT callbacks normally do not need a PIN.</div></main></body></html>`;
-}
-
 function token(bytes: number): string { return randomBytes(bytes).toString('base64url'); }
 function verifyPkce(verifier: string, challenge: string): boolean {
   if (verifier.length < 43 || verifier.length > 128) return false;
@@ -1222,7 +1105,6 @@ function isSafeRedirectUri(value: string): boolean {
     return url.protocol === 'https:' || ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.protocol === 'http:');
   } catch { return false; }
 }
-function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function redactNgrokError(value: string): string { return value.replace(/(authtoken|token)[=:"'\s]+[^\s,"']+/gi, '$1=[redacted]').slice(0, 500); }
 

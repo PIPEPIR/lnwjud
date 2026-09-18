@@ -1,6 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { ok } from '@lnwjud/domain';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ToolAvailabilitySnapshot } from '@lnwjud/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityTracker } from './activity-tracker.js';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 import { BUNDLED_PONYTAIL_SKILL_ID } from './ponytail-runtime.js';
@@ -62,6 +63,47 @@ describe('MCP localhost HTTP transport', () => {
       await client.close();
     }
   });
+
+  it('tears down every modern per-request MCP server after successful requests', async () => {
+    await handle.close();
+    const listeners = new Set<(snapshot: ToolAvailabilitySnapshot) => void>();
+    let created = 0;
+    let closed = 0;
+    handle = await startMcpHttp({
+      port: 0,
+      services: {},
+      actor: { clientId: 'modern-lifecycle-test', clientName: 'modern-lifecycle-test' },
+      toolAvailabilitySubscribe(listener): () => void {
+        created += 1;
+        listeners.add(listener);
+        return () => {
+          if (listeners.delete(listener)) closed += 1;
+        };
+      },
+    });
+
+    const client = new Client(
+      { name: 'modern-lifecycle-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+
+    try {
+      await client.connect(transport);
+      for (let index = 0; index < 64; index += 1) {
+        const tools = await client.listTools();
+        expect(tools.tools.length).toBeGreaterThan(0);
+      }
+
+      await vi.waitFor(() => {
+        expect(listeners.size).toBe(0);
+        expect(closed).toBe(created);
+      });
+      expect(created).toBeGreaterThanOrEqual(64);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }, 15_000);
 
   it('advertises outcome-driven continuation without an elapsed-time cutoff', async () => {
     const client = new Client({ name: 'continuity-policy-client', version: '0.1.0' });

@@ -75,4 +75,37 @@ describe('MCP server live tool availability', () => {
     expect(unsubscribeCount).toBe(1);
     expect(listeners.size).toBe(0);
   });
+
+  it('releases tool availability when only the underlying protocol server closes', async () => {
+    const listeners = new Set<(next: ToolAvailabilitySnapshot) => void>();
+    let unsubscribeCount = 0;
+    const server = createMcpServer({
+      services: {} as McpApplicationServices,
+      actor,
+      toolAvailabilitySubscribe(listener): () => void {
+        listeners.add(listener);
+        return () => {
+          if (listeners.delete(listener)) unsubscribeCount += 1;
+        };
+      },
+    });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'protocol-close-client', version: '0.1.0' });
+
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      expect(listeners.size).toBe(1);
+
+      await server.server.close();
+
+      await vi.waitFor(() => {
+        expect(listeners.size).toBe(0);
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }
+
+    expect(unsubscribeCount).toBe(1);
+  });
 });

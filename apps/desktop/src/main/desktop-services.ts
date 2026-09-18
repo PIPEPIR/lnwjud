@@ -174,8 +174,11 @@ import { RemediationRegistry } from './tool-catalog/remediation-registry.js';
 import { ToolCatalogService, type ToolCatalogServiceOptions } from './tool-catalog/tool-catalog-service.js';
 import { projectExternalMcpTools } from './tool-catalog/external-tool-catalog-adapter.js';
 import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
-import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentReport } from './incident-report.js';
+import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentDesktopMemory, type IncidentReport } from './incident-report.js';
 import { readCrashEventHistory } from './crash-recovery.js';
+import { readDesktopSessionSnapshot } from './desktop-session-diagnostics.js';
+import { readNativeCrashDumpMetadata } from './native-crash-diagnostics.js';
+import { readRuntimeDiagnosticsHistory } from './runtime-diagnostics-history.js';
 import { createRetryableShutdown } from './desktop-shutdown.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
@@ -239,6 +242,10 @@ export interface DesktopRuntimeOptions {
   readonly nativeCapabilityApi?: ElectronNativeCapabilityApi;
   /** Pinned ECC resources resolved by the Electron composition root. */
   readonly eccRuntimeOptions?: EccRuntimeOptions;
+  /** Main-process memory evidence for incident reports; supplied only by Electron composition. */
+  readonly collectIncidentMemory?: () => IncidentDesktopMemory;
+  /** Flush the latest bounded runtime diagnostics sample immediately before an incident export. */
+  readonly captureRuntimeDiagnostics?: () => void;
 }
 
 export function toolAvailabilityHostSyncDisposition(
@@ -1246,6 +1253,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     setPermissionProfile: async (request: SetPermissionProfileRequest): Promise<{ readonly profile: IpcPermissionProfileName }> => {
       profileName = request.profile;
       settingsRepository.set(permissionSettingKey, profileName);
+      if (profileName !== 'full') settingsRepository.set(USER_SETTING_KEYS.desktopFullBypassAll, 'false');
       return { profile: profileName };
     },
     setUnrestrictedMode: async (request: SetUnrestrictedModeRequest): Promise<{ readonly unrestricted: boolean; readonly restartRequired: boolean }> => {
@@ -1264,10 +1272,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const allowedRoots = parseAllowedRoots(request.allowedRoots.join(';'));
       if (request.strictRoots && allowedRoots.length === 0) throw new Error('Strict root mode requires at least one allowed root');
       settingsRepository.set(STDIO_PERMISSION_PROFILE_SETTING_KEY, request.profile);
+      if (request.profile !== 'full') settingsRepository.set(USER_SETTING_KEYS.stdioFullBypassAll, 'false');
       settingsRepository.set(STDIO_STRICT_ROOTS_SETTING_KEY, request.strictRoots ? 'true' : 'false');
       settingsRepository.set(STDIO_ALLOWED_ROOTS_SETTING_KEY, serializeAllowedRoots(allowedRoots));
-      const tunnelStatus = await tunnelController.status();
-      return { profile: request.profile, strictRoots: request.strictRoots, allowedRoots, restartRequired: tunnelStatus.state === 'running' };
+      return { profile: request.profile, strictRoots: request.strictRoots, allowedRoots, restartRequired: true };
     },
     createBackup: async (): Promise<IpcBackupSummary> => toIpcBackupSummary(await backupService.create('manual')),
     scheduleRestoreBackup: async (request: ScheduleRestoreBackupRequest): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }> => {
@@ -1372,7 +1380,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] static domain ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'}`); return status; },
     startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
-    regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
+    resetRemoteMcpOAuth: async () => { const status = await remoteMcpController.resetOAuthTrust(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
     setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {
       const clientPath = await tunnelController.replaceClientPath(request.clientPath);
       if (readSettings().tunnelAutoReconnect) {
@@ -1387,7 +1395,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     setUserSettings: async (request: SetUserSettingsRequest): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }> => {
       const previous = readSettings();
-      persistUserSettings(settingsRepository, request.settings);
+      const stdioProfile = parseStdioPermissionProfile(settingsRepository.get(STDIO_PERMISSION_PROFILE_SETTING_KEY), 'full');
+      const normalizedSettings: UserSettings = {
+        ...request.settings,
+        desktopFullBypassAll: profileName === 'full' && request.settings.desktopFullBypassAll,
+        stdioFullBypassAll: stdioProfile === 'full' && request.settings.stdioFullBypassAll,
+      };
+      persistUserSettings(settingsRepository, normalizedSettings);
       const next = readSettings();
       const reconciledMcp = await extensionsService.listMcpServers().catch(() => undefined);
       if (reconciledMcp?.ok) {
@@ -1477,9 +1491,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ),
     streamWorkLogExportRows: (rowIds, locale): AsyncIterable<string> => streamWorkLogExportRows(auditRepository, rowIds, locale),
     captureIncident: async (updaterEvents: readonly string[] = []): Promise<IncidentReport> => {
+      options.captureRuntimeDiagnostics?.();
       const tunnel = await observedTunnelStatus();
       const tunnelClientVersion = await tunnelController.clientVersion();
       const relevantPids = await tunnelController.incidentRelevantPids();
+      const desktopSession = readDesktopSessionSnapshot(dataPath);
+      const desktopMemory = options.collectIncidentMemory?.();
+      const runtimeHistory = readRuntimeDiagnosticsHistory(dataPath);
       return buildIncidentReport({
         triggeredByUser: true,
         appVersion: APP_VERSION,
@@ -1489,6 +1507,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         updaterEvents,
         logLines: logHub.snapshot().lines,
         crashEvents: readCrashEventHistory(dataPath),
+        ...(desktopSession === null ? {} : { desktopSession }),
+        crashDumps: readNativeCrashDumpMetadata(dataPath),
+        ...(desktopMemory === undefined ? {} : { desktopMemory }),
+        ...(runtimeHistory === null ? {} : { runtimeHistory }),
         runtimeDiagnostics: tunnelController.incidentRuntimeDiagnostics(),
         relevantPids: relevantPids.pids,
         ...(relevantPids.unavailableReason === null ? {} : { relevantPidUnavailableReason: relevantPids.unavailableReason }),

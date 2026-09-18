@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import type { ResolvedRemediation, ToolCatalogItem, UiLocale } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
+import { createTranslator, type Translator } from '../../i18n/index.js';
 import { toolReadinessLabel } from './tool-readiness-copy.js';
 import { effectiveExposureLabel, toolAvailabilityLabel } from './tool-availability-copy.js';
 import { toolControlCanEnable, toolControlEnabled } from './tool-catalog-view.js';
@@ -19,6 +20,7 @@ interface ToolDetailModalProps {
 }
 
 export function ToolDetailModal({ locale, item, remediations, onClose, onRemediation, availabilityBusy = false, onSetAvailability, onResetAvailability }: ToolDetailModalProps): ReactElement {
+  const t = createTranslator(locale);
   const dialogRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -51,14 +53,14 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
     try {
       await onRemediation(action);
     } catch (cause: unknown) {
-      setActionError(cause instanceof Error ? cause.message : (locale === 'th' ? 'ดำเนินการไม่สำเร็จ โปรดลองอีกครั้ง' : 'The action failed. Please try again.'));
+      setActionError(cause instanceof Error ? cause.message : t('tools.detail.actionFailed'));
     } finally {
       setBusyActionKey(null);
     }
   };
 
   const relevantRemediations = remediations.filter((remediation) => item.remediationIds.includes(remediation.id));
-  const notChecked = locale === 'th' ? 'ยังไม่มีผลตรวจ' : 'Not checked';
+  const notChecked = t('tools.detail.notChecked');
   const modal = (
     <div className="tool-modal-backdrop" role="presentation" onMouseDown={(event): void => { if (event.currentTarget === event.target) onClose(); }}>
       <section ref={dialogRef} className="tool-modal" role="dialog" aria-modal="true" aria-labelledby="tool-detail-title">
@@ -71,33 +73,33 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
             </div>
             <code>{item.name}</code>
           </div>
-          <button ref={closeRef} className="tool-modal-close" type="button" onClick={onClose} aria-label={locale === 'th' ? 'ปิดรายละเอียดเครื่องมือ' : 'Close tool details'}>×</button>
+          <button ref={closeRef} className="tool-modal-close" type="button" onClick={onClose} aria-label={t('tools.detail.close')}>×</button>
         </header>
         <div className="tool-modal-scroll">
           <p className="tool-modal-description">{item.longDescription}</p>
           <dl className="tool-facts">
-            <div><dt>{locale === 'th' ? 'สถานะ' : 'Status'}</dt><dd><span className={`tool-readiness-badge tool-readiness-${item.readiness}`}>{toolReadinessLabel(locale, item)}</span></dd></div>
-            {item.deliveryState === undefined ? null : <div><dt>{locale === 'th' ? 'สถานะการส่งมอบ' : 'Delivery state'}</dt><dd>{deliveryStateLabel(locale, item)}</dd></div>}
-            {item.available === undefined ? null : <div><dt>{locale === 'th' ? 'มี runtime แล้ว' : 'Runtime available'}</dt><dd>{booleanLabel(locale, item.available)}</dd></div>}
-            {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'สถานะเปิด/ปิดของผู้ใช้' : 'User availability'}</dt><dd>{toolAvailabilityLabel(locale, item)}</dd></div> : null}
-            {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'การแสดงผล MCP' : 'MCP exposure'}</dt><dd>{effectiveExposureLabel(locale, item)}</dd></div> : null}
-            <div><dt>{locale === 'th' ? 'สิทธิ์ที่ประกาศ' : 'Declared permission'}</dt><dd>{declaredPermissionLabel(locale, item)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ผลจากโปรไฟล์' : 'Profile decision'}</dt><dd>{profileDecisionLabel(locale, item)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ความเสี่ยง' : 'Risk mode'}</dt><dd>{riskModeLabel(locale, item)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ตรวจล่าสุด' : 'Checked at'}</dt><dd>{formatDateTime(item.checkedAt, notChecked, locale)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ข้อมูลเก่า' : 'Stale'}</dt><dd>{booleanLabel(locale, item.stale)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ยกเลิกได้' : 'Cancelable'}</dt><dd>{nullableBooleanLabel(locale, item.supportsCancel, item.origin === 'external_mcp')}</dd></div>
-            <div><dt>Dry run</dt><dd>{nullableBooleanLabel(locale, item.supportsDryRun, item.origin === 'external_mcp')}</dd></div>
+            <div><dt>{t('tools.detail.status')}</dt><dd><span className={`tool-readiness-badge tool-readiness-${item.readiness}`}>{toolReadinessLabel(locale, item)}</span></dd></div>
+            {item.deliveryState === undefined ? null : <div><dt>{t('tools.detail.deliveryState')}</dt><dd>{deliveryStateLabel(t, item)}</dd></div>}
+            {item.available === undefined ? null : <div><dt>{t('tools.detail.runtimeAvailable')}</dt><dd>{booleanLabel(t, item.available)}</dd></div>}
+            {item.origin === 'lnwjud' ? <div><dt>{t('tools.detail.userAvailability')}</dt><dd>{toolAvailabilityLabel(locale, item)}</dd></div> : null}
+            {item.origin === 'lnwjud' ? <div><dt>{t('tools.detail.mcpExposure')}</dt><dd>{effectiveExposureLabel(locale, item)}</dd></div> : null}
+            <div><dt>{t('tools.detail.declaredPermission')}</dt><dd>{declaredPermissionLabel(t, item)}</dd></div>
+            <div><dt>{t('tools.detail.profileDecision')}</dt><dd>{profileDecisionLabel(t, item)}</dd></div>
+            <div><dt>{t('tools.detail.riskMode')}</dt><dd>{riskModeLabel(t, item)}</dd></div>
+            <div><dt>{t('tools.detail.checkedAt')}</dt><dd>{formatDateTime(item.checkedAt, notChecked, locale)}</dd></div>
+            <div><dt>{t('tools.detail.stale')}</dt><dd>{booleanLabel(t, item.stale)}</dd></div>
+            <div><dt>{t('tools.detail.cancelable')}</dt><dd>{nullableBooleanLabel(t, item.supportsCancel, item.origin === 'external_mcp')}</dd></div>
+            <div><dt>{t('tools.detail.dryRun')}</dt><dd>{nullableBooleanLabel(t, item.supportsDryRun, item.origin === 'external_mcp')}</dd></div>
           </dl>
-          {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><ToolAvailabilitySwitch locale={locale} checked={toolControlEnabled(item)} busy={availabilityBusy} disabled={onSetAvailability === undefined || (!toolControlEnabled(item) && !toolControlCanEnable(item))} blockedLabel={!toolControlEnabled(item) && !toolControlCanEnable(item) ? (locale === 'th' ? 'ตั้งค่าก่อน' : 'Setup first') : undefined} label={item.title} onChange={(enabled) => { void onSetAvailability?.(enabled); }} />{item.userPreference === 'default' ? null : <button type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{locale === 'th' ? 'ใช้ค่าเริ่มต้น' : 'Use default'}</button>}</section> : null}
-          {item.riskMode === 'input_dependent' ? <p role="note" className="tool-risk-caveat">{locale === 'th' ? 'ระดับความเสี่ยงและการขออนุมัติอาจเปลี่ยนตาม operation และ arguments ที่ระบุ ไม่ได้หมายความว่าทุก operation มีระดับเดียวกัน' : 'Risk and approval requirements can change with the selected operation and arguments; not every operation has the same risk level.'}</p> : null}
-          {item.origin === 'external_mcp' && item.readiness === 'ready' ? <p role="note" className="tool-risk-caveat">{locale === 'th' ? 'เชื่อมต่อ External MCP และอ่านรายการเครื่องมือนี้สำเร็จแล้ว ส่วนสิทธิ์ การยกเลิก และ Dry run ด้านล่างจะแสดงตามข้อมูลที่ Server ประกาศเท่านั้น' : 'External MCP discovery succeeded. Permission, cancellation, and dry-run details below are shown only when the server declares them.'}</p> : null}
-          {item.stale ? <p role="status" className="tool-stale-caveat">{locale === 'th' ? 'ผล readiness นี้เกินอายุ cache แล้ว ควรตรวจใหม่ก่อนพึ่งพาสถานะ' : 'This readiness result is stale; recheck before relying on it.'}</p> : null}
-          {item.requirements.length > 0 ? <section className="tool-modal-section"><h3>{locale === 'th' ? 'ข้อกำหนด' : 'Requirements'}</h3><ul className="tool-requirement-list">{item.requirements.map((requirement) => <li key={requirement.id}><div><strong>{requirement.id}</strong><span className={`doctor-status-badge doctor-status-${requirement.status}`}>{requirement.status}</span></div>{requirement.detail ? <p>{requirement.detail}</p> : null}</li>)}</ul></section> : null}
-          {item.inputSchema !== null ? <details className="tool-schema-details"><summary>{locale === 'th' ? 'Input schema' : 'Input schema'}</summary><pre>{JSON.stringify(item.inputSchema, null, 2)}</pre></details> : null}
+          {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><ToolAvailabilitySwitch locale={locale} checked={toolControlEnabled(item)} busy={availabilityBusy} disabled={onSetAvailability === undefined || (!toolControlEnabled(item) && !toolControlCanEnable(item))} blockedLabel={!toolControlEnabled(item) && !toolControlCanEnable(item) ? t('tools.setupFirst') : undefined} label={item.title} onChange={(enabled) => { void onSetAvailability?.(enabled); }} />{item.userPreference === 'default' ? null : <button type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{t('tools.useDefault')}</button>}</section> : null}
+          {item.riskMode === 'input_dependent' ? <p role="note" className="tool-risk-caveat">{t('tools.detail.inputDependentRisk')}</p> : null}
+          {item.origin === 'external_mcp' && item.readiness === 'ready' ? <p role="note" className="tool-risk-caveat">{t('tools.detail.externalDiscoveryCaveat')}</p> : null}
+          {item.stale ? <p role="status" className="tool-stale-caveat">{t('tools.detail.staleCaveat')}</p> : null}
+          {item.requirements.length > 0 ? <section className="tool-modal-section"><h3>{t('tools.detail.requirements')}</h3><ul className="tool-requirement-list">{item.requirements.map((requirement) => <li key={requirement.id}><div><strong>{requirement.id}</strong><span className={`doctor-status-badge doctor-status-${requirement.status}`}>{requirement.status}</span></div>{requirement.detail ? <p>{requirement.detail}</p> : null}</li>)}</ul></section> : null}
+          {item.inputSchema !== null ? <details className="tool-schema-details"><summary>{t('tools.detail.inputSchema')}</summary><pre>{JSON.stringify(item.inputSchema, null, 2)}</pre></details> : null}
           {actionError === null ? null : <p className="tool-action-error" role="alert">{actionError}</p>}
-          {relevantRemediations.map((remediation) => <section key={remediation.id} className="tool-remediation"><h3>{remediation.title}</h3><p>{remediation.explanation}</p><ol>{remediation.steps.map((step) => <li key={step}>{step}</li>)}</ol><div className="tool-action-row">{remediation.actions.map((action, index) => { const key = `${remediation.id}-${index}`; return <button type="button" key={key} disabled={busyActionKey !== null} onClick={() => { void runRemediation(action, key); }}>{busyActionKey === key ? busyActionLabel(locale, action) : actionLabel(locale, action)}</button>; })}</div></section>)}
-          {item.readiness !== 'ready' && relevantRemediations.length === 0 ? <section className="tool-remediation tool-remediation-fallback" role="note"><h3>{locale === 'th' ? 'รายการนี้ยังไม่มีปุ่มแก้อัตโนมัติ' : 'No automatic repair is available for this item'}</h3><p>{locale === 'th' ? 'ดูรายละเอียดในข้อกำหนดด้านบน สถานะนี้ไม่ได้หมายความว่ามีสวิตช์ซ่อนอยู่ใน Settings หาก runtime ยังไม่มี remediation ที่ปลอดภัย lnwjud จะไม่พาไปตั้งค่าที่ไม่เกี่ยวข้อง' : 'Use the requirement details above. This status does not imply there is a hidden Settings switch; when no safe remediation exists, lnwjud will not send you to an unrelated setting.'}</p></section> : null}
+          {relevantRemediations.map((remediation) => <section key={remediation.id} className="tool-remediation"><h3>{remediation.title}</h3><p>{remediation.explanation}</p><ol>{remediation.steps.map((step) => <li key={step}>{step}</li>)}</ol><div className="tool-action-row">{remediation.actions.map((action, index) => { const key = `${remediation.id}-${index}`; return <button type="button" key={key} disabled={busyActionKey !== null} onClick={() => { void runRemediation(action, key); }}>{busyActionKey === key ? busyActionLabel(t, action) : actionLabel(t, action)}</button>; })}</div></section>)}
+          {item.readiness !== 'ready' && relevantRemediations.length === 0 ? <section className="tool-remediation tool-remediation-fallback" role="note"><h3>{t('tools.detail.noAutomaticRepair')}</h3><p>{t('tools.detail.noAutomaticRepairBody')}</p></section> : null}
         </div>
       </section>
     </div>
@@ -105,60 +107,60 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
   return typeof document === 'undefined' ? modal : createPortal(modal, document.body);
 }
 
-function booleanLabel(locale: UiLocale, value: boolean): string {
-  return value ? (locale === 'th' ? 'ใช่' : 'Yes') : (locale === 'th' ? 'ไม่' : 'No');
+function booleanLabel(t: Translator, value: boolean): string {
+  return value ? t('tools.detail.yes') : t('tools.detail.no');
 }
 
-function nullableBooleanLabel(locale: UiLocale, value: boolean | null, external = false): string {
-  if (value !== null) return booleanLabel(locale, value);
-  if (external) return locale === 'th' ? 'Server ไม่ได้ประกาศ' : 'Not declared by server';
-  return locale === 'th' ? 'ไม่ทราบ' : 'Unknown';
+function nullableBooleanLabel(t: Translator, value: boolean | null, external = false): string {
+  if (value !== null) return booleanLabel(t, value);
+  if (external) return t('tools.detail.notDeclaredByServer');
+  return t('tools.detail.unknown');
 }
 
-function declaredPermissionLabel(locale: UiLocale, item: ToolCatalogItem): string {
-  if (item.origin === 'external_mcp' && item.declaredPermission === 'UNKNOWN') return locale === 'th' ? 'Server ไม่ได้ระบุ' : 'Not declared by server';
+function declaredPermissionLabel(t: Translator, item: ToolCatalogItem): string {
+  if (item.origin === 'external_mcp' && item.declaredPermission === 'UNKNOWN') return t('tools.detail.notSpecifiedByServer');
   return item.declaredPermission;
 }
 
-function profileDecisionLabel(locale: UiLocale, item: ToolCatalogItem): string {
-  if (item.origin === 'external_mcp' && item.profileDecision === 'UNKNOWN') return locale === 'th' ? 'lnwjud ไม่ได้จัดประเภท' : 'Not classified by lnwjud';
+function profileDecisionLabel(t: Translator, item: ToolCatalogItem): string {
+  if (item.origin === 'external_mcp' && item.profileDecision === 'UNKNOWN') return t('tools.notClassified');
   return item.profileDecision;
 }
 
-function riskModeLabel(locale: UiLocale, item: ToolCatalogItem): string {
-  if (item.riskMode === 'external_unknown') return locale === 'th' ? 'ขอบเขต External MCP' : 'External MCP boundary';
+function riskModeLabel(t: Translator, item: ToolCatalogItem): string {
+  if (item.riskMode === 'external_unknown') return t('tools.detail.externalBoundary');
   return item.riskMode;
 }
 
-function deliveryStateLabel(locale: UiLocale, item: ToolCatalogItem): string {
-  if (item.deliveryState === 'external_unknown') return locale === 'th' ? 'จัดการโดย External MCP' : 'Managed by External MCP';
+function deliveryStateLabel(t: Translator, item: ToolCatalogItem): string {
+  if (item.deliveryState === 'external_unknown') return t('tools.managedExternal');
   return item.deliveryState ?? '';
 }
 
-function busyActionLabel(locale: UiLocale, action: ResolvedRemediation['actions'][number]): string {
-  if (action.kind === 'launch_managed_browser') return locale === 'th' ? 'กำลังเปิด Managed Browser…' : 'Starting managed browser…';
-  if (action.kind === 'install_pdf_provider') return locale === 'th' ? 'กำลังดาวน์โหลดและติดตั้ง…' : 'Downloading and installing…';
-  return locale === 'th' ? 'กำลังดำเนินการ…' : 'Working…';
+function busyActionLabel(t: Translator, action: ResolvedRemediation['actions'][number]): string {
+  if (action.kind === 'launch_managed_browser') return t('tools.detail.startingManagedBrowser');
+  if (action.kind === 'install_pdf_provider') return t('tools.detail.installingPdf');
+  return t('tools.detail.working');
 }
 
-function actionLabel(locale: UiLocale, action: ResolvedRemediation['actions'][number]): string {
-  if (action.kind === 'recheck') return locale === 'th' ? 'ตรวจใหม่' : 'Recheck';
-  if (action.kind === 'launch_managed_browser') return locale === 'th' ? 'เปิด Managed Browser' : 'Start managed browser';
-  if (action.kind === 'install_pdf_provider') return locale === 'th' ? 'ดาวน์โหลดและติดตั้ง PDF Provider' : 'Download & install PDF Provider';
-  if (action.kind === 'set_user_setting') return locale === 'th' ? 'เปิด codex_* และ Restart MCP' : 'Enable codex_* and restart MCP';
-  if (action.kind === 'open_system_settings') return locale === 'th' ? 'เปิด Windows Optional Features' : 'Open Windows Optional Features';
+function actionLabel(t: Translator, action: ResolvedRemediation['actions'][number]): string {
+  if (action.kind === 'recheck') return t('doctor.action.recheck');
+  if (action.kind === 'launch_managed_browser') return t('doctor.action.startManagedBrowser');
+  if (action.kind === 'install_pdf_provider') return t('doctor.action.installPdfProvider');
+  if (action.kind === 'set_user_setting') return t('doctor.action.enableCodex');
+  if (action.kind === 'open_system_settings') return t('doctor.action.openWindowsFeatures');
   if (action.kind === 'open_settings') {
-    const labels: Readonly<Record<string, readonly [string, string]>> = {
-      projects: ['ไปหน้าโปรเจกต์', 'Open Projects'],
-      tools_codex: ['ไปที่ Codex Delegation', 'Open Codex Delegation'],
-      tools_local_providers: ['ไปที่ Local Providers', 'Open Local Providers'],
-      mcp_servers: ['ไปที่ MCP Servers', 'Open MCP Servers'],
-      tunnel: ['ไปที่ Secure Tunnel', 'Open Secure Tunnel'],
-      security_profile: ['ไปที่ Security / Permissions', 'Open Security / Permissions'],
-    };
-    const label = labels[action.target];
-    return label === undefined ? (locale === 'th' ? 'เปิดการตั้งค่า' : 'Open settings') : label[locale === 'th' ? 0 : 1];
+    const keys = {
+      projects: 'doctor.action.projects',
+      tools_codex: 'doctor.action.toolsCodex',
+      tools_local_providers: 'doctor.action.localProviders',
+      mcp_servers: 'doctor.action.mcpServers',
+      tunnel: 'tools.detail.openSecureTunnel',
+      security_profile: 'doctor.action.securityProfile',
+    } as const;
+    const key = keys[action.target as keyof typeof keys];
+    return key === undefined ? t('doctor.action.openSettings') : t(key);
   }
-  if (action.kind === 'open_official_url') return locale === 'th' ? 'เปิดเว็บทางการ' : 'Open official site';
-  return locale === 'th' ? 'คัดลอกคำสั่ง' : 'Copy command';
+  if (action.kind === 'open_official_url') return t('doctor.action.openOfficialSite');
+  return t('doctor.action.copyCommand');
 }

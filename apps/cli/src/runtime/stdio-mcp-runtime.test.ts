@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from '@lnwjud/capabilities';
-import { USER_SETTING_KEYS, serializeToolAvailabilitySnapshot } from '@lnwjud/shared';
+import { STDIO_ALLOWED_ROOTS_SETTING_KEY, STDIO_PERMISSION_PROFILE_SETTING_KEY, STDIO_STRICT_ROOTS_SETTING_KEY, UNRESTRICTED_SETTING_KEY, USER_SETTING_KEYS, serializeToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { createStdioMcpRuntime } from './stdio-mcp-runtime.js';
 import { sharedActivityLeaseDirectoryPath } from '@lnwjud/mcp-server';
 
@@ -102,6 +102,33 @@ describe('stdio MCP runtime', () => {
       expect(notifications).toBe(1);
     } finally {
       unsubscribe();
+      externalDatabase.close();
+      await runtime.close();
+    }
+  });
+
+  it('reads current persisted Direct STDIO security settings without restarting the runtime', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-security-policy-'));
+    temporaryRoots.push(dataPath);
+    const runtime = createStdioMcpRuntime(dataPath, workspace);
+    const externalDatabase = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    const externalSettings = new SqliteSettingsRepository(externalDatabase);
+    try {
+      externalSettings.set(STDIO_PERMISSION_PROFILE_SETTING_KEY, 'safe');
+      externalSettings.set(USER_SETTING_KEYS.stdioFullBypassAll, 'true');
+      externalSettings.set(STDIO_STRICT_ROOTS_SETTING_KEY, 'true');
+      externalSettings.set(STDIO_ALLOWED_ROOTS_SETTING_KEY, 'E:\\one;E:\\two');
+      externalSettings.set(UNRESTRICTED_SETTING_KEY, 'false');
+      externalSettings.set(USER_SETTING_KEYS.customPermissionProfile, '{"read":"ASK"}');
+      expect(runtime.persistedSecurityPolicyProvider()).toEqual({
+        profile: 'safe',
+        fullBypassAll: true,
+        strictRoots: true,
+        allowedRoots: ['E:\\one', 'E:\\two'],
+        unrestricted: false,
+        customPermissionRaw: '{"read":"ASK"}',
+      });
+    } finally {
       externalDatabase.close();
       await runtime.close();
     }

@@ -41,26 +41,24 @@ export function FirstRunTunnelTip(props: FirstRunTunnelTipProps): ReactElement {
       >
         <div className="guided-tunnel-tip-icon" aria-hidden="true">↗</div>
         <div className="guided-tunnel-tip-copy">
-          <span className="settings-eyebrow">SECURE MCP TUNNEL</span>
+          <span className="settings-eyebrow">{t('settingsPage.secureTunnelName')}</span>
           <h2 id="guided-tunnel-tip-title">{t('guidedTunnel.tipTitle')}</h2>
           <p>{t('guidedTunnel.tipBody')}</p>
           <div className="guided-tunnel-privacy" role="note">🔒 {t('guidedTunnel.privacy')}</div>
           <label className="setting-field" htmlFor="first-run-permission-profile">
-            <span className="field-label">{props.locale === 'th' ? 'สิทธิ์ที่ AI ใช้กับ Desktop / Secure Tunnel' : 'AI permissions for Desktop / Secure Tunnel'}</span>
+            <span className="field-label">{t('guidedTunnel.permissionLabel')}</span>
             <select
               id="first-run-permission-profile"
               className="settings-select"
               value={props.permissionProfile}
               onChange={(event) => props.onPermissionProfileChange(event.target.value as PermissionProfileName)}
             >
-              <option value="safe">Safe</option>
-              <option value="balanced">Balanced</option>
-              <option value="full">Full</option>
-              <option value="custom">Custom</option>
+              <option value="safe">{t('permission.safe')}</option>
+              <option value="balanced">{t('permission.balanced')}</option>
+              <option value="full">{t('permission.full')}</option>
+              <option value="custom">{t('permission.custom')}</option>
             </select>
-            <span className="hint">{props.locale === 'th'
-              ? 'ค่าเริ่มต้น Balanced เหมาะกับการใช้งานครั้งแรก; Full ยังไม่เปิด Full Bypass จนกว่าคุณจะยืนยันแยกใน Settings'
-              : 'Balanced is the first-run default. Full does not enable Full Bypass unless you separately acknowledge it in Settings.'}</span>
+            <span className="hint">{t('guidedTunnel.permissionHint')}</span>
           </label>
         </div>
         <div className="guided-tunnel-tip-actions">

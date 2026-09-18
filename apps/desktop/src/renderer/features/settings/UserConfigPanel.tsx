@@ -7,6 +7,9 @@ import type {
   UiLocale,
   UserSettings,
 } from '@lnwjud/ipc-contracts';
+import { parseDelimitedList } from '@lnwjud/shared/text-list';
+import { createTranslator } from '../../i18n/index.js';
+import { SettingsCardHeading, StatusMessage, EmptyState } from '../ui/UiPrimitives.js';
 import { SettingSwitch } from './SettingSwitch.js';
 
 export type UserConfigSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel';
@@ -55,6 +58,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
 };
 
 export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
+  const t = createTranslator(locale);
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
   const isWindowsHost = hostPlatform === 'win32';
@@ -99,9 +103,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
 
   function changeFullBypass(target: 'desktop' | 'stdio', enabled: boolean): void {
     if (enabled) {
-      const confirmed = window.confirm(locale === 'th'
-        ? 'ยืนยันเปิด FULL BYPASS ON? lnwjud จะไม่ถามยืนยันอีก รวม tool ที่กำหนดว่าต้องยืนยันเสมอ คำสั่งอันตราย ขอบเขต Active Project, goalLease และ absolute path นอกโปรเจกต์ การแก้ไขหรือลบอาจกู้คืนไม่ได้ แต่การตรวจรูปแบบข้อมูล, สิทธิ์/การยกระดับของระบบปฏิบัติการ และสิทธิ์บริการภายนอกยังคงมีผล'
-        : 'Enable FULL BYPASS ON? lnwjud will stop asking for approval, including always-confirm tools, risky commands, Active Project scope, goalLease, and absolute paths outside projects. Changes or deletes may not be recoverable. Input validation, OS permissions/elevation, and remote-service authorization still apply.');
+      const confirmed = window.confirm(t('userConfig.fullBypassConfirm'));
       if (!confirmed) return;
     }
     patch(target === 'desktop' ? { desktopFullBypassAll: enabled } : { stdioFullBypassAll: enabled });
@@ -138,10 +140,10 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
       const result = await onInstallPdfProvider();
       setDraft((previous) => ({ ...previous, pdfProviderPath: result.providerPath }));
       setPdfInstallMessage(result.reused
-        ? (locale === 'th' ? `PDF Provider พร้อมใช้แล้ว: ${result.providerPath}` : `PDF Provider is ready: ${result.providerPath}`)
-        : (locale === 'th' ? `ติดตั้ง Poppler ${result.version} และตั้งค่า pdftotext.exe เรียบร้อยแล้ว` : `Installed Poppler ${result.version} and configured pdftotext.exe.`));
+        ? t('userConfig.pdfReady', { path: result.providerPath })
+        : t('userConfig.pdfInstalled', { version: result.version }));
     } catch (cause: unknown) {
-      setPdfInstallError(cause instanceof Error ? cause.message : (locale === 'th' ? 'ดาวน์โหลดหรือติดตั้ง PDF Provider ไม่สำเร็จ' : 'Could not download or install the PDF Provider.'));
+      setPdfInstallError(cause instanceof Error ? cause.message : t('userConfig.pdfInstallError'));
     } finally {
       setPdfInstallBusy(false);
     }
@@ -150,12 +152,12 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   async function save(): Promise<void> {
     const invalid = draft.extensions.extraMcpServers.find((server) => server.name.trim().length === 0 || server.command.trim().length === 0);
     if (invalid !== undefined) {
-      setError(locale === 'th' ? 'MCP Server ที่เพิ่มเองต้องมี Name และ Command' : 'Every custom MCP server needs a Name and Command.');
+      setError(t('userConfig.customServerRequired'));
       return;
     }
     const names = draft.extensions.extraMcpServers.map((server) => server.name.trim().toLowerCase());
     if (new Set(names).size !== names.length) {
-      setError(locale === 'th' ? 'ชื่อ MCP Server ห้ามซ้ำกัน' : 'MCP server names must be unique.');
+      setError(t('userConfig.customServerUnique'));
       return;
     }
     setBusy(true);
@@ -163,11 +165,9 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
     try {
       const restartRequired = await onSave(draft);
       setDirty(false);
-      setMessage(restartRequired
-        ? (locale === 'th' ? 'บันทึกแล้ว — ค่าบางส่วนจะใช้หลัง Restart MCP/Tunnel หรือเปิดโปรแกรมใหม่' : 'Saved — some settings apply after MCP/Tunnel or app restart.')
-        : (locale === 'th' ? 'บันทึกการตั้งค่าเรียบร้อยแล้ว' : 'Settings saved.'));
+      setMessage(restartRequired ? t('userConfig.savedReconnect') : t('userConfig.saved'));
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : (locale === 'th' ? 'บันทึกการตั้งค่าไม่สำเร็จ' : 'Could not save settings.'));
+      setError(cause instanceof Error ? cause.message : t('userConfig.saveError'));
     } finally {
       setBusy(false);
     }
@@ -176,74 +176,72 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   return (
     <>
       {section === 'general' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Application and updates">
-          <CardHeading icon="⚙" title={locale === 'th' ? 'พฤติกรรมโปรแกรม' : 'Application behavior'} subtitle={locale === 'th' ? 'การเปิดโปรแกรม, Tray และ Auto Update' : 'Startup, tray behavior, and automatic updates'} />
+        <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.applicationBehavior')}>
+          <SettingsCardHeading icon="⚙" title={t('userConfig.applicationBehavior')} subtitle={t('userConfig.applicationBehaviorSubtitle')} />
           <div className="setting-grid two-col">
             <div className="setting-field">
-              <label className="field-label" htmlFor="close-behavior">{locale === 'th' ? 'เมื่อกด X ปิดหน้าต่าง' : 'When closing the window'}</label>
+              <label className="field-label" htmlFor="close-behavior">{t('userConfig.closeBehavior')}</label>
               <select id="close-behavior" className="settings-select" value={draft.closeBehavior} onChange={(event) => patch({ closeBehavior: event.target.value === 'quit' ? 'quit' : 'tray' })}>
-                <option value="tray">{locale === 'th' ? 'ซ่อนไปที่ System Tray' : 'Hide to system tray'}</option>
-                <option value="quit">{locale === 'th' ? 'ออกจาก lnwjud' : 'Quit lnwjud'}</option>
+                <option value="tray">{t('userConfig.hideToTray')}</option>
+                <option value="quit">{t('userConfig.quit')}</option>
               </select>
             </div>
-            <NumberField label={locale === 'th' ? 'ช่วงตรวจอัปเดต (นาที)' : 'Update interval (minutes)'} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
+            <NumberField label={t('userConfig.updateInterval')} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
           </div>
           <div className="switch-grid">
-            <SettingSwitch checked={draft.launchAtStartup} label={locale === 'th' ? 'เปิดพร้อมเครื่อง' : 'Start with the host'} description={locale === 'th' ? 'เปิด lnwjud อัตโนมัติหลัง Sign in' : 'Launch lnwjud automatically after sign in'} onChange={(value) => patch({ launchAtStartup: value })} />
-            <SettingSwitch checked={draft.startMinimized} label={locale === 'th' ? 'เริ่มแบบซ่อนใน Tray' : 'Start minimized'} description={locale === 'th' ? 'ไม่แสดงหน้าต่างหลักตอนเปิดอัตโนมัติ' : 'Keep the main window hidden on startup'} onChange={(value) => patch({ startMinimized: value })} />
-            <SettingSwitch checked={draft.updateAutoCheck} label={locale === 'th' ? 'ตรวจอัปเดตอัตโนมัติ' : 'Automatic update checks'} description={locale === 'th' ? 'ตรวจตามช่วงเวลาที่กำหนด' : 'Check periodically using the interval above'} onChange={(value) => patch({ updateAutoCheck: value })} />
-            <SettingSwitch checked={draft.updateCheckOnStartup} label={locale === 'th' ? 'ตรวจเมื่อเปิดโปรแกรม' : 'Check on startup'} description={locale === 'th' ? 'ตรวจหลังเปิดโปรแกรมไม่นาน' : 'Check shortly after the app starts'} onChange={(value) => patch({ updateCheckOnStartup: value })} />
-            <SettingSwitch checked={draft.updateAutoDownload} label={locale === 'th' ? 'ดาวน์โหลดอัปเดตอัตโนมัติ' : 'Automatic update download'} description={locale === 'th' ? 'ดาวน์โหลดเวอร์ชันใหม่เมื่อพบ' : 'Download a new version when available'} onChange={(value) => patch({ updateAutoDownload: value })} />
+            <SettingSwitch checked={draft.launchAtStartup} label={t('userConfig.launchAtStartup')} description={t('userConfig.launchAtStartupDesc')} onChange={(value) => patch({ launchAtStartup: value })} />
+            <SettingSwitch checked={draft.startMinimized} label={t('userConfig.startMinimized')} description={t('userConfig.startMinimizedDesc')} onChange={(value) => patch({ startMinimized: value })} />
+            <SettingSwitch checked={draft.updateAutoCheck} label={t('userConfig.autoUpdateCheck')} description={t('userConfig.autoUpdateCheckDesc')} onChange={(value) => patch({ updateAutoCheck: value })} />
+            <SettingSwitch checked={draft.updateCheckOnStartup} label={t('userConfig.checkOnStartup')} description={t('userConfig.checkOnStartupDesc')} onChange={(value) => patch({ updateCheckOnStartup: value })} />
+            <SettingSwitch checked={draft.updateAutoDownload} label={t('userConfig.autoDownload')} description={t('userConfig.autoDownloadDesc')} onChange={(value) => patch({ updateAutoDownload: value })} />
           </div>
         </section>
       ) : null}
 
       {section === 'security' ? (
         <>
-          <section className="panel settings-card settings-card-polished full-access-unrestricted-card" aria-label="Full Access (Unrestricted)">
-            <CardHeading
+          <section className="panel settings-card settings-card-polished full-access-unrestricted-card" aria-label={t('userConfig.fullAccessCardAria')}>
+            <SettingsCardHeading
               icon="⚡"
-              title={locale === 'th' ? 'โหมดเต็มสิทธิ์ (Unrestricted)' : 'Full Access (Unrestricted)'}
-              subtitle={locale === 'th' ? 'สิทธิ์ระดับเครื่องและตัวเลือกข้ามการอนุมัติของ lnwjud' : 'Machine-wide access and explicit lnwjud approval bypass controls'}
-              badge={(draft.desktopFullBypassAll || draft.stdioFullBypassAll) ? 'FULL BYPASS ON' : unrestricted ? 'UNRESTRICTED' : 'OFF'}
+              title={t('userConfig.advancedAccessTitle')}
+              subtitle={t('userConfig.advancedAccessSubtitle')}
+              badge={((permissionProfile === 'full' && draft.desktopFullBypassAll) || (stdioPermissionProfile === 'full' && draft.stdioFullBypassAll)) ? t('userConfig.fullBypassBadgeOn') : unrestricted ? t('userConfig.unrestrictedBadge') : t('userConfig.offBadge')}
             />
             <SettingSwitch
               checked={unrestricted}
-              label="Unrestricted mode"
-              description={locale === 'th' ? 'อนุญาต absolute path ที่ผู้ใช้หรือ AI ระบุ โดยไม่สแกนหรือลงทะเบียน filesystem root อัตโนมัติ และยังใช้กฎยืนยันตาม Profile ตามปกติ' : 'Allow explicitly requested absolute paths without scanning or registering filesystem roots, while keeping the active profile approval rules in force.'}
-              onChange={(enabled) => { void onUnrestrictedChange(enabled).then((restartRequired) => setUnrestrictedMessage(restartRequired ? (locale === 'th' ? 'ต้อง Restart MCP/Tunnel เพื่อใช้ค่าครบถ้วน' : 'Restart MCP/Tunnel to apply this everywhere.') : null)); }}
+              label={t('userConfig.unrestrictedLabel')}
+              description={t('userConfig.unrestrictedDesc')}
+              onChange={(enabled) => { void onUnrestrictedChange(enabled).then((restartRequired) => setUnrestrictedMessage(restartRequired ? t('userConfig.unrestrictedSavedRestart') : null)); }}
             />
-            {unrestrictedMessage === null ? null : <div className="alert-box-warning" role="status">⚠️ {unrestrictedMessage}</div>}
+            {unrestrictedMessage === null ? null : <StatusMessage tone="warning" prefix="⚠️ ">{unrestrictedMessage}</StatusMessage>}
             {permissionProfile === 'full' ? (
-              <div className="alert-box-warning full-bypass-control" role="group" aria-label="Desktop Full Bypass">
-                <strong>{draft.desktopFullBypassAll ? 'DESKTOP FULL BYPASS ON' : (locale === 'th' ? 'Desktop Full Bypass — ปิด' : 'Desktop Full Bypass — Off')}</strong>
+              <div className="alert-box-warning full-bypass-control" role="group" aria-label={t('userConfig.desktopBypassGroup')}>
+                <strong>{draft.desktopFullBypassAll ? t('userConfig.desktopBypassOn') : t('userConfig.desktopBypassOff')}</strong>
                 <SettingSwitch
                   checked={draft.desktopFullBypassAll}
-                  label={locale === 'th' ? 'ข้าม tool ที่ต้องยืนยันเสมอและทุกขอบเขตของ lnwjud' : 'Bypass always-confirm tools and every lnwjud scope check'}
-                  description={locale === 'th' ? 'Desktop HTTP และ Secure Tunnel จะผ่านทันที รวมคำสั่งเสี่ยง, path นอก Active Project และ goalLease โดยไม่ถาม' : 'Desktop HTTP and Secure Tunnel proceed without prompts, including risky commands, paths outside the Active Project, and goalLease.'}
+                  label={t('userConfig.desktopBypassLabel')}
+                  description={t('userConfig.desktopBypassDesc')}
                   onChange={(value) => changeFullBypass('desktop', value)}
                 />
               </div>
-            ) : <p className="hint">{locale === 'th' ? 'เลือก Desktop Profile = Full เพื่อเปิด Desktop Full Bypass' : 'Select Desktop Profile = Full to enable Desktop Full Bypass.'}</p>}
+            ) : <p className="hint">{t('userConfig.desktopBypassNeedFull')}</p>}
             {stdioPermissionProfile === 'full' ? (
-              <div className="alert-box-warning full-bypass-control" role="group" aria-label="STDIO Full Bypass">
-                <strong>{draft.stdioFullBypassAll ? 'STDIO FULL BYPASS ON' : (locale === 'th' ? 'STDIO Full Bypass — ปิด' : 'STDIO Full Bypass — Off')}</strong>
+              <div className="alert-box-warning full-bypass-control" role="group" aria-label={t('userConfig.stdioBypassGroup')}>
+                <strong>{draft.stdioFullBypassAll ? t('userConfig.stdioBypassOn') : t('userConfig.stdioBypassOff')}</strong>
                 <SettingSwitch
                   checked={draft.stdioFullBypassAll}
-                  label={locale === 'th' ? 'ข้าม tool ที่ต้องยืนยันเสมอและทุกขอบเขตสำหรับ direct STDIO' : 'Bypass always-confirm tools and every scope check for direct STDIO'}
-                  description={locale === 'th' ? 'เป็นคนละค่ากับ Desktop/Secure Tunnel และต้องเปิดเอง; direct STDIO จะไม่ถามแม้เป็น path นอกโปรเจกต์' : 'Independent from Desktop/Secure Tunnel; direct STDIO will not prompt even for paths outside projects.'}
+                  label={t('userConfig.stdioBypassLabel')}
+                  description={t('userConfig.stdioBypassDesc')}
                   onChange={(value) => changeFullBypass('stdio', value)}
                 />
               </div>
-            ) : <p className="hint">{locale === 'th' ? 'เลือก STDIO Profile = Full เพื่อเปิด STDIO Full Bypass' : 'Select STDIO Profile = Full to enable STDIO Full Bypass.'}</p>}
-            <p className="hint">{locale === 'th'
-              ? 'เครื่องมือไฟล์แบบมีโครงสร้างใช้ Active Project แบบ canonical และ Recovery Trash / checkpoint. เมื่อ Full Bypass ปิด งานปกติของ Full Access จะไม่ถาม แต่ tool ที่ต้องยืนยันเสมอ งานลบ/ทำข้อมูลหาย และงานนอกขอบเขตยังถาม ส่วนคำสั่งระดับเครื่องอันตรายยังถูกบล็อก'
-              : 'Structured file tools use canonical Active Project paths and Recovery Trash / checkpoints. With Full Bypass OFF, ordinary Full Access work does not prompt; always-confirm, destructive, and out-of-scope actions still ask, while dangerous machine-level commands remain blocked.'}</p>
-            <p className="hint">{locale === 'th' ? 'FULL BYPASS ข้ามเฉพาะ authorization/policy ของ lnwjud การตรวจ input, path ที่ต้องมีอยู่, สิทธิ์/การยกระดับของระบบปฏิบัติการ และสิทธิ์บริการภายนอกยังทำงานตามจริง' : 'FULL BYPASS skips lnwjud authorization policy only. Input validation, required path existence, OS permissions/elevation, and remote-service authorization still apply.'}</p>
+            ) : <p className="hint">{t('userConfig.stdioBypassNeedFull')}</p>}
+            <p className="hint">{t('userConfig.fullBypassOffHint')}</p>
+            <p className="hint">{t('userConfig.fullBypassOnHint')}</p>
           </section>
 
-          <section className="panel settings-card settings-card-polished custom-permission-card" aria-label="Custom Permission Profile">
-            <CardHeading icon="◇" title="Custom Permission Profile" subtitle={locale === 'th' ? 'กำหนดสิทธิ์ละเอียดเมื่อเลือก Profile = Custom' : 'Fine-grained rules used when Profile = Custom'} badge="CUSTOM" />
+          <section className="panel settings-card settings-card-polished custom-permission-card" aria-label={t('userConfig.customPermissionTitle')}>
+            <SettingsCardHeading icon="◇" title={t('userConfig.customPermissionTitle')} subtitle={t('userConfig.customPermissionSubtitle')} badge="CUSTOM" />
             <div className="setting-grid four-col">
               <Decision label="READ" value={draft.customPermission.read} onChange={(value) => patchCustom({ read: value })} />
               <Decision label="WRITE" value={draft.customPermission.write} onChange={(value) => patchCustom({ write: value })} />
@@ -252,7 +250,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             </div>
             <TextList
               id="custom-executables"
-              label={locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}
+              label={t('userConfig.allowedExecutables')}
               value={draft.customPermission.allowedExecutables}
               rows={4}
               placeholder={isWindowsHost ? 'python.exe\ndocker.exe\ndotnet.exe' : 'python\ndocker\ndotnet'}
@@ -264,184 +262,142 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
 
       {section === 'tools' ? (
         <>
-          <section className="panel settings-card settings-card-polished" aria-label="Codex delegation tools" data-settings-focus="tools-codex" tabIndex={-1}>
-            <CardHeading icon="◎" title={locale === 'th' ? 'Codex Delegation' : 'Codex Delegation'} subtitle={locale === 'th' ? 'ป้องกัน agent ใช้โควต้า Codex โดยไม่ตั้งใจ' : 'Protect Codex quota from accidental agent delegation'} badge={draft.codexToolsEnabled ? 'ENABLED' : 'DEFAULT OFF'} />
+          <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.codexTitle')} data-settings-focus="tools-codex" tabIndex={-1}>
+            <SettingsCardHeading icon="◎" title={t('userConfig.codexTitle')} subtitle={t('userConfig.codexSubtitle')} badge={draft.codexToolsEnabled ? t('status.enabled') : t('status.defaultOff')} />
             <SettingSwitch
               checked={draft.codexToolsEnabled}
-              label={locale === 'th' ? 'เปิดใช้งานกลุ่ม codex_*' : 'Enable codex_* tools'}
-              description={locale === 'th'
-                ? 'เมื่อปิด agent จะมองไม่เห็น codex_run, codex_status, codex_stop และ codex_task_* ทั้งหมด'
-                : 'When off, agents cannot see codex_run, codex_status, codex_stop, or any codex_task_* tools.'}
+              label={t('userConfig.codexLabel')}
+              description={t('userConfig.codexDesc')}
               onChange={(value) => patch({ codexToolsEnabled: value })}
             />
-            <div className="codex-tool-preview" aria-label="Codex tool exposure">
+            <div className="codex-tool-preview" aria-label={t('userConfig.codexToolExposure')}>
               <span>codex_run</span><span>codex_status</span><span>codex_stop</span><span>codex_task_*</span>
             </div>
-            <p className="hint">{locale === 'th' ? 'ค่าเริ่มต้นคือปิด ต้อง Restart Local MCP / Tunnel หลังเปลี่ยนค่า' : 'Disabled by default. Restart local MCP / Tunnel after changing this setting.'}</p>
+            <p className="hint">{t('userConfig.codexRestartHint')}</p>
           </section>
 
-          <section className="panel settings-card settings-card-polished" aria-label="Tools and timeouts">
-            <CardHeading icon="⌛" title={locale === 'th' ? 'Timeout และ Local MCP' : 'Timeouts & Local MCP'} subtitle={locale === 'th' ? 'เวลารอสำหรับ external tools และ process ที่จัดการโดย lnwjud' : 'Execution limits for external tools and managed processes'} />
+          <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.timeoutsTitle')}>
+            <SettingsCardHeading icon="⌛" title={t('userConfig.timeoutsTitle')} subtitle={t('userConfig.timeoutsSubtitle')} />
             <div className="setting-grid two-col">
-              <NumberField label={locale === 'th' ? 'External MCP Tool Timeout (วินาที)' : 'External MCP Tool Timeout (seconds)'} value={Math.round(draft.mcpCallTimeoutMs / 1000)} min={1} max={3600} onChange={(value) => patch({ mcpCallTimeoutMs: value * 1000 })} />
-              <NumberField label={locale === 'th' ? 'External MCP Idle Timeout (นาที)' : 'External MCP Idle Timeout (minutes)'} value={Math.round(draft.mcpIdleTimeoutMs / 60_000)} min={1} max={1440} onChange={(value) => patch({ mcpIdleTimeoutMs: value * 60_000 })} />
-              <NumberField label={locale === 'th' ? 'Process Default Timeout (นาที)' : 'Process Default Timeout (minutes)'} value={Math.round(draft.processTimeoutMs / 60_000)} min={1} max={240} onChange={(value) => patch({ processTimeoutMs: value * 60_000 })} />
-              <NumberField label={locale === 'th' ? 'MCP Poll / Tool Wait (วินาที)' : 'MCP Poll / Tool Wait (seconds)'} value={draft.mcpPollWaitSeconds} min={5} max={60} onChange={(value) => patch({ mcpPollWaitSeconds: value })} />
-              <NumberField label={locale === 'th' ? 'Foreground Shell Wait (วินาที)' : 'Foreground Shell Wait (seconds)'} value={draft.shellSynchronousWaitSeconds} min={5} max={60} onChange={(value) => patch({ shellSynchronousWaitSeconds: value })} />
-              <NumberField label="Local MCP HTTP Port" value={draft.mcpHttpPort} min={0} max={65535} onChange={(value) => patch({ mcpHttpPort: value })} />
+              <NumberField label={t('userConfig.mcpToolTimeout')} value={Math.round(draft.mcpCallTimeoutMs / 1000)} min={1} max={3600} onChange={(value) => patch({ mcpCallTimeoutMs: value * 1000 })} />
+              <NumberField label={t('userConfig.mcpIdleTimeout')} value={Math.round(draft.mcpIdleTimeoutMs / 60_000)} min={1} max={1440} onChange={(value) => patch({ mcpIdleTimeoutMs: value * 60_000 })} />
+              <NumberField label={t('userConfig.processTimeout')} value={Math.round(draft.processTimeoutMs / 60_000)} min={1} max={240} onChange={(value) => patch({ processTimeoutMs: value * 60_000 })} />
+              <NumberField label={t('userConfig.mcpPollWait')} value={draft.mcpPollWaitSeconds} min={5} max={60} onChange={(value) => patch({ mcpPollWaitSeconds: value })} />
+              <NumberField label={t('userConfig.shellWait')} value={draft.shellSynchronousWaitSeconds} min={5} max={60} onChange={(value) => patch({ shellSynchronousWaitSeconds: value })} />
+              <NumberField label={t('userConfig.localMcpHttpPort')} value={draft.mcpHttpPort} min={0} max={65535} onChange={(value) => patch({ mcpHttpPort: value })} />
             </div>
-            <p className="hint">{locale === 'th' ? 'ช่วงที่ตั้งได้ 5–60 วินาที ค่าเริ่มต้นคือ MCP Poll 5 วินาที และ Foreground Shell 60 วินาที ค่านี้จำกัดเวลารอต่อครั้งเท่านั้น ไม่ได้หยุดงาน background' : 'Allowed range: 5–60 seconds. Defaults are 5 seconds for MCP polling and 60 seconds for foreground shell waits. These values only bound each wait; background tasks keep running.'}</p>
+            <p className="hint">{t('userConfig.waitRangeHint')}</p>
           </section>
 
-          <section className="panel settings-card settings-card-polished" aria-label="Capability roots">
-            <CardHeading icon="⌂" title={locale === 'th' ? 'Capability Roots' : 'Capability Roots'} subtitle={locale === 'th' ? 'เพิ่มพื้นที่ที่ tools สามารถเข้าถึงได้' : 'Additional roots available to local capability tools'} />
+          <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.capabilityRootsTitle')}>
+            <SettingsCardHeading icon="⌂" title={t('userConfig.capabilityRootsTitle')} subtitle={t('userConfig.capabilityRootsSubtitle')} />
             <TextList
               id="capability-roots"
-              label={locale === 'th' ? 'หนึ่ง path ต่อบรรทัด' : 'One path per line'}
+              label={t('userConfig.onePathPerLine')}
               value={draft.capabilityRoots}
               rows={5}
               placeholder={isWindowsHost ? 'D:\\Projects\nE:\\Work' : '/Users/name/Projects\n/home/name/Work'}
               onChange={(value) => patch({ capabilityRoots: value })}
             />
-            <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, native providers และ Screen Record โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, native providers, and screen recording without editing environment variables.'}</p>
+            <p className="hint">{t('userConfig.capabilityRootsHint')}</p>
           </section>
 
-          <section className="panel settings-card settings-card-polished" aria-label="Local providers" data-settings-focus="tools-local-providers" tabIndex={-1}>
-            <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า Language Server และ provider ที่ระบบรองรับ' : 'Configure language servers and host-supported providers'} badge="ADVANCED" />
+          <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.localProvidersTitle')} data-settings-focus="tools-local-providers" tabIndex={-1}>
+            <SettingsCardHeading icon="◫" title={t('userConfig.localProvidersTitle')} subtitle={t('userConfig.localProvidersSubtitle')} badge={t('status.advanced')} />
             <div className="setting-grid two-col">
               <div className="pdf-provider-install-control">
                 <Field
-                  label={locale === 'th' ? `PDF Provider (${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'})` : `PDF Provider (${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'})`}
+                  label={t('userConfig.pdfProviderLabel', { binary: isWindowsHost ? 'pdftotext.exe' : 'pdftotext' })}
                   value={draft.pdfProviderPath}
-                  placeholder={locale === 'th' ? `พาธไปยัง ${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'} (ถ้ามี)` : `Path to ${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'} (optional)`}
+                  placeholder={t('userConfig.pdfProviderPlaceholder', { binary: isWindowsHost ? 'pdftotext.exe' : 'pdftotext' })}
                   onChange={(value) => patch({ pdfProviderPath: value })}
                 />
                 {canAutoInstallPdfProvider ? (
                   <div className="inline-actions">
                     <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
-                      {pdfInstallBusy
-                        ? (locale === 'th' ? 'กำลังดาวน์โหลดและติดตั้ง…' : 'Downloading and installing…')
-                        : (locale === 'th' ? 'ดาวน์โหลดและติดตั้งอัตโนมัติ' : 'Download & install automatically')}
+                      {pdfInstallBusy ? t('userConfig.pdfInstalling') : t('userConfig.pdfAutoInstall')}
                     </button>
                   </div>
                 ) : null}
-                <p className="hint">{canAutoInstallPdfProvider
-                  ? (locale === 'th'
-                    ? 'ดาวน์โหลด Poppler for Windows x64 รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
-                    : 'Downloads the lnwjud-pinned Poppler for Windows x64 release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.')
-                  : (locale === 'th'
-                    ? `ไม่มีตัวติดตั้ง PDF อัตโนมัติสำหรับ ${hostPlatform}/${hostArch} ให้ติดตั้ง pdftotext แบบ native ของระบบ แล้วระบุพาธด้านบน`
-                    : `No automatic PDF provider installer is available for ${hostPlatform}/${hostArch}. Install a native pdftotext provider and configure its path above.`)}</p>
-                {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
-                {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
+                <p className="hint">{canAutoInstallPdfProvider ? t('userConfig.pdfAutoInstallHint') : t('userConfig.pdfManualInstallHint', { platform: hostPlatform, arch: hostArch })}</p>
+                {pdfInstallError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{pdfInstallError}</StatusMessage>}
+                {pdfInstallMessage === null ? null : <StatusMessage tone="success" prefix="✓ ">{pdfInstallMessage}</StatusMessage>}
               </div>
               <StringMapTextArea
-                label={locale === 'th' ? 'LSP Commands — LANGUAGE=COMMAND' : 'LSP Commands — LANGUAGE=COMMAND'}
+                label={t('userConfig.lspCommands')}
                 value={draft.lspCommands}
                 onChange={(value) => patch({ lspCommands: value })}
               />
             </div>
-            <p className="hint">{locale === 'th'
-              ? 'ตัวอย่าง: typescript=["typescript-language-server","--stdio"]  |  python=["pyright-langserver","--stdio"] — ต้อง Restart Local MCP / Tunnel หลังเปลี่ยน'
-              : 'Example: typescript=["typescript-language-server","--stdio"]  |  python=["pyright-langserver","--stdio"]. Restart Local MCP / Tunnel after changing providers.'}</p>
+            <p className="hint">{t('userConfig.lspHint')}</p>
           </section>
         </>
       ) : null}
 
       {section === 'mcp' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Extensions and MCP servers" data-settings-focus="mcp-servers" tabIndex={-1}>
-          <CardHeading
+        <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.extensionsTitle')} data-settings-focus="mcp-servers" tabIndex={-1}>
+          <SettingsCardHeading
             icon="⬡"
-            title={locale === 'th' ? 'Extensions, Skills และ MCP Servers' : 'Extensions, Skills & MCP Servers'}
-            subtitle={locale === 'th' ? 'ตั้งค่า External MCP โดยไม่ต้องแก้ JSON เอง' : 'Configure external MCP without editing JSON'}
-            action={<button type="button" className="btn-save-gold" onClick={addServer}>+ {locale === 'th' ? 'เพิ่ม MCP Server' : 'Add MCP Server'}</button>}
+            title={t('userConfig.extensionsTitle')}
+            subtitle={t('userConfig.extensionsSubtitle')}
+            action={<button type="button" className="btn-save-gold" onClick={addServer}>+ {t('userConfig.addMcpServer')}</button>}
           />
-          <div className="setting-field" data-settings-focus="ponytail-policy" tabIndex={-1}>
-            <label className="field-label" htmlFor="ponytail-mode">{locale === 'th' ? 'Ponytail coding policy' : 'Ponytail coding policy'}</label>
-            <select
-              id="ponytail-mode"
-              className="settings-select"
-              value={draft.ponytailMode}
-              onChange={(event) => {
-                const value = event.target.value;
-                patch({ ponytailMode: value === 'lite' || value === 'full' || value === 'ultra' ? value : 'off' });
-              }}
-            >
-              <option value="off">{locale === 'th' ? 'Off — ปิด (ค่าเริ่มต้น)' : 'Off — disabled (default)'}</option>
-              <option value="lite">Lite</option>
-              <option value="full">Full</option>
-              <option value="ultra">Ultra</option>
-            </select>
-            <p className="hint">{locale === 'th'
-              ? 'เมื่อเปิด งานเขียนโค้ดต้องโหลด bundled Ponytail ของ lnwjud ก่อนแก้ source/config จริง โดยไม่ใช้ skill ชื่อซ้ำจาก workspace หรือ user แทน; Full/Ultra บังคับ Ponytail Review ให้ทัน code mutation ล่าสุดก่อนปิด durable goal เป็น completed'
-              : 'When enabled, coding mutations must load lnwjud’s bundled Ponytail before changing source/config files; same-named workspace or user skills cannot substitute it. Full/Ultra require a current Ponytail Review before a durable goal can complete.'}</p>
-            <p className="hint">{locale === 'th' ? 'ค่าใหม่นี้ใช้หลัง Restart Local MCP / Tunnel หรือเปิดโปรแกรมใหม่' : 'Restart Local MCP / Tunnel or the app after changing this setting.'}</p>
-          </div>
           <div className="setting-grid two-col">
             <div className="setting-field">
-              <label className="field-label" htmlFor="extension-mode">External MCP mode</label>
+              <label className="field-label" htmlFor="extension-mode">{t('userConfig.extensionMode')}</label>
               <select id="extension-mode" className="settings-select" value={draft.extensions.mode} onChange={(event) => patchExtensions({ mode: event.target.value === 'allowlist' ? 'allowlist' : 'enable_all' })}>
-                <option value="enable_all">Enable all except disabled</option>
-                <option value="allowlist">Allowlist only</option>
+                <option value="enable_all">{t('userConfig.enableAllExceptDisabled')}</option>
+                <option value="allowlist">{t('userConfig.allowlistOnly')}</option>
               </select>
             </div>
-            <TextList label="Enabled Servers / Allowlist" value={draft.extensions.enabledServers} onChange={(value) => patchExtensions({ enabledServers: value })} />
-            <TextList label="Disabled Servers" value={draft.extensions.disabledServers} onChange={(value) => patchExtensions({ disabledServers: value })} />
-            <TextList label="Extra Skill Folders" value={draft.extensions.extraSkillRoots} onChange={(value) => patchExtensions({ extraSkillRoots: value })} />
-            <TextList label="Disabled Skill Folders" value={draft.extensions.disabledSkillRoots} onChange={(value) => patchExtensions({ disabledSkillRoots: value })} />
+            <TextList label={t('userConfig.enabledServersAllowlist')} value={draft.extensions.enabledServers} onChange={(value) => patchExtensions({ enabledServers: value })} />
+            <TextList label={t('userConfig.disabledServers')} value={draft.extensions.disabledServers} onChange={(value) => patchExtensions({ disabledServers: value })} />
+            <TextList label={t('userConfig.extraSkillFolders')} value={draft.extensions.extraSkillRoots} onChange={(value) => patchExtensions({ extraSkillRoots: value })} />
+            <TextList label={t('userConfig.disabledSkillFolders')} value={draft.extensions.disabledSkillRoots} onChange={(value) => patchExtensions({ disabledSkillRoots: value })} />
           </div>
           <div className="mcp-server-settings-list">
-            {draft.extensions.extraMcpServers.length === 0 ? <div className="empty-setting-state">{locale === 'th' ? 'ยังไม่มี MCP Server ที่เพิ่มเอง — Cursor / Claude Desktop discovery ยังทำงานตามปกติ' : 'No custom MCP servers — Cursor / Claude Desktop discovery still works.'}</div> : null}
+            {draft.extensions.extraMcpServers.length === 0 ? <EmptyState>{t('userConfig.noCustomMcp')}</EmptyState> : null}
             {draft.extensions.extraMcpServers.map((server, index) => (
               <article className="mcp-server-settings-item" key={`${server.name}-${index}`}>
-                <div className="section-heading"><strong>{server.name || `MCP Server ${index + 1}`}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{locale === 'th' ? 'ลบ' : 'Remove'}</button></div>
+                <div className="section-heading"><strong>{server.name || t('userConfig.mcpServerNumber', { number: index + 1 })}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{t('userConfig.remove')}</button></div>
                 <div className="setting-grid two-col">
-                  <Field label="Name" value={server.name} onChange={(value) => updateServer(index, { name: value })} />
-                  <Field label="Command" value={server.command} placeholder="npx" onChange={(value) => updateServer(index, { command: value })} />
-                  <Field label="Working directory" value={server.cwd} placeholder="optional" onChange={(value) => updateServer(index, { cwd: value })} />
-                  <Field label="Type" value={server.type} placeholder="optional (for example stdio)" onChange={(value) => updateServer(index, { type: value })} />
-                  <TextArea label="Args — one per line" value={server.args.join('\n')} onChange={(value) => updateServer(index, { args: splitLines(value) })} />
-                  <TextArea label="Environment — KEY=VALUE" value={envToText(server.env)} onChange={(value) => updateServer(index, { env: envFromText(value) })} />
+                  <Field label={t('userConfig.serverName')} value={server.name} onChange={(value) => updateServer(index, { name: value })} />
+                  <Field label={t('userConfig.serverCommand')} value={server.command} placeholder="npx" onChange={(value) => updateServer(index, { command: value })} />
+                  <Field label={t('userConfig.serverWorkingDirectory')} value={server.cwd} placeholder={t('userConfig.optional')} onChange={(value) => updateServer(index, { cwd: value })} />
+                  <Field label={t('userConfig.serverType')} value={server.type} placeholder={t('userConfig.optionalStdio')} onChange={(value) => updateServer(index, { type: value })} />
+                  <TextArea label={t('userConfig.serverArgs')} value={server.args.join('\n')} onChange={(value) => updateServer(index, { args: splitLines(value) })} />
+                  <TextArea label={t('userConfig.serverEnvironment')} value={envToText(server.env)} onChange={(value) => updateServer(index, { env: envFromText(value) })} />
                 </div>
               </article>
             ))}
           </div>
-          <p className="hint">{locale === 'th' ? 'Environment ของ MCP Server ถูกเก็บใน local settings — หลีกเลี่ยงการใส่ secret สำคัญในช่องนี้' : 'MCP server environment values are stored in local settings — avoid placing important secrets here.'}</p>
+          <p className="hint">{t('userConfig.mcpEnvHint')}</p>
         </section>
       ) : null}
 
       {section === 'tunnel' ? (
-        <section className={embedded ? 'tunnel-setup-box persistent-runtime-card' : 'panel settings-card settings-card-polished'} aria-label="Persistent tunnel runtime">
+        <section className={embedded ? 'tunnel-setup-box persistent-runtime-card' : 'panel settings-card settings-card-polished'} aria-label={t('userConfig.persistentTunnelTitle')}>
           {embedded
-            ? <div className="settings-mini-heading"><strong>Persistent Tunnel Runtime</strong><span>{draft.tunnelAutoReconnect ? 'ON' : 'OFF'}</span></div>
-            : <CardHeading icon="↻" title="Persistent Tunnel Runtime" subtitle={locale === 'th' ? 'รักษา Tunnel ID เดิม และ reconnect อัตโนมัติเฉพาะตอนที่ผู้ใช้สั่งให้ Runtime ทำงาน' : 'Keep the same Tunnel ID and reconnect only while the runtime is intended to run'} badge={draft.tunnelAutoReconnect ? 'ON' : 'OFF'} />}
-          <SettingSwitch checked={draft.tunnelAutoReconnect} label={locale === 'th' ? 'เชื่อมต่อใหม่อัตโนมัติ' : 'Automatic reconnect'} description={locale === 'th' ? 'เมื่อเปิด ระบบจะ retry ด้วย backoff หลังการหลุด แต่ถ้าผู้ใช้กด Stop จะคงสถานะหยุดแม้เปิดโปรแกรมใหม่ จนกว่าจะกด Start Tunnel อีกครั้ง' : 'When enabled, transient failures retry with backoff. An explicit Stop remains stopped across app restarts until Start Tunnel is pressed again.'} onChange={(value) => patch({ tunnelAutoReconnect: value })} />
-          <p className="hint">{locale === 'th' ? 'Persistent Tunnel Identity เก็บ Tunnel ID เดิมแยกจากสถานะ Run/Stop; การจำ identity ไม่ได้บังคับให้ runtime ต้องเปิดตลอด' : 'Persistent Tunnel Identity is separate from Run/Stop state; remembering the identity does not force the runtime to stay running.'}</p>
+            ? <div className="settings-mini-heading"><strong>{t('userConfig.persistentTunnelTitle')}</strong><span>{draft.tunnelAutoReconnect ? t('status.on') : t('status.off')}</span></div>
+            : <SettingsCardHeading icon="↻" title={t('userConfig.persistentTunnelTitle')} subtitle={t('userConfig.persistentTunnelSubtitle')} badge={draft.tunnelAutoReconnect ? t('status.on') : t('status.off')} />}
+          <SettingSwitch checked={draft.tunnelAutoReconnect} label={t('userConfig.autoReconnect')} description={t('userConfig.autoReconnectDesc')} onChange={(value) => patch({ tunnelAutoReconnect: value })} />
+          <p className="hint">{t('userConfig.persistentIdentityHint')}</p>
         </section>
       ) : null}
 
       {section === null ? null : (
         <div className={`settings-save-bar ${dirty ? 'is-dirty' : ''}`}>
           <div>
-            {error === null ? null : <div className="alert-box-warning" role="alert">⚠️ {error}</div>}
-            {message === null ? <span className="save-state-copy">{dirty ? (locale === 'th' ? 'มีการแก้ไขที่ยังไม่ได้บันทึก' : 'You have unsaved changes') : (locale === 'th' ? 'บันทึกค่าล่าสุดแล้ว' : 'All changes saved')}</span> : <div className="toast-success-banner" role="status">✓ {message}</div>}
+            {error === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{error}</StatusMessage>}
+            {message === null ? <span className="save-state-copy">{dirty ? t('userConfig.unsavedChanges') : t('userConfig.allSaved')}</span> : <StatusMessage tone="success" prefix="✓ ">{message}</StatusMessage>}
           </div>
           <div className="inline-actions">
-            <button type="button" disabled={!dirty || busy} onClick={() => { setDraft(effectiveSettings); setDirty(false); setError(null); setMessage(null); }}>{locale === 'th' ? 'ยกเลิก' : 'Discard'}</button>
-            <button type="button" className="btn-save-gold" disabled={!dirty || busy} onClick={() => { void save(); }}>{busy ? (locale === 'th' ? 'กำลังบันทึก…' : 'Saving…') : (locale === 'th' ? 'บันทึกการตั้งค่า' : 'Save changes')}</button>
+            <button type="button" disabled={!dirty || busy} onClick={() => { setDraft(effectiveSettings); setDirty(false); setError(null); setMessage(null); }}>{t('userConfig.discard')}</button>
+            <button type="button" className="btn-save-gold" disabled={!dirty || busy} onClick={() => { void save(); }}>{busy ? t('userConfig.saving') : t('userConfig.saveChanges')}</button>
           </div>
         </div>
       )}
     </>
-  );
-}
-
-function CardHeading({ icon, title, subtitle, badge, action }: { readonly icon: string; readonly title: string; readonly subtitle: string; readonly badge?: string; readonly action?: ReactElement }): ReactElement {
-  return (
-    <div className="section-heading settings-card-heading">
-      <div className="settings-heading-copy"><span className="settings-card-icon" aria-hidden="true">{icon}</span><div><h2 className="settings-card-title">{title}</h2><span className="page-subtitle">{subtitle}</span></div></div>
-      {action ?? (badge === undefined ? null : <span className="pill-badge gold">{badge}</span>)}
-    </div>
   );
 }
 
@@ -458,7 +414,7 @@ function TextList({ label, value, onChange, id, rows = 3, placeholder }: { reado
   const [draftText, setDraftText] = useState(canonicalText);
 
   useEffect(() => {
-    if (!sameStringList(splitList(draftText), value)) setDraftText(canonicalText);
+    if (!sameStringList(parseDelimitedList(draftText), value)) setDraftText(canonicalText);
   }, [canonicalText, draftText, value]);
 
   return (
@@ -473,7 +429,7 @@ function TextList({ label, value, onChange, id, rows = 3, placeholder }: { reado
         onChange={(event) => {
           const text = event.target.value;
           setDraftText(text);
-          onChange(splitList(text));
+          onChange(parseDelimitedList(text));
         }}
       />
     </div>
@@ -517,10 +473,6 @@ function Field({ label, value, placeholder, onChange }: { readonly label: string
 
 function TextArea({ label, value, onChange }: { readonly label: string; readonly value: string; readonly onChange: (value: string) => void }): ReactElement {
   return <div className="setting-field"><label className="field-label">{label}</label><textarea className="settings-textarea" rows={3} value={value} onChange={(event) => onChange(event.target.value)} /></div>;
-}
-
-function splitList(value: string): readonly string[] {
-  return [...new Set(value.split(/[;\r\n]+/).map((entry) => entry.trim()).filter((entry) => entry.length > 0))];
 }
 
 function splitLines(value: string): readonly string[] {

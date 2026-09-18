@@ -14,8 +14,9 @@ describe('ToolAvailabilityService', () => {
     const settings = new MemorySettings();
     const service = new ToolAvailabilityService(settings);
     const listener = vi.fn();
-    service.subscribe(listener);
+    const unsubscribe = service.subscribe(listener);
 
+    expect(service.listenerCount()).toBe(1);
     expect(service.snapshot()).toEqual({ version: 1, generation: 0, overrides: {} });
     expect(service.setToolEnabled('git', false)).toEqual({ version: 1, generation: 1, overrides: { git: 'disabled' } });
     expect(service.setToolEnabled('git', false)).toEqual({ version: 1, generation: 1, overrides: { git: 'disabled' } });
@@ -23,6 +24,8 @@ describe('ToolAvailabilityService', () => {
     expect(service.resetTool('git')).toEqual({ version: 1, generation: 3, overrides: {} });
     expect(service.resetTool('git')).toEqual({ version: 1, generation: 3, overrides: {} });
     expect(listener).toHaveBeenCalledTimes(3);
+    unsubscribe();
+    expect(service.listenerCount()).toBe(0);
     expect(settings.get(USER_SETTING_KEYS.toolAvailability)).toContain('"generation":3');
   });
 

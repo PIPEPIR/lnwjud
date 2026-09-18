@@ -50,7 +50,7 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
           <div className="project-row-title">
             <strong>{workspace.displayName}</strong>
             {active ? <span className="project-status-badge current">{t('project.active')}</span> : null}
-            {selected ? <span className="project-status-badge system">PRIMARY</span> : null}
+            {selected ? <span className="project-status-badge system">{t('home.primaryBadge')}</span> : null}
             {archived ? <span className="project-status-badge archived">{t('project.archivedBadge')}</span> : null}
           </div>
           <p>{workspace.realRootPath}</p>
@@ -63,11 +63,11 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
             </button>
           ) : (
             <>
-              <button type="button" disabled={busy || lastActive} title={lastActive ? (props.locale === 'th' ? 'ต้องมี Active Project อย่างน้อย 1 โปรเจกต์' : 'At least one Active Project is required') : undefined} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceActive(workspace.id, !active)); }}>
-                {active ? (props.locale === 'th' ? 'ปิด Active' : 'Deactivate') : (props.locale === 'th' ? 'เปิด Active' : 'Activate')}
+              <button type="button" disabled={busy || lastActive} title={lastActive ? t('project.minActiveRequired') : undefined} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceActive(workspace.id, !active)); }}>
+                {active ? t('project.deactivate') : t('project.activate')}
               </button>
               <button type="button" disabled={busy || selected} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSelectWorkspace(workspace.id)); }}>
-                {selected ? 'PRIMARY' : t('project.setMain')}
+                {selected ? t('home.primaryBadge') : t('project.setMain')}
               </button>
               <button type="button" className="project-archive-button" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceArchived(workspace.id, true)); }}>
                 {t('project.archive')}
@@ -95,13 +95,13 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
 
   return (
     <div className="page-content viewport-list-page projects-page">
-      <h1>{t('nav.projects')}</h1>
+      <div className="page-heading"><div><h1>{t('nav.projects')}</h1><p className="page-subtitle">{t('project.subtitle')}</p></div></div>
       <section className="panel">
         <label className="field-label" htmlFor="workspace-root">{t('project.add')}</label>
         <div className="form-row">
           <input
             id="workspace-root"
-            aria-label="Workspace root"
+            aria-label={t('project.workspaceRoot')}
             value={rootPath}
             onChange={(event) => setRootPath(event.target.value)}
           />
@@ -113,7 +113,7 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
       </section>
       <section className="panel project-list-panel">
         <div className="project-list-scroll">
-          <ProjectSection title={props.locale === 'th' ? 'โปรเจกต์' : 'Projects'} count={groups.active.length} emptyText={props.locale === 'th' ? 'ยังไม่มีโปรเจกต์' : 'No projects yet'}>
+          <ProjectSection title={t('project.listTitle')} count={groups.active.length} emptyText={t('project.empty')}>
             {groups.active.map((workspace) => renderProjectRow(workspace, false))}
           </ProjectSection>
           <ProjectSection title={t('project.archivedList')} count={groups.archived.length} emptyText={t('project.emptyArchived')}>

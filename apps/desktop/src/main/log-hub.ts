@@ -17,6 +17,19 @@ export interface LogHubOptions {
   readonly onLine?: (line: LogLine) => void;
 }
 
+export interface LogHubTelemetrySnapshot {
+  readonly totalLines: number;
+  readonly totalRetainedBytes: number;
+  readonly seenMcpDeliveries: number;
+  readonly mcpOccurrences: number;
+  readonly tailPendingBytes: number;
+  readonly sources: Readonly<Record<LogSource, {
+    readonly lines: number;
+    readonly retainedBytes: number;
+    readonly seenKeys: number;
+  }>>;
+}
+
 interface LogScope {
   readonly workspaceId?: string | null;
   readonly sessionId?: string | null;
@@ -161,6 +174,22 @@ export class LogHub {
       lines: SOURCES.flatMap((source) => [...(this.lines.get(source) ?? [])]).sort((a, b) => a.id - b.id),
       tunnelLogPath: this.tunnelLogPath,
       tunnelLogExists: existsSync(this.tunnelLogPath),
+    };
+  }
+
+  public telemetrySnapshot(): LogHubTelemetrySnapshot {
+    const sources = Object.fromEntries(SOURCES.map((source) => [source, {
+      lines: this.lines.get(source)?.length ?? 0,
+      retainedBytes: this.retainedBytes.get(source) ?? 0,
+      seenKeys: this.seenKeys.get(source)?.size ?? 0,
+    }])) as Record<LogSource, { lines: number; retainedBytes: number; seenKeys: number }>;
+    return {
+      totalLines: SOURCES.reduce((total, source) => total + sources[source].lines, 0),
+      totalRetainedBytes: SOURCES.reduce((total, source) => total + sources[source].retainedBytes, 0),
+      seenMcpDeliveries: this.seenMcpDeliveries.size,
+      mcpOccurrences: this.mcpOccurrences.size,
+      tailPendingBytes: Buffer.byteLength(this.tunnelFile.pending, 'utf8') + Buffer.byteLength(this.mcpFile.pending, 'utf8'),
+      sources,
     };
   }
 

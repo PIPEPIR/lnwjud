@@ -1,24 +1,23 @@
 import type { ToolCatalogItem, UiLocale } from '@lnwjud/ipc-contracts';
+import { createTranslator } from '../../i18n/index.js';
 
 export function toolAvailabilityLabel(locale: UiLocale, item: ToolCatalogItem): string {
+  const t = createTranslator(locale);
   if (item.userPreference === 'disabled') {
-    if (item.readiness === 'ready') return locale === 'th' ? 'พร้อมใช้งาน แต่ผู้ใช้ปิดไว้' : 'Ready, but disabled by user';
-    return locale === 'th' ? 'ผู้ใช้ปิดไว้' : 'Disabled by user';
+    if (item.readiness === 'ready') return t('toolAvailability.readyDisabled');
+    return t('toolAvailability.disabledByUser');
   }
   if (item.userPreference === 'enabled' && !item.systemEligible) {
-    if (item.readinessReason === 'feature_disabled') {
-      return locale === 'th' ? 'เปิดรายตัวไว้ แต่ต้องเปิดการตั้งค่าหลักก่อน' : 'Enabled per-tool, but the required Settings gate is off';
-    }
-    return locale === 'th' ? 'เปิดรายตัวไว้ แต่ระบบยังไม่พร้อมให้เปิดใช้งาน' : 'Enabled per-tool, but the system is not ready to expose it';
+    if (item.readinessReason === 'feature_disabled') return t('toolAvailability.settingGateOff');
+    return t('toolAvailability.systemNotReady');
   }
-  if (item.userPreference === 'enabled') return locale === 'th' ? 'ผู้ใช้เปิดไว้' : 'Enabled by user';
+  if (item.userPreference === 'enabled') return t('toolAvailability.enabledByUser');
   return item.effectiveExposed
-    ? (locale === 'th' ? 'เปิดตามค่าเริ่มต้น' : 'Enabled by default')
-    : (locale === 'th' ? 'ปิดตามค่าเริ่มต้น' : 'Disabled by default');
+    ? t('toolAvailability.enabledDefault')
+    : t('toolAvailability.disabledDefault');
 }
 
 export function effectiveExposureLabel(locale: UiLocale, item: ToolCatalogItem): string {
-  return item.effectiveExposed
-    ? (locale === 'th' ? 'แสดงใน MCP tools/list' : 'Exposed in MCP tools/list')
-    : (locale === 'th' ? 'ไม่แสดงใน MCP tools/list' : 'Hidden from MCP tools/list');
+  const t = createTranslator(locale);
+  return item.effectiveExposed ? t('toolAvailability.exposed') : t('toolAvailability.hidden');
 }

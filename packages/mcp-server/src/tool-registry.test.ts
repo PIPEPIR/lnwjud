@@ -23,6 +23,20 @@ afterEach(() => {
 });
 
 describe('MCP tool registry', () => {
+  it('fails closed before dispatch when a runtime invocation guard reports stale security policy', async () => {
+    let executed = false;
+    const registry = new ToolRegistry({ capabilities: { async execute(): Promise<ReturnType<typeof ok>> {
+      executed = true;
+      return ok({ accepted: true });
+    } } }, actor, {
+      invocationGuardProvider: (): string => 'Direct STDIO security settings changed. Reconnect Direct STDIO before using tools.',
+    });
+    const response = await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'] });
+    expect(response.isError).toBe(true);
+    expect(JSON.stringify(response)).toContain('Reconnect Direct STDIO');
+    expect(executed).toBe(false);
+  });
+
   it.each([
     ['/tmp/Project', '/tmp/Project/src'],
     ['E:\\Project', 'E:\\Project\\src'],

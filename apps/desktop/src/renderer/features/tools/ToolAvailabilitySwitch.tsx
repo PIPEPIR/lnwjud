@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
+import { createTranslator } from '../../i18n/index.js';
 
 interface ToolAvailabilitySwitchProps {
   readonly locale: UiLocale;
@@ -12,10 +13,9 @@ interface ToolAvailabilitySwitchProps {
 }
 
 export function ToolAvailabilitySwitch({ locale, checked, disabled = false, busy = false, blockedLabel, label, onChange }: ToolAvailabilitySwitchProps): ReactElement {
-  const stateLabel = checked
-    ? (locale === 'th' ? 'เปิด' : 'Enabled')
-    : blockedLabel ?? (locale === 'th' ? 'ปิด' : 'Disabled');
-  const accessibleLabel = locale === 'th' ? `${label}: ${stateLabel}` : `${label}: ${stateLabel}`;
+  const t = createTranslator(locale);
+  const stateLabel = checked ? t('security.enabled') : blockedLabel ?? t('security.disabled');
+  const accessibleLabel = `${label}: ${stateLabel}`;
 
   return (
     <button

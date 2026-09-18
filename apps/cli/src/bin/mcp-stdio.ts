@@ -15,7 +15,7 @@ import {
 } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, SqliteBackupService, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { comparableHostPath, hostPathApi, isMachineRootPath, normalizeWorkspaceRoot, WorkspaceService, type Workspace } from '@lnwjud/workspace';
-import { createStdioMcpRuntime, resolveStdioCheckpointKey } from '../runtime/stdio-mcp-runtime.js';
+import { createStdioMcpRuntime, resolveStdioCheckpointKey, type PersistedStdioSecurityPolicy } from '../runtime/stdio-mcp-runtime.js';
 import { StrictWorkspaceRepository, canonicalizeAllowedRoots, requestedPathInsideAllowedRoot } from '../runtime/strict-workspace-repository.js';
 import { resolveRequestedWorkspacePath } from '../runtime/workspace-selection.js';
 import { resetWorkspaceRegistrations } from '../runtime/workspace-reset.js';
@@ -45,6 +45,84 @@ function resolveDataPath(): string {
   return resolveLnwjudDataPath(process.env);
 }
 
+interface StdioSecurityPolicyOverrides {
+  readonly profile?: string;
+  readonly fullBypassFlag: boolean;
+  readonly fullBypassEnv?: string;
+  readonly strictRootsFlag: boolean;
+  readonly strictRootsEnv?: string;
+  readonly cliAllowedRoots: readonly string[];
+  readonly envAllowedRoots: readonly string[];
+  readonly unrestrictedEnv?: string;
+}
+
+interface EffectiveStdioSecurityPolicy {
+  readonly profile: ReturnType<typeof parseStdioPermissionProfile>;
+  readonly fullBypassAll: boolean;
+  readonly strictRoots: boolean;
+  readonly allowedRoots: readonly string[];
+  readonly unrestricted: boolean;
+  readonly customPermissionRaw: string;
+}
+
+function readPersistedSecurityPolicy(settingsRepository: SqliteSettingsRepository): PersistedStdioSecurityPolicy {
+  return {
+    profile: parseStdioPermissionProfile(settingsRepository.get(STDIO_PERMISSION_PROFILE_SETTING_KEY), 'full'),
+    fullBypassAll: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.stdioFullBypassAll), false),
+    strictRoots: parseBooleanSetting(settingsRepository.get(STDIO_STRICT_ROOTS_SETTING_KEY), false),
+    allowedRoots: parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY)),
+    unrestricted: isUnrestricted({}, settingsRepository.get(UNRESTRICTED_SETTING_KEY)),
+    customPermissionRaw: settingsRepository.get(USER_SETTING_KEYS.customPermissionProfile) ?? '',
+  };
+}
+
+function resolveEffectiveSecurityPolicy(
+  persisted: PersistedStdioSecurityPolicy,
+  overrides: StdioSecurityPolicyOverrides,
+): EffectiveStdioSecurityPolicy {
+  const profile = parseStdioPermissionProfile(overrides.profile ?? persisted.profile, 'full');
+  const fullBypassRequested = overrides.fullBypassFlag
+    || (overrides.fullBypassEnv !== undefined
+      ? parseBooleanSetting(overrides.fullBypassEnv, false)
+      : persisted.fullBypassAll);
+  const fullBypassAll = profile === 'full' && fullBypassRequested;
+  const strictRootsRequested = overrides.strictRootsFlag
+    || (overrides.strictRootsEnv !== undefined
+      ? parseBooleanSetting(overrides.strictRootsEnv, false)
+      : persisted.strictRoots);
+  const strictRoots = !fullBypassAll && strictRootsRequested;
+  const allowedRoots = overrides.cliAllowedRoots.length > 0
+    ? overrides.cliAllowedRoots
+    : overrides.envAllowedRoots.length > 0
+      ? overrides.envAllowedRoots
+      : persisted.allowedRoots;
+  const unrestrictedSetting = overrides.unrestrictedEnv === undefined
+    ? persisted.unrestricted
+    : isUnrestricted({ LNWJUD_UNRESTRICTED: overrides.unrestrictedEnv }, undefined);
+  return {
+    profile,
+    fullBypassAll,
+    strictRoots,
+    allowedRoots,
+    unrestricted: fullBypassAll || (!strictRoots && unrestrictedSetting),
+    customPermissionRaw: profile === 'custom' ? persisted.customPermissionRaw : '',
+  };
+}
+
+function securityPolicyFingerprint(policy: EffectiveStdioSecurityPolicy): string {
+  const allowedRoots = policy.strictRoots
+    ? [...policy.allowedRoots].map((root) => root.trim()).filter((root) => root.length > 0).sort()
+    : [];
+  return JSON.stringify({
+    profile: policy.profile,
+    fullBypassAll: policy.fullBypassAll,
+    strictRoots: policy.strictRoots,
+    allowedRoots,
+    unrestricted: policy.unrestricted,
+    customPermissionRaw: policy.customPermissionRaw,
+  });
+}
+
 async function main(): Promise<void> {
   const dataPath = resolveDataPath();
   fs.mkdirSync(dataPath, { recursive: true });
@@ -60,31 +138,28 @@ async function main(): Promise<void> {
   const rawWorkspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
 
-  const profileName = parseStdioPermissionProfile(
-    readArg('--profile')
-      ?? process.env.LNWJUD_STDIO_PROFILE
-      ?? settingsRepository.get(STDIO_PERMISSION_PROFILE_SETTING_KEY),
-    'full',
-  );
-  const stdioFullBypassAll = profileName === 'full' && (
-    hasFlag('--full-bypass-all')
-    || (process.env.LNWJUD_STDIO_FULL_BYPASS_ALL !== undefined
-      ? parseBooleanSetting(process.env.LNWJUD_STDIO_FULL_BYPASS_ALL, false)
-      : parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.stdioFullBypassAll), false))
-  );
-  const strictRootsEnabled = !stdioFullBypassAll && (hasFlag('--strict-roots')
-    || (process.env.LNWJUD_STRICT_ROOTS !== undefined
-      ? parseBooleanSetting(process.env.LNWJUD_STRICT_ROOTS, false)
-      : parseBooleanSetting(settingsRepository.get(STDIO_STRICT_ROOTS_SETTING_KEY), false)));
+  const profileOverride = readArg('--profile') ?? process.env.LNWJUD_STDIO_PROFILE;
+  const fullBypassEnv = process.env.LNWJUD_STDIO_FULL_BYPASS_ALL;
+  const strictRootsEnv = process.env.LNWJUD_STRICT_ROOTS;
+  const unrestrictedEnv = process.env.LNWJUD_UNRESTRICTED;
   const cliAllowedRoots = readArgs('--allowed-root');
   const envAllowedRoots = parseAllowedRoots(process.env.LNWJUD_ALLOWED_ROOTS);
-  const storedAllowedRoots = parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY));
-  const configuredAllowedRoots = cliAllowedRoots.length > 0
-    ? cliAllowedRoots
-    : envAllowedRoots.length > 0
-      ? envAllowedRoots
-      : storedAllowedRoots;
-  const strictAllowedRoots = strictRootsEnabled ? await canonicalizeAllowedRoots(configuredAllowedRoots) : undefined;
+  const securityPolicyOverrides: StdioSecurityPolicyOverrides = {
+    fullBypassFlag: hasFlag('--full-bypass-all'),
+    strictRootsFlag: hasFlag('--strict-roots'),
+    cliAllowedRoots,
+    envAllowedRoots,
+    ...(profileOverride === undefined ? {} : { profile: profileOverride }),
+    ...(fullBypassEnv === undefined ? {} : { fullBypassEnv }),
+    ...(strictRootsEnv === undefined ? {} : { strictRootsEnv }),
+    ...(unrestrictedEnv === undefined ? {} : { unrestrictedEnv }),
+  };
+  const initialSecurityPolicy = resolveEffectiveSecurityPolicy(readPersistedSecurityPolicy(settingsRepository), securityPolicyOverrides);
+  const initialSecurityPolicyFingerprint = securityPolicyFingerprint(initialSecurityPolicy);
+  const profileName = initialSecurityPolicy.profile;
+  const stdioFullBypassAll = initialSecurityPolicy.fullBypassAll;
+  const strictRootsEnabled = initialSecurityPolicy.strictRoots;
+  const strictAllowedRoots = strictRootsEnabled ? await canonicalizeAllowedRoots(initialSecurityPolicy.allowedRoots) : undefined;
 
   const rawWorkspaceService = new WorkspaceService(rawWorkspaceRepository);
   const reset = hasFlag('--reset-workspaces')
@@ -112,9 +187,7 @@ async function main(): Promise<void> {
     ? rawWorkspaceRepository
     : new StrictWorkspaceRepository(rawWorkspaceRepository, strictAllowedRoots);
   const workspaceService = new WorkspaceService(workspaceRepository);
-  const unrestricted = stdioFullBypassAll || (strictAllowedRoots === undefined
-    ? isUnrestricted(process.env, settingsRepository.get(UNRESTRICTED_SETTING_KEY))
-    : false);
+  const unrestricted = initialSecurityPolicy.unrestricted;
 
   const requestedRaw = readArg('--workspace') ?? process.env.LNWJUD_WORKSPACE;
   const registeredProjects = (await workspaceService.list())
@@ -178,6 +251,12 @@ async function main(): Promise<void> {
     ...(strictAllowedRoots === undefined ? {} : { strictAllowedRoots }),
   });
   await runtime.activityReady;
+  const invocationGuardProvider = (): string | undefined => {
+    const currentPolicy = resolveEffectiveSecurityPolicy(runtime.persistedSecurityPolicyProvider(), securityPolicyOverrides);
+    return securityPolicyFingerprint(currentPolicy) === initialSecurityPolicyFingerprint
+      ? undefined
+      : 'Direct STDIO security settings changed. Reconnect Direct STDIO before using tools so the new permissions apply safely.';
+  };
   process.stderr.write(
     `lnwjud MCP stdio ready primary=${workspace.id} root=${workspace.realRootPath} profile=${profileName}`
       + `${stdioFullBypassAll ? ' full_bypass=1' : ''}${unrestricted ? ' unrestricted=1' : ''}${strictAllowedRoots === undefined ? '' : ` strict_roots=${strictAllowedRoots.length}`}\n`,
@@ -200,6 +279,7 @@ async function main(): Promise<void> {
     ponytailModeProvider: () => runtime.ponytailMode,
     profileProvider: runtime.profileProvider,
     authorizationModeProvider: (): 'standard' | 'full_bypass' => stdioFullBypassAll ? 'full_bypass' : 'standard',
+    invocationGuardProvider,
     allowAiDeleteProvider: runtime.allowAiDeleteProvider,
     destructivePolicyProvider: runtime.destructivePolicyProvider,
     activeWorkspaceScopeProvider: runtime.activeWorkspaceScopeProvider,

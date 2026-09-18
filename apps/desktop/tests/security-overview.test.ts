@@ -1,7 +1,7 @@
 ﻿import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
+import { EMPTY_TUNNEL_STATUS, type DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { ControlCenterPage } from '../src/renderer/features/home/ControlCenterPage.js';
 
 const baseDashboard: DashboardSnapshot = {
@@ -27,7 +27,7 @@ const baseDashboard: DashboardSnapshot = {
   connectionModes: { httpUrl: null, stdioCommand: 'lnwjud-mcp-stdio.cmd' },
   workLog: [],
   inFlight: [],
-  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null, persistent: null },
+  tunnel: EMPTY_TUNNEL_STATUS,
   appVersion: '4.6.1',
 };
 
@@ -61,8 +61,8 @@ describe('Security Overview', () => {
     expect(markup).toContain('Security Overview');
     expect(markup).toContain('Restricted scope');
     expect(markup).toContain('BALANCED');
-    expect(markup).toContain('Allowed Roots');
-    expect(markup).not.toContain('explicitly requested absolute paths are accessible');
+    expect(markup).toContain('Allowed folders');
+    expect(markup).not.toContain('explicitly requested paths can be broad');
   });
 
   it('warns when standalone/headless STDIO has broad full access without Strict Roots', () => {
@@ -75,9 +75,9 @@ describe('Security Overview', () => {
       allowAiDelete: true,
     });
     expect(markup).toContain('Broad access');
-    expect(markup).toContain('explicitly requested absolute paths are accessible');
-    expect(markup).toContain('drives are not scanned');
-    expect(markup).toContain('AI File Delete');
+    expect(markup).toContain('explicitly requested paths can be broad');
+    expect(markup).toContain('Turn on STDIO folder limits in Settings');
+    expect(markup).toContain('AI file deletion');
   });
 
   it('does not claim an orphan external tunnel is fully connected when local setup is missing', () => {
@@ -167,6 +167,6 @@ describe('Security Overview', () => {
     const markup = render({ ...baseDashboard, locale: 'th' }, 'th');
     expect(markup).toContain('ภาพรวมความปลอดภัย');
     expect(markup).toContain('จำกัดขอบเขตแล้ว');
-    expect(markup).toContain('Strict Roots จำกัด standalone/headless STDIO');
+    expect(markup).toContain('Direct STDIO ตั้งขอบเขตโฟลเดอร์แยกได้ใน Settings');
   });
 });
