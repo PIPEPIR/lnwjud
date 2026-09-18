@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.2.2', async () => {
+  it('[version-contract] pins the product release to v5.3.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.2.2');
-    expect(desktopPackage.version).toBe('5.2.2');
+    expect(rootPackage.version).toBe('5.3.0');
+    expect(desktopPackage.version).toBe('5.3.0');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,15 +41,15 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.2.2');
+      expect(packageJson.version, packagePath).toBe('5.3.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.2.2'");
-    expect(shared).toContain("APP_VERSION = '5.2.2'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.3.0'");
+    expect(shared).toContain("APP_VERSION = '5.3.0'");
   });
 
-  it('[version-contract] keeps published-version documentation and runtime copy aligned with the root version', async () => {
+  it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const version = String(rootPackage.version);
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
@@ -57,13 +57,14 @@ describe('cross-platform desktop packaging', () => {
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
     expect(fullReadme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
 
-
     const usageTh = await readFile(path.join(repositoryRoot, 'docs', 'USAGE_TH.md'), 'utf8');
-    const publishedVersion = readme.match(/^## Current published version: v([0-9.]+)$/m)?.[1]
-      ?? readme.match(/^## What's new in v([0-9.]+)$/m)?.[1];
+    expect(readme).toContain(`## Current source version: v${version}`);
+    expect(fullReadme).toContain(`## Current source version: v${version}`);
+    expect(usageTh).toContain(`lnwjud v${version} (ภาษาไทย)`);
+
+    const publishedVersion = readme.match(/Latest published release: \*\*v([0-9.]+)\*\*/)?.[1];
     expect(publishedVersion).toBeTruthy();
-    expect(fullReadme).toContain(`## Current published version: v${publishedVersion}`);
-    expect(usageTh).toContain(`lnwjud v${publishedVersion} (ภาษาไทย)`);
+    expect(fullReadme).toContain(`Latest published release: **v${publishedVersion}**`);
     expect(usageTh).toContain(`public release \`v${publishedVersion}\``);
 
     const expectedReferences: ReadonlyArray<readonly [string, string]> = [
@@ -79,6 +80,16 @@ describe('cross-platform desktop packaging', () => {
     ];
     for (const [relativePath, expected] of expectedReferences) {
       expect(await readFile(path.join(repositoryRoot, relativePath), 'utf8'), relativePath).toContain(expected);
+    }
+  });
+
+  it('pins Electron 45 alpha.7 and exposes the Windows WER helper in the installed runtime', async () => {
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as {
+      devDependencies?: Record<string, string>;
+    };
+    expect(desktopPackage.devDependencies?.electron).toBe('45.0.0-alpha.7');
+    if (process.platform === 'win32') {
+      await access(path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron_wer.dll'));
     }
   });
 

@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v5.2.2 (มีทั้งหมด 253 definitions; advertise 241 tools โดยปริยายก่อนใช้ per-tool override และครบ 253 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v5.3.0 (มีทั้งหมด 253 definitions; advertise 241 tools โดยปริยายก่อนใช้ per-tool override และครบ 253 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -8,7 +8,7 @@
 
 lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น cross-platform local development gateway ที่เปิดความสามารถของเครื่องและ workspace บน Windows, macOS และ Linux ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้ โดย capability ที่เป็น OS-specific จะเปิดเฉพาะเมื่อ host รองรับจริง
 
-ความสามารถหลักใน v5.2.2 คือ:
+ความสามารถหลักใน v5.3.0 คือ:
 
 - เปิด workspace และ machine roots ให้ AI อ่าน ค้นหา วิเคราะห์ และแก้ไขไฟล์ได้
 - ใช้ Context Economy Engine ลด I/O/token จากการค้นหาอัตโนมัติ โดยยังอ่าน .env, .git, dist และ node_modules ได้เมื่อร้องขอแบบ explicit และอยู่ในขอบเขตที่ workspace/path policy อนุญาต
@@ -23,7 +23,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - ต่อ child MCP servers และ local skills ผ่าน bridge
 - มี Native Ponytail coding policy แบบ `OFF / LITE / FULL / ULTRA` โดยค่าเริ่มต้นเป็น OFF, resolve ตาม `Current Goal > Workspace > Global`, บังคับ exact bundled `ponytail` ก่อน code mutation เมื่อเปิดใช้งาน และใน FULL/ULTRA ต้องมี bundled `ponytail-review` ที่สดกับ code mutation ล่าสุดก่อนปิด durable coding goal; การหา skill ด้วย `skill_match` ไม่ใช่ dependency ของเส้นทางนี้ และ Full Bypass ไม่ข้าม correctness gate
 - มี task/delegation/session/checkpoint/handoff สำหรับงานต่อเนื่องและหลาย agent
-- มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery
+- มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery รวมถึง incident diagnostics แบบ bounded ที่เก็บ session heartbeat, local Crashpad metadata, current per-process memory และ runtime trend ย้อนหลังสูงสุดประมาณ 6 ชั่วโมง (1 นาทีต่อ sample) สำหรับ RSS/V8 heap/external/ArrayBuffer, Browser/Tab/GPU/Utility working/private bytes, system RAM, CPU/event-loop, active Node resources, retained LogHub line/byte/dedupe counters, MCP activity/error/in-flight และจำนวน `toolAvailabilityService` listeners โดยไม่แนบ raw heap dump อัตโนมัติ
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF
 - ปิด Native ChatGPT recurring watchdog ก่อน terminal completion เป็นเส้นทางหลัก และกู้ exact pending cleanup locator จาก durable state ได้หาก host surface/turn หลุดระหว่างปิดงาน; terminal cleanup-only wake ไม่มีสิทธิ์กลับไปแก้ workspace
 - เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking โดย per-tool override ไม่สามารถข้าม Settings/runtime prerequisite ได้ เช่น `codex_*` และ `agent_swarm_run` จะยังไม่ถูก expose จนกว่า Codex Delegation จะเปิดและ runtime ที่จำเป็นพร้อม

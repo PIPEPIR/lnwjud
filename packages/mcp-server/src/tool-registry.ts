@@ -101,6 +101,8 @@ export interface ToolRegistryOptions {
   readonly profileProvider?: () => PermissionProfile;
   /** Explicit transport-scoped authorization override. Effective only while the active profile is Full. */
   readonly authorizationModeProvider?: () => AuthorizationMode;
+  /** Optional transport/runtime guard checked before every tool dispatch. Return a message to fail closed. */
+  readonly invocationGuardProvider?: () => string | null | undefined;
   /** Legacy compatibility. New callers should supply destructivePolicyProvider. */
   readonly allowAiDeleteProvider?: () => boolean;
   /** Fine-grained local destructive auto-approval policy. */
@@ -172,6 +174,7 @@ export class ToolRegistry {
   private readonly permissionEngine = new DefaultPermissionEngine();
   private readonly profileProvider: () => PermissionProfile;
   private readonly authorizationModeProvider: () => AuthorizationMode;
+  private readonly invocationGuardProvider: (() => string | null | undefined) | undefined;
   private readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
   private readonly ponytailModeProvider: () => PonytailMode;
   private readonly ponytailActivation: PonytailActivationLedger;
@@ -194,6 +197,7 @@ export class ToolRegistry {
     this.sessionId = options.sessionId;
     this.profileProvider = options.profileProvider ?? ((): PermissionProfile => permissionProfiles.full);
     this.authorizationModeProvider = options.authorizationModeProvider ?? ((): AuthorizationMode => 'standard');
+    this.invocationGuardProvider = options.invocationGuardProvider;
     this.destructivePolicyProvider = options.destructivePolicyProvider ?? ((): DestructiveAutoApprovalPolicy => legacyDeletePolicy(options.allowAiDeleteProvider?.() === true));
     this.ponytailModeProvider = options.ponytailModeProvider ?? ((): PonytailMode => DEFAULT_PONYTAIL_MODE);
     this.ponytailActivation = options.ponytailActivationLedger ?? new PonytailActivationLedger();
@@ -287,6 +291,16 @@ export class ToolRegistry {
     }
   }
 
+  private currentInvocationGuardMessage(): string | null {
+    if (this.invocationGuardProvider === undefined) return null;
+    try {
+      const message = this.invocationGuardProvider();
+      return typeof message === 'string' && message.trim().length > 0 ? message.trim() : null;
+    } catch {
+      return 'Runtime security policy could not be verified. Reconnect this MCP connection before using tools.';
+    }
+  }
+
   private isEffectivelyExposed(name: string): boolean {
     if (name.startsWith('ecc_') && name !== 'ecc_status' && this.services.eccEnabledProvider !== undefined) {
       try {
@@ -304,8 +318,9 @@ export class ToolRegistry {
   }
 
   public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
-    const profile = this.profileProvider();
-    const fullBypass = profile.name === 'full' && this.authorizationModeProvider() === 'full_bypass';
+    const invocationGuardMessage = this.currentInvocationGuardMessage();
+    const profile = invocationGuardMessage === null ? this.profileProvider() : permissionProfiles.safe;
+    const fullBypass = invocationGuardMessage === null && profile.name === 'full' && this.authorizationModeProvider() === 'full_bypass';
     const authorizationMode: AuthorizationMode = fullBypass ? 'full_bypass' : 'standard';
     const activityWorkspaceId = await this.resolveActivityWorkspaceId(name, input);
     const workspaceActivityInput = withActivityWorkspaceId(stripGoalLeaseEnvelope(input), activityWorkspaceId);
@@ -319,6 +334,11 @@ export class ToolRegistry {
     const started = Date.now();
     let fencedMutationEnd: (() => Promise<void>) | undefined;
     try {
+      if (invocationGuardMessage !== null) {
+        const response = mapError(appError('CONFLICT', invocationGuardMessage, true));
+        await this.activity.end(callId, 'CONFLICT', Date.now() - started, invocationGuardMessage);
+        return response;
+      }
       const tool = this.allTools.find((candidate) => candidate.name === name);
       if (tool === undefined || !this.isEffectivelyExposed(name)) {
         const response = mapError(appError('INVALID_INPUT', 'Unknown MCP tool'));
@@ -1213,7 +1233,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.2.2 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.3.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

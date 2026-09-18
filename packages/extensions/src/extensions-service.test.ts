@@ -461,6 +461,7 @@ describe('LocalExtensionsService MCP bridge', () => {
   });
 
   it('reports an unverified lifecycle when an external session cannot be closed', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-extensions-unverified-'));
     const session: McpClientSession = {
       listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
       listResources: async () => [],
@@ -469,15 +470,25 @@ describe('LocalExtensionsService MCP bridge', () => {
     };
     const service = new LocalExtensionsService({
       settings: settingsWithMockServer(),
+      homeDir: root,
+      appDataDir: root,
       clientFactory: { connect: async (): Promise<McpClientSession> => session },
     });
-    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true });
-    await service.disconnectMcpServer?.('mock');
-    await expect(service.listMcpServers()).resolves.toMatchObject({
-      ok: true,
-      value: { servers: [expect.objectContaining({ name: 'mock', connected: false, lifecycle: 'termination_unverified' })] },
-    });
-    await service.close();
+    try {
+      await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true });
+      await service.disconnectMcpServer?.('mock');
+      const listed = await service.listMcpServers();
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.servers.find((server) => server.name === 'mock')).toMatchObject({
+        name: 'mock',
+        connected: false,
+        lifecycle: 'termination_unverified',
+      });
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('closes a child connection that finishes after the session manager is closed', async () => {

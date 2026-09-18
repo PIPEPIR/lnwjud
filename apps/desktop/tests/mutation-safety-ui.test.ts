@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { APP_VERSION, type DashboardSnapshot } from '@lnwjud/ipc-contracts';
+import { APP_VERSION, EMPTY_TUNNEL_STATUS, type DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { AppShell } from '../src/renderer/features/shell/AppShell.js';
 import { SettingsPage } from '../src/renderer/features/settings/SettingsPage.js';
 
@@ -36,7 +36,7 @@ const dashboard: DashboardSnapshot = {
   connectionModes: { httpUrl: null, stdioCommand: 'lnwjud --mcp-stdio' },
   workLog: [],
   inFlight: [],
-  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null, persistent: null },
+  tunnel: EMPTY_TUNNEL_STATUS,
   settings: {
     customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
     desktopFullBypassAll: false,
@@ -69,6 +69,11 @@ function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapsho
     onSaveTunnelApiKey: noop,
     onSetTunnelClientPath: noop,
     onUserSettingsChange: async (): Promise<boolean> => false,
+    ponytailPolicyContext: { workspaceId: 'workspace-a', globalMode: dashboard.settings.ponytailMode, workspaceMode: 'inherit', effectiveWorkspaceMode: dashboard.settings.ponytailMode, effectiveWorkspaceSource: 'global', activeGoals: [] },
+    ponytailPolicyBusy: false,
+    ponytailPolicyError: null,
+    onWorkspacePonytailModeChange: noop,
+    onGoalPonytailModeChange: noop,
     onChooseTunnelClientPath: async (): Promise<string | null> => null,
     onConfigureTunnelProfile: async (): Promise<string> => '',
     onStartTunnel: noop,
@@ -93,6 +98,11 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
     onSaveTunnelApiKey: noop,
     onSetTunnelClientPath: noop,
     onUserSettingsChange: async (): Promise<boolean> => false,
+    ponytailPolicyContext: { workspaceId: 'workspace-a', globalMode: dashboard.settings.ponytailMode, workspaceMode: 'inherit', effectiveWorkspaceMode: dashboard.settings.ponytailMode, effectiveWorkspaceSource: 'global', activeGoals: [] },
+    ponytailPolicyBusy: false,
+    ponytailPolicyError: null,
+    onWorkspacePonytailModeChange: noop,
+    onGoalPonytailModeChange: noop,
     onChooseTunnelClientPath: async (): Promise<string | null> => null,
     onConfigureTunnelProfile: async (): Promise<string> => '',
     onStartTunnel: noop,
@@ -101,13 +111,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 5.2.2 application version', () => {
-    expect(APP_VERSION).toBe('5.2.2');
+  it('renders the actual 5.3.0 application version', () => {
+    expect(APP_VERSION).toBe('5.3.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, hostPlatform: 'win32', mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v5.2.2');
+    expect(markup).toContain('v5.3.0');
     expect(markup).toContain('data-host-platform="win32"');
   });
 
@@ -141,14 +151,16 @@ describe('mutation safety UI contract', () => {
     const customCard = markup.slice(customStart);
     expect(fullCard).toContain('Desktop Full Bypass');
     expect(fullCard).toContain('STDIO Full Bypass');
-    expect(fullCard).toContain('Bypass always-confirm tools');
+    expect(fullCard).toContain('skip lnwjud prompts');
+    expect(fullCard).toContain('risky actions or paths outside projects');
+    expect(fullCard).toContain('Windows/macOS/Linux and external services can still deny an action');
     expect(customCard).not.toContain('Desktop Full Bypass');
     expect(customCard).not.toContain('STDIO Full Bypass');
   });
 
   it('renders all destructive auto-approval settings and keeps critical/recovery safeguards locked', () => {
     const markup = settingsMarkup('en');
-    const destructiveSection = markup.slice(markup.indexOf('Delete &amp; Data-Loss Safety'), markup.indexOf('STDIO Security Policy'));
+    const destructiveSection = markup.slice(markup.indexOf('Delete &amp; Data-Loss Safety'), markup.indexOf('aria-label="Direct STDIO permissions"'));
     for (const key of ['delete_file', 'git_rm', 'git_clean', 'git_reset_restore', 'shell_rm_unlink', 'shell_rmdir', 'shell_del_erase', 'wsl_rm_unlink', 'wsl_rmdir']) {
       expect(destructiveSection).toContain(`<strong>${key}</strong>`);
     }
@@ -161,7 +173,7 @@ describe('mutation safety UI contract', () => {
   it('hides Windows-only WSL destructive controls on macOS and Linux', () => {
     for (const hostPlatform of ['darwin', 'linux'] as const) {
       const markup = settingsMarkup('en', { hostPlatform, hostArch: hostPlatform === 'darwin' ? 'arm64' : 'x64' });
-      const destructiveSection = markup.slice(markup.indexOf('Delete &amp; Data-Loss Safety'), markup.indexOf('STDIO Security Policy'));
+      const destructiveSection = markup.slice(markup.indexOf('Delete &amp; Data-Loss Safety'), markup.indexOf('aria-label="Direct STDIO permissions"'));
       expect(destructiveSection).not.toContain('<strong>wsl_rm_unlink</strong>');
       expect(destructiveSection).not.toContain('<strong>wsl_rmdir</strong>');
       expect(destructiveSection.match(/role="switch"/g)).toHaveLength(9);
@@ -177,39 +189,40 @@ describe('mutation safety UI contract', () => {
 
   it('explains the Full Bypass OFF and ON boundaries in English', () => {
     const markup = settingsMarkup('en');
-    expect(markup).toContain('Structured file tools');
-    expect(markup).toContain('canonical Active Project');
-    expect(markup).toContain('Recovery Trash / checkpoints');
-    expect(markup).toContain('With Full Bypass OFF');
-    expect(markup).toContain('ordinary Full Access work does not prompt');
-    expect(markup).toContain('always-confirm, destructive, and out-of-scope');
-    expect(markup).toContain('With Full Bypass ON');
-    expect(markup).toContain('all lnwjud application approvals and scope checks are skipped');
-    expect(markup).toContain('not covered by Recovery Trash');
+    expect(markup).toContain('Lets some local tools use explicitly requested paths more broadly');
+    expect(markup).toContain('does not disable approval prompts');
+    expect(markup).toContain('or let structured file tools bypass the Active Project');
+    expect(markup).toContain('With Full Bypass off');
+    expect(markup).toContain('safeguards to deletes, data-loss actions, and out-of-scope work');
+    expect(markup).toContain('With Full Bypass on');
+    expect(markup).toContain('only lnwjud safeguards are skipped');
+    expect(markup).toContain('Windows/macOS/Linux and external services can still deny an action');
   });
 
   it('explains the same Full Bypass boundaries in Thai', () => {
     const markup = settingsMarkup('th');
-    expect(markup).toContain('เครื่องมือไฟล์แบบมีโครงสร้าง');
-    expect(markup).toContain('Active Project แบบ canonical');
-    expect(markup).toContain('Recovery Trash / checkpoint');
-    expect(markup).toContain('เมื่อ Full Bypass ปิด');
-    expect(markup).toContain('งานปกติของ Full Access จะไม่ถาม');
-    expect(markup).toContain('tool ที่ต้องยืนยันเสมอ');
-    expect(markup).toContain('เมื่อเปิด Full Bypass');
-    expect(markup).toContain('ข้ามการอนุมัติและขอบเขตระดับแอปทั้งหมด');
-    expect(markup).toContain('ไม่อยู่ใน Recovery Trash');
+    expect(markup).toContain('เครื่องมือบางชนิดในเครื่องเข้าถึง path ที่ระบุได้กว้างขึ้น');
+    expect(markup).toContain('ไม่ได้ปิดการถามยืนยัน');
+    expect(markup).toContain('ไม่ได้ทำให้เครื่องมือไฟล์ข้าม Active Project');
+    expect(markup).toContain('ถ้า Full Bypass ปิด');
+    expect(markup).toContain('ป้องกันงานลบ งานที่อาจทำข้อมูลหาย และงานนอกขอบเขต');
+    expect(markup).toContain('ถ้า Full Bypass เปิด');
+    expect(markup).toContain('ข้ามเฉพาะตัวป้องกันของ lnwjud เท่านั้น');
+    expect(markup).toContain('Windows/macOS/Linux และบริการภายนอกยังสามารถปฏิเสธคำสั่งได้');
   });
 
-  it('renders the Ponytail policy selector with OFF as the persisted default and all supported modes', () => {
+  it('renders one Ponytail policy editor with a global default and optional inherited overrides', () => {
     const markup = settingsMarkup('en', {}, 'mcp');
-    expect(markup).toContain('id="ponytail-mode"');
-    expect(markup).toContain('Ponytail coding policy');
-    expect(markup).toContain('<option value="off" selected="">Off — disabled (default)</option>');
+    expect(markup).toContain('id="ponytail-global-mode"');
+    expect(markup).not.toContain('id="ponytail-mode"');
+    expect(markup).toContain('Ponytail Policy');
+    expect(markup).toContain('Global default');
+    expect(markup).toContain('<option value="off" selected="">Off</option>');
     expect(markup).toContain('<option value="lite">Lite</option>');
     expect(markup).toContain('<option value="full">Full</option>');
     expect(markup).toContain('<option value="ultra">Ultra</option>');
-    expect(markup).toContain('same-named workspace or user skills cannot substitute it');
-    expect(markup).toContain('Full/Ultra require a current Ponytail Review');
+    expect(markup).toContain('Advanced overrides — optional');
+    expect(markup).toContain('Inherit Global');
+    expect(markup).toContain('Effective: OFF · Global');
   });
 });

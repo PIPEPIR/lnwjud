@@ -12,9 +12,7 @@ interface RemoteMcpTestAccess {
   publicOrigin: string | null;
   configuredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
-  pairingCode: string | null;
   startGateway(localMcpUrl: string): Promise<void>;
-  issuePairingCode(): void;
 }
 
 const servers: Server[] = [];
@@ -333,7 +331,6 @@ describe('Remote MCP OAuth gateway', () => {
     authorize.searchParams.set('code_challenge', challenge);
     authorize.searchParams.set('code_challenge_method', 'S256');
     const approvalRedirect = await fetch(authorize, { redirect: 'manual' });
-    expect(internal.pairingCode).toBeNull();
     const code = await completeChatGptLocalApproval(approvalRedirect, origin, redirectUri, 'fixture-state');
 
     const trustedReauthorize = await fetch(authorize, { redirect: 'manual' });
@@ -371,14 +368,13 @@ describe('Remote MCP OAuth gateway', () => {
     'https://chatgpt.com.evil.example/aip/oauth/callback',
     'https://chatgpt.com/connector/oauth/',
     'https://chatgpt.com/connector/oauth/plugin/extra',
-  ])('keeps the PIN fallback for clients that do not match the exact ChatGPT callback contract: %s', async (redirectUri) => {
+  ])('fails closed for clients that do not match the exact ChatGPT callback contract: %s', async (redirectUri) => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
-    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-fallback-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
+    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-unsupported-client-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
     await internal.startGateway(`${upstreamOrigin}/mcp`);
     internal.publicOrigin = internal.gatewayUrl;
     internal.runState = 'running';
-    expect(internal.pairingCode).toBeNull();
     const origin = internal.gatewayUrl!;
 
     const registration = await fetch(`${origin}/oauth/register`, {
@@ -393,29 +389,16 @@ describe('Remote MCP OAuth gateway', () => {
     authorize.searchParams.set('response_type', 'code');
     authorize.searchParams.set('client_id', registered.client_id);
     authorize.searchParams.set('redirect_uri', redirectUri);
-    authorize.searchParams.set('state', 'fallback-state');
+    authorize.searchParams.set('state', 'unsupported-state');
     authorize.searchParams.set('code_challenge', challenge);
     authorize.searchParams.set('code_challenge_method', 'S256');
 
-    const consent = await fetch(authorize, { redirect: 'manual' });
-    expect(consent.status).toBe(200);
-    expect(internal.pairingCode).toMatch(/^\d{6}$/);
-    const consentHtml = await consent.text();
-    expect(consentHtml).toContain('Fallback PIN');
-    expect(consentHtml).toContain('Fallback pairing');
-
-    const approved = await fetch(`${origin}/oauth/authorize`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      redirect: 'manual',
-      body: new URLSearchParams({
-        response_type: 'code', client_id: registered.client_id, redirect_uri: redirectUri,
-        state: 'fallback-state', code_challenge: challenge, code_challenge_method: 'S256',
-        pairing_code: internal.pairingCode!,
-      }),
+    const rejected = await fetch(authorize, { redirect: 'manual' });
+    expect(rejected.status).toBe(403);
+    await expect(rejected.json()).resolves.toEqual({
+      error: 'access_denied',
+      error_description: 'This OAuth client is not supported by lnwjud Desktop. Connect from ChatGPT so authorization can complete through the local Desktop handoff.',
     });
-    expect(approved.status).toBe(302);
-    expect(internal.pairingCode).toBeNull();
     await controller.close();
   });
 

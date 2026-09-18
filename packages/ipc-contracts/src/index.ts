@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.2.2';
+export const APP_VERSION = '5.3.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -39,7 +39,7 @@ export const ipcChannels = {
   setRemoteMcpPublicOrigin: 'lnwjud:set-remote-mcp-public-origin',
   startRemoteMcp: 'lnwjud:start-remote-mcp',
   stopRemoteMcp: 'lnwjud:stop-remote-mcp',
-  regenerateRemoteMcpPairingCode: 'lnwjud:regenerate-remote-mcp-pairing-code',
+  resetRemoteMcpOAuth: 'lnwjud:reset-remote-mcp-oauth',
   setTunnelClientPath: 'lnwjud:set-tunnel-client-path',
   setLocale: 'lnwjud:set-locale',
   setUserSettings: 'lnwjud:set-user-settings',
@@ -470,14 +470,29 @@ export interface RemoteMcpStatus {
   readonly localGatewayUrl: string | null;
   readonly publicMcpUrl: string | null;
   readonly configuredPublicOrigin: string | null;
-  readonly pairingCode: string | null;
-  readonly pairingCodeExpiresAt: string | null;
   readonly oauthProtected: boolean;
   readonly oauthConnected: boolean;
-  readonly pairingRequired: boolean;
   readonly autoStartEnabled: boolean;
   readonly message: string | null;
 }
+
+export const EMPTY_REMOTE_MCP_STATUS: RemoteMcpStatus = {
+  state: 'stopped',
+  provider: 'ngrok',
+  installed: false,
+  automaticInstallAvailable: false,
+  automaticInstallMethod: null,
+  hasAuthtoken: false,
+  ngrokPath: null,
+  localMcpUrl: null,
+  localGatewayUrl: null,
+  publicMcpUrl: null,
+  configuredPublicOrigin: null,
+  oauthProtected: true,
+  oauthConnected: false,
+  autoStartEnabled: false,
+  message: null,
+};
 
 export interface SaveRemoteMcpAuthtokenRequest {
   readonly authtoken: string;
@@ -504,6 +519,17 @@ export interface TunnelStatus {
   readonly logPath: string | null;
   readonly persistent: TunnelPersistentStatus | null;
 }
+
+export const EMPTY_TUNNEL_STATUS: TunnelStatus = {
+  state: 'stopped',
+  source: 'desktop',
+  hasApiKey: false,
+  clientPath: null,
+  profileExists: false,
+  message: null,
+  logPath: null,
+  persistent: null,
+};
 
 export type LogSource = 'tunnel' | 'mcp' | 'process';
 export type LogLevel = 'info' | 'warn' | 'error';
@@ -601,7 +627,7 @@ export function workspaceScopeMatches(workspaces: readonly WorkspaceSummary[], c
   return canonicalWorkspaceScopeId(workspaces, candidate) === canonicalWorkspaceScopeId(workspaces, selected);
 }
 
-export type IncidentClassification = 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
+export type IncidentClassification = 'desktop_session_ended_uncleanly' | 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
 export interface IncidentExportResult {
   readonly exported: boolean;
   readonly cancelled: boolean;
@@ -997,7 +1023,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setRemoteMcpPublicOrigin]: SetRemoteMcpPublicOriginRequest;
   readonly [ipcChannels.startRemoteMcp]: undefined;
   readonly [ipcChannels.stopRemoteMcp]: undefined;
-  readonly [ipcChannels.regenerateRemoteMcpPairingCode]: undefined;
+  readonly [ipcChannels.resetRemoteMcpOAuth]: undefined;
   readonly [ipcChannels.setTunnelClientPath]: SetTunnelClientPathRequest;
   readonly [ipcChannels.setLocale]: SetLocaleRequest;
   readonly [ipcChannels.setUserSettings]: SetUserSettingsRequest;
@@ -1066,7 +1092,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.setRemoteMcpPublicOrigin]: RemoteMcpStatus;
   readonly [ipcChannels.startRemoteMcp]: RemoteMcpStatus;
   readonly [ipcChannels.stopRemoteMcp]: RemoteMcpStatus;
-  readonly [ipcChannels.regenerateRemoteMcpPairingCode]: RemoteMcpStatus;
+  readonly [ipcChannels.resetRemoteMcpOAuth]: RemoteMcpStatus;
   readonly [ipcChannels.setTunnelClientPath]: { readonly clientPath: string };
   readonly [ipcChannels.setLocale]: { readonly locale: UiLocale };
   readonly [ipcChannels.setUserSettings]: { readonly settings: UserSettings; readonly restartRequired: boolean };
@@ -1137,7 +1163,7 @@ export interface LnwjudApi {
   setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<IpcResponseMap[typeof ipcChannels.setRemoteMcpPublicOrigin]>;
   startRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.startRemoteMcp]>;
   stopRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopRemoteMcp]>;
-  regenerateRemoteMcpPairingCode(): Promise<IpcResponseMap[typeof ipcChannels.regenerateRemoteMcpPairingCode]>;
+  resetRemoteMcpOAuth(): Promise<IpcResponseMap[typeof ipcChannels.resetRemoteMcpOAuth]>;
   setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<IpcResponseMap[typeof ipcChannels.setTunnelClientPath]>;
   setLocale(request: SetLocaleRequest): Promise<IpcResponseMap[typeof ipcChannels.setLocale]>;
   setUserSettings(request: SetUserSettingsRequest): Promise<IpcResponseMap[typeof ipcChannels.setUserSettings]>;

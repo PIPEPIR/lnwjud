@@ -37,6 +37,39 @@ function evidence(overrides: Partial<IncidentEvidence> = {}): IncidentEvidence {
   };
 }
 
+function restartedDesktopSession(currentElapsedMs: number, previousState: 'running' | 'shutdown_requested' = 'running'): NonNullable<IncidentEvidence['desktopSession']> {
+  const currentStartedAt = Date.parse('2026-09-18T00:00:00.000Z');
+  return {
+    schemaVersion: 1,
+    current: {
+      schemaVersion: 1,
+      sessionId: 'current-session',
+      pid: 200,
+      appVersion: '5.3.0',
+      electronVersion: '44.4.1',
+      platform: 'win32',
+      arch: 'x64',
+      processStartedAt: new Date(currentStartedAt - 1_000).toISOString(),
+      startedAt: new Date(currentStartedAt).toISOString(),
+      lastHeartbeatAt: new Date(currentStartedAt + currentElapsedMs).toISOString(),
+      state: 'running',
+    },
+    previous: {
+      schemaVersion: 1,
+      sessionId: 'previous-session',
+      pid: 100,
+      appVersion: '5.2.2',
+      electronVersion: '43.4.1',
+      platform: 'win32',
+      arch: 'x64',
+      processStartedAt: '2026-09-17T23:00:00.000Z',
+      startedAt: '2026-09-17T23:00:01.000Z',
+      lastHeartbeatAt: '2026-09-17T23:59:30.000Z',
+      state: previousState,
+    },
+  };
+}
+
 describe('incident classification', () => {
   it.each([
     ['local_tool_failed', evidence({ logLines: [started('a'), completed('a', 'FAILED')] })],
@@ -53,6 +86,16 @@ describe('incident classification', () => {
       started('a', 'write_file'), completed('a', 'FAILED', 'write_file'),
     ] }));
     expect(result).toMatchObject({ classification: 'local_tool_failed' });
+  });
+
+  it('uses a recent unclean previous desktop session only when there is no stronger current failure', () => {
+    expect(classifyIncident(evidence({ desktopSession: restartedDesktopSession(30_000) }))).toMatchObject({ classification: 'desktop_session_ended_uncleanly' });
+    expect(classifyIncident(evidence({ desktopSession: restartedDesktopSession(30_000), logLines: [started('failed'), completed('failed', 'FAILED')] }))).toMatchObject({ classification: 'local_tool_failed' });
+    expect(classifyIncident(evidence({ desktopSession: restartedDesktopSession(30_000), tunnel: { ...healthyTunnel, state: 'stopped' } }))).toMatchObject({ classification: 'tunnel_disconnected' });
+  });
+
+  it('does not let a previous crash dominate unrelated incidents after the restarted app has been healthy for ten minutes', () => {
+    expect(classifyIncident(evidence({ desktopSession: restartedDesktopSession(11 * 60_000), logLines: [started('current'), completed('current')] }))).toMatchObject({ classification: 'remote_turn_stopped' });
   });
 
   it('keeps persisted desktop crash evidence when the restarted session has no MCP log history', async () => {
@@ -351,7 +394,7 @@ describe('incident correlation and privacy', () => {
         correlation: { kind: 'tunnel', lifecycle: 'transport_stopped' },
       }],
     }));
-    expect(report.schemaVersion).toBe(2);
+    expect(report.schemaVersion).toBe(3);
     expect(report.timeZone).toBe('Asia/Bangkok');
     expect(report.runtimeDiagnostics?.process).toMatchObject({ lastPid: 4321, lastExitAt: '2026-09-16T00:07:59.000+07:00', lastExitCode: 1, lastSignal: 'SIGTERM' });
     expect(report.runtimeDiagnostics?.restart).toMatchObject({ totalAttempts: 4, successCount: 1, failureCount: 3, lastResult: 'failed' });
@@ -530,6 +573,48 @@ describe('incident correlation and privacy', () => {
     expect(report.processTree).toEqual(expect.objectContaining({ available: false, error: 'access denied' }));
     expect(report.tcpListeners).toEqual(expect.objectContaining({ available: false, error: 'netstat denied' }));
   });
+
+  it('exports bounded runtime trend evidence for memory and listener diagnosis', async () => {
+    const runtimeHistory = {
+      schemaVersion: 1 as const,
+      intervalMs: 60_000,
+      maxSamples: 360,
+      samples: [{
+        schemaVersion: 1 as const,
+        capturedAt: '2026-09-18T00:00:00.000Z',
+        sessionId: 'session-a',
+        uptimeSeconds: 120,
+        memory: {
+          rssBytes: 100,
+          heapTotalBytes: 80,
+          heapUsedBytes: 50,
+          externalBytes: 10,
+          arrayBuffersBytes: 5,
+          totalWorkingSetBytes: 200,
+          desktopProcessCount: 4,
+          byProcessType: { Browser: { count: 1, workingSetBytes: 100, privateBytes: 80, percentCPUUsage: 2.5 } },
+        },
+        system: { totalMemoryBytes: 16_000, freeMemoryBytes: 8_000 },
+        cpu: { userMicros: 1000, systemMicros: 500 },
+        eventLoop: { idleMs: 10, activeMs: 2, utilization: 0.16 },
+        activeResources: { Timeout: 2 },
+        mcp: {
+          toolAvailabilityListeners: 0,
+          calls: 10,
+          completed: 10,
+          successes: 10,
+          errors: 0,
+          cancellations: 0,
+          active: 0,
+          recentErrorClasses: [],
+          inFlightByTool: {},
+        },
+      }],
+    };
+    const report = await buildIncidentReport(evidence({ runtimeHistory }));
+    expect(report.runtimeHistory?.samples.at(-1)?.mcp.toolAvailabilityListeners).toBe(0);
+    expect(report.runtimeHistory?.samples.at(-1)?.memory.byProcessType.Browser?.workingSetBytes).toBe(100);
+  });
 });
 
 function allStrings(value: unknown): string[] {
@@ -555,6 +640,6 @@ describe('incident export workflow', () => {
       writeAtomically: async (_path, content) => { saved = content; },
     });
     expect(result).toMatchObject({ exported: true, cancelled: false, classification: 'healthy_or_inconclusive', capturedAt: expect.any(String) });
-    expect(JSON.parse(saved)).toMatchObject({ schemaVersion: 2, classification: 'healthy_or_inconclusive', timeZone: 'Asia/Bangkok' });
+    expect(JSON.parse(saved)).toMatchObject({ schemaVersion: 3, classification: 'healthy_or_inconclusive', timeZone: 'Asia/Bangkok' });
   });
 });

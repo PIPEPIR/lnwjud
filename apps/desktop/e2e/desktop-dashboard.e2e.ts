@@ -100,7 +100,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await page.getByRole('button', { name: 'หน้าหลัก', exact: true }).click();
 
     await page.getByRole('button', { name: 'โปรเจกต์', exact: true }).click();
-    await page.getByLabel('Workspace root').fill(path.join(fixtureRoot, 'missing-workspace'));
+    await page.getByLabel(/^(โฟลเดอร์โปรเจกต์|Workspace root)$/).fill(path.join(fixtureRoot, 'missing-workspace'));
     await page.getByRole('button', { name: 'เพิ่มโปรเจกต์', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText(/Workspace (could not be added|root was not found)/, { timeout: 15_000 });
 
@@ -112,8 +112,8 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
 
     await page.getByRole('button', { name: 'ตั้งค่า', exact: true }).click();
     await expectNoHorizontalOverflow(page);
-    await page.getByRole('button', { name: /Remote MCP & Tunnel/ }).click();
-    const tunnelAuthCard = page.locator('[aria-label="Tunnel authentication"]');
+    await page.getByRole('button', { name: /^(เชื่อมต่อ ChatGPT|Connect ChatGPT)/ }).click();
+    const tunnelAuthCard = page.locator('[aria-label="การยืนยันตัวตนของ Tunnel"], [aria-label="Tunnel authentication"]').first();
     const tunnelGuideCard = page.locator('[aria-label="เปิดคู่มือตั้งค่า"], [aria-label="Open setup guide"]').first();
     await expect(tunnelAuthCard).toBeVisible();
     await expect(tunnelGuideCard).toBeVisible();
@@ -129,9 +129,9 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     expect(guideBox).not.toBeNull();
     if (authBox !== null && guideBox !== null) expect(Math.round(guideBox.y - (authBox.y + authBox.height))).toBeLessThanOrEqual(12);
     await page.getByRole('button', { name: /ความปลอดภัย|Security/ }).click();
-    await page.getByLabel('Permission profile', { exact: true }).selectOption('balanced');
-    await expect(page.getByLabel('Permission profile', { exact: true })).toHaveValue('balanced');
-    await page.getByRole('button', { name: /^Tools/ }).click();
+    await page.getByLabel(/^(โปรไฟล์สิทธิ์|Permission profile)$/, { exact: true }).selectOption('balanced');
+    await expect(page.getByLabel(/^(โปรไฟล์สิทธิ์|Permission profile)$/, { exact: true })).toHaveValue('balanced');
+    await page.locator('.settings-subnav').getByRole('button', { name: /^(เครื่องมือ|Tools)/ }).click();
     const codexSwitch = page.getByRole('switch', { name: /codex_\*/ });
     await expect(codexSwitch).toHaveAttribute('aria-checked', 'false');
     await codexSwitch.click();

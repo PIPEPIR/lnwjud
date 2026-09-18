@@ -121,7 +121,7 @@ export function StandaloneLogViewer(): ReactElement {
           <div className="titlebar-brand">
             <img src="./favicon.ico" alt="lnwjud logo" className="titlebar-logo" />
             <span className="titlebar-title">{t('brand')}</span>
-            <span className="titlebar-version">Live Logs</span>
+            <span className="titlebar-version">{t('live.title')}</span>
           </div>
           <div className="titlebar-center">
             <span className="hint" style={{ fontSize: '11.5px' }}>{tunnelLogPath ?? ''}</span>
@@ -131,7 +131,7 @@ export function StandaloneLogViewer(): ReactElement {
 
       <div className="log-viewer-shell">
         <div className="log-tabs-toolbar">
-          <div className="log-tabs" role="tablist" aria-label="Live Logs">
+          <div className="log-tabs" role="tablist" aria-label={t('live.title')}>
             {sources.map((source) => (
               <button
                 key={source}
@@ -145,7 +145,7 @@ export function StandaloneLogViewer(): ReactElement {
               </button>
             ))}
           </div>
-          <button type="button" className="clear-all-logs-button" onClick={() => { void clearAll(); }}>{locale === 'th' ? 'ล้าง Log ทั้งหมด' : 'Clear All Logs'}</button>
+          <button type="button" className="clear-all-logs-button" onClick={() => { void clearAll(); }}>{t('live.clearAll')}</button>
         </div>
         <LogStreamPanel
           locale={locale}

@@ -727,12 +727,6 @@ button.titlebar-version:hover {
   color: #9ce7b6;
 }
 
-.home-remote-mcp-status.is-pairing {
-  border: 1px solid rgba(230, 184, 74, .28);
-  background: rgba(230, 184, 74, .08);
-  color: var(--gold-bright);
-}
-
 .error-text {
   color: var(--danger);
 }

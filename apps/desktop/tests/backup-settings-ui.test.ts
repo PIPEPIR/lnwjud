@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
+import { EMPTY_TUNNEL_STATUS, type DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { SettingsPage } from '../src/renderer/features/settings/SettingsPage.js';
 
 const noop = async (): Promise<void> => undefined;
@@ -34,7 +34,7 @@ const dashboard: DashboardSnapshot = {
   connectionModes: { httpUrl: null, stdioCommand: 'lnwjud --mcp-stdio' },
   workLog: [],
   inFlight: [],
-  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null },
+  tunnel: EMPTY_TUNNEL_STATUS,
   settings: {
     customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
     mcpCallTimeoutMs: 60_000, mcpIdleTimeoutMs: 300_000, processTimeoutMs: 3_600_000, mcpPollWaitSeconds: 5, shellSynchronousWaitSeconds: 60,
@@ -101,7 +101,7 @@ describe('Backup settings UI', () => {
       onStopTunnel: noop,
     }));
 
-    expect(markup).toContain('Stop Tunnel and local MCP before scheduling a database restore.');
+    expect(markup).toContain('Stop Tunnel and Local MCP before scheduling a database restore.');
     expect(markup).toContain('<button type="button" disabled="">Restore</button>');
   });
 

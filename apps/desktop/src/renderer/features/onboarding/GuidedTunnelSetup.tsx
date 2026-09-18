@@ -183,7 +183,7 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
     <div className="guided-tunnel-panel" data-testid="guided-tunnel-setup">
       <div className="guided-tunnel-panel-header">
         <div>
-          <span className="settings-eyebrow">OPENAI SECURE MCP TUNNEL</span>
+          <span className="settings-eyebrow">{t('settingsPage.secureTunnelName')}</span>
           <h3>{t('guidedTunnel.openGuide')}</h3>
           <p>{t('guidedTunnel.privacy')}</p>
         </div>

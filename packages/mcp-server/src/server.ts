@@ -37,6 +37,8 @@ export interface McpServerOptions {
   readonly activityTracker?: ActivityTracker;
   readonly profileProvider?: () => PermissionProfile;
   readonly authorizationModeProvider?: () => AuthorizationMode;
+  /** Optional runtime guard checked before every tool call. Return a message to fail closed. */
+  readonly invocationGuardProvider?: () => string | null | undefined;
   readonly allowAiDeleteProvider?: () => boolean;
   readonly destructivePolicyProvider?: () => DestructiveAutoApprovalPolicy;
   readonly activeWorkspaceScopeProvider?: () => WorkspaceScope | null | Promise<WorkspaceScope | null>;
@@ -81,6 +83,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.requestScope === undefined ? {} : { sessionId: options.requestScope.sessionId }),
     ...(options.profileProvider === undefined ? {} : { profileProvider: options.profileProvider }),
     ...(options.authorizationModeProvider === undefined ? {} : { authorizationModeProvider: options.authorizationModeProvider }),
+    ...(options.invocationGuardProvider === undefined ? {} : { invocationGuardProvider: options.invocationGuardProvider }),
     ...(options.allowAiDeleteProvider === undefined ? {} : { allowAiDeleteProvider: options.allowAiDeleteProvider }),
     ...(options.destructivePolicyProvider === undefined ? {} : { destructivePolicyProvider: options.destructivePolicyProvider }),
     ...(options.activeWorkspaceScopeProvider === undefined ? {} : { activeWorkspaceScopeProvider: options.activeWorkspaceScopeProvider }),
@@ -163,13 +166,28 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     syncRegisteredToolAvailability();
   });
   if (unsubscribeToolAvailability !== undefined) {
-    const closeServer = server.close.bind(server);
     let availabilitySubscriptionClosed = false;
+    const closeAvailabilitySubscription = (): void => {
+      if (availabilitySubscriptionClosed) return;
+      availabilitySubscriptionClosed = true;
+      unsubscribeToolAvailability();
+    };
+
+    // The modern HTTP SDK closes the underlying protocol server when a
+    // per-request exchange ends, but successful request paths may skip the
+    // product-level McpServer.close(). Release this shared-service listener at
+    // either lifecycle boundary so a completed request cannot retain its
+    // ToolRegistry and registered schemas.
+    const protocolServer = server.server;
+    const previousProtocolClose = protocolServer.onclose;
+    protocolServer.onclose = (): void => {
+      closeAvailabilitySubscription();
+      previousProtocolClose?.();
+    };
+
+    const closeServer = server.close.bind(server);
     server.close = async (): Promise<void> => {
-      if (!availabilitySubscriptionClosed) {
-        availabilitySubscriptionClosed = true;
-        unsubscribeToolAvailability();
-      }
+      closeAvailabilitySubscription();
       await closeServer();
     };
   }

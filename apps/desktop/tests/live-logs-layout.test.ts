@@ -76,8 +76,8 @@ describe('viewport-sized log and list layout', () => {
       incidentBusy: false, incidentClassification: null, incidentCapturedAt: null, incidentNotice: null, workspaces: [],
     }));
     expect(embedded).toContain('OAuth / Tunnel');
-    expect(embedded).toContain('Real-time OAuth session, Secure Tunnel transport, MCP activity, and process logs');
-    expect(embedded).not.toContain('Real-time tunnel, MCP activity, and process logs');
+    expect(embedded).toContain('See recent OAuth, Tunnel, tool, and running-task events to diagnose problems.');
+    expect(embedded).not.toContain('See recent Tunnel, MCP, and running-task events to diagnose problems.');
   });
 
   it('marks both embedded and pop-out viewers with dedicated fixed viewport containers', () => {

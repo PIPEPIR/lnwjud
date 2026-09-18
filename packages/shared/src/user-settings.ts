@@ -1,3 +1,5 @@
+import { parseDelimitedList } from './text-list.js';
+
 export const USER_SETTING_KEYS = Object.freeze({
   customPermissionProfile: 'custom_permission_profile',
   desktopFullBypassAll: 'desktop_full_bypass_all',
@@ -70,18 +72,7 @@ export function parseCloseBehavior(value: string | null | undefined): CloseBehav
 }
 
 export function parsePathList(value: string | null | undefined): readonly string[] {
-  if (value === null || value === undefined || value.trim().length === 0) return [];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const entry of value.split(/[;\r\n]+/)) {
-    const trimmed = entry.trim();
-    if (trimmed.length === 0) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(trimmed);
-  }
-  return result;
+  return parseDelimitedList(value, { caseInsensitive: true });
 }
 
 export function serializePathList(values: readonly string[]): string {

@@ -53,11 +53,15 @@
 
 ## Current published version: v5.2.2
 
-### What's new in v5.2.2
+## Current source version: v5.3.0
 
-- **Safer shutdown and updater handoff:** quit/install now waits for owned runtime cleanup, keeps failed shutdown retryable, and avoids renderer refresh races while an update is installing.
-- **Cross-platform updater/tray polish:** macOS and Linux updater paths use the correct install handoff, while tray icon handling is platform-aware across Windows, macOS, and Linux.
-- **Git status correctness without dashboard regressions:** correctness-sensitive Git status keeps full untracked-file semantics, while lightweight dashboard summaries stay bounded for large workspaces.
+Latest published release: **v5.2.2**. The download buttons above continue to point at the latest published release until v5.3.0 is actually released.
+
+### What's new in v5.3.0
+
+- **Issue #94 RAM leak fixed:** successful modern MCP requests now tear down their per-request `McpServer` lifecycle, unsubscribe `toolAvailabilityService` listeners, and release retained tool registries/schemas; pagination continuations are also bounded as secondary hardening.
+- **Crash evidence survives hard exits:** Desktop session heartbeats distinguish clean shutdown from abrupt termination. A recent unclean previous session is reported after restart only when stronger current failure evidence is absent. Local-only Crashpad evidence adds bounded crash-dump metadata plus per-process memory diagnostics, while a bounded 6-hour runtime trend samples memory, Electron process groups, CPU/event-loop pressure, active Node resources, retained log-buffer/dedupe counters, MCP activity/errors, and tool-availability listener counts once per minute.
+- **Electron 45 crash diagnostics:** Desktop v5.3.0 targets Electron `45.0.0-alpha.7` so the packaged Windows runtime includes `electron_wer.dll` in addition to local-only Crashpad/session diagnostics. Crash reports stay local and bounded; no automatic crash upload is enabled.
 
 ### Historical: What's new in v5.2.1
 

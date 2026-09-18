@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import type { McpApplicationServices } from './tools/tool-types.js';
+import { ContinuationStore } from './continuation-store.js';
 
 export interface FilePageRequest {
   readonly workspaceId?: string;
@@ -36,7 +37,7 @@ const MAX_PAGE_SIZE = 5_000;
 const MAX_RESPONSE_TARGET_BYTES = 8 * 1024 * 1024;
 
 export class FilePageEngine {
-  private readonly continuations = new Map<string, Continuation>();
+  private readonly continuations = new ContinuationStore<Continuation>();
 
   public constructor(
     private readonly services: McpApplicationServices,
@@ -56,9 +57,8 @@ export class FilePageEngine {
   }
 
   public async continue(token: string, pageSize?: number): Promise<Result<FilePageResult>> {
-    const continuation = this.continuations.get(token);
+    const continuation = this.continuations.take(token);
     if (continuation === undefined) return err({ code: 'INVALID_INPUT', message: 'File continuation token is invalid or expired', recoverable: false });
-    this.continuations.delete(token);
     const next = pageSize === undefined ? continuation.pageSize : pageSize;
     if (!Number.isInteger(next) || next < 1 || next > MAX_PAGE_SIZE) return err({ code: 'INVALID_INPUT', message: 'File pageSize is invalid', recoverable: false });
     return this.readAt({ ...continuation, pageSize: next });
