@@ -18,7 +18,6 @@ export interface NativeCrashDumpEntry {
 }
 
 export interface NativeCrashDumpMetadata {
-  readonly directory: string;
   readonly count: number;
   readonly dumps: readonly NativeCrashDumpEntry[];
 }
@@ -54,7 +53,7 @@ export function readNativeCrashDumpMetadata(dataPath: string, now = Date.now()):
     .sort((left, right) => right.modifiedMs - left.modifiedMs)
     .slice(0, MAX_RETAINED_DUMPS)
     .map((entry) => ({ fileName: path.relative(directory, entry.filePath), byteLength: entry.byteLength, modifiedAt: new Date(entry.modifiedMs).toISOString() }));
-  return { directory, count: dumps.length, dumps };
+  return { count: dumps.length, dumps };
 }
 
 export function pruneNativeCrashDumpsForDataPath(dataPath: string, now = Date.now()): void {

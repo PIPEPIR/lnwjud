@@ -26,6 +26,7 @@ describe('native crash diagnostics', () => {
     pruneNativeCrashDumps(directory, now);
     const metadata = readNativeCrashDumpMetadata(root);
     expect(metadata.count).toBe(20);
+    expect(metadata).not.toHaveProperty('directory');
     expect(metadata.dumps.some((dump) => dump.fileName === 'old.dmp')).toBe(false);
   });
 });

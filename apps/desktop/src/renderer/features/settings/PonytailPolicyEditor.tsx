@@ -34,7 +34,7 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
         icon="P"
         title={t('settingsPage.ponytailTitle')}
         subtitle={t('settingsPage.ponytailSubtitle')}
-        badge={t('settingsPage.ponytailEffectiveBadge', { mode: effectiveMode.toUpperCase() })}
+        badge={t('settingsPage.ponytailEffectiveBadge', { mode: modeLabel(t, effectiveMode) })}
       />
 
       <div className="setting-field max-field-width">
@@ -48,14 +48,14 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
             void props.onGlobalModeChange(event.target.value as PonytailMode).catch(() => undefined);
           }}
         >
-          {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
+          {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(t, mode)}</option>)}
         </select>
         <p className="hint">{t('userConfig.ponytailHint')}</p>
       </div>
 
       <details className="guided-tunnel-advanced ponytail-scope-overrides">
         <summary>
-          {t('settingsPage.ponytailOverridesOptional')} · {effectiveMode.toUpperCase()} · {policySourceLabel(t, effectiveSource)}
+          {t('settingsPage.ponytailOverridesOptional')} · {modeLabel(t, effectiveMode)} · {policySourceLabel(t, effectiveSource)}
         </summary>
         {context === null ? (
           <EmptyState>{t('settingsPage.ponytailSelectProject')}</EmptyState>
@@ -73,10 +73,10 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
                 }}
               >
                 <option value="inherit">{t('settingsPage.inheritGlobal')}</option>
-                {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
+                {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(t, mode)}</option>)}
               </select>
               <p className="hint">
-                {t('settingsPage.ponytailEffective')}: {context.effectiveWorkspaceMode.toUpperCase()} · {policySourceLabel(t, context.effectiveWorkspaceSource)}
+                {t('settingsPage.ponytailEffective')}: {modeLabel(t, context.effectiveWorkspaceMode)} · {policySourceLabel(t, context.effectiveWorkspaceSource)}
                 {context.workspaceMode === 'inherit' ? ` · ${t('settingsPage.ponytailInherited')}` : ''}
               </p>
             </div>
@@ -94,7 +94,7 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
                     <div className="ponytail-goal-copy">
                       <strong>{goal.goalKey}</strong>
                       <p className="hint">
-                        {t('settingsPage.ponytailEffective')}: {goal.effectiveMode.toUpperCase()} · {policySourceLabel(t, goal.effectiveSource)} · rev {goal.revision}
+                        {t('settingsPage.ponytailEffective')}: {modeLabel(t, goal.effectiveMode)} · {policySourceLabel(t, goal.effectiveSource)} · rev {goal.revision}
                         {goal.mode === 'inherit' ? ` · ${t('settingsPage.ponytailInherited')}` : ''}
                       </p>
                       {goal.editBlockedReason === null ? null : <p className="hint">{goalBlockedLabel(t, goal.editBlockedReason)}</p>}
@@ -109,7 +109,7 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
                       }}
                     >
                       <option value="inherit">{t('settingsPage.inheritWorkspace')}</option>
-                      {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
+                      {MODES.map((mode) => <option key={mode} value={mode}>{modeLabel(t, mode)}</option>)}
                     </select>
                   </div>
                 ))}
@@ -124,8 +124,14 @@ export function PonytailPolicyEditor(props: PonytailPolicyEditorProps): ReactEle
   );
 }
 
-function modeLabel(mode: PonytailMode): string {
-  return mode === 'off' ? 'Off' : mode.charAt(0).toUpperCase() + mode.slice(1);
+function modeLabel(t: Translator, mode: PonytailMode): string {
+  const keys = {
+    off: 'settingsPage.ponytailModeOff',
+    lite: 'settingsPage.ponytailModeLite',
+    full: 'settingsPage.ponytailModeFull',
+    ultra: 'settingsPage.ponytailModeUltra',
+  } as const;
+  return t(keys[mode]);
 }
 
 function policySourceLabel(t: Translator, source: PonytailPolicySource): string {
