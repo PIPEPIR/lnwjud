@@ -192,6 +192,58 @@ describe('durable goal MCP tools', () => {
     });
   });
 
+  it('loads workspace AGENTS.md on every run_goal invocation', async () => {
+    let instructionReads = 0;
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-agents', goalKey: 'agents-preflight', status: 'active', revision: 0, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-09-19T00:10:00.000Z', currentPhase: 'created',
+              plan: { steps: [] }, completedSteps: [], pendingSteps: [], nextAction: 'Follow project rules.', blockers: [], activeTaskIds: [], lastCheckpoint: null,
+            });
+          },
+        },
+        file: {
+          async readFile(_actor: unknown, workspaceId: string | undefined, request: { readonly path: string }) {
+            instructionReads += 1;
+            expect(workspaceId).toBe('workspace-1');
+            expect(request.path).toBe('AGENTS.md');
+            return ok({
+              path: 'AGENTS.md',
+              content: '# Repository agent instructions\nAlways follow the repository rules.\n',
+              startLine: 1,
+              endLine: 2,
+              encoding: 'utf8',
+              mimeType: 'text/plain',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const input = { workspaceId: 'workspace-1', goalKey: 'agents-preflight', objective: 'Update the project safely', scheduledContinuation: 'off' };
+    const first = await tool(context, 'run_goal').execute(input, new AbortController().signal);
+    const second = await tool(context, 'run_goal').execute(input, new AbortController().signal);
+
+    expect(instructionReads).toBe(2);
+    for (const result of [first, second]) {
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          projectInstructionsPreflight: {
+            status: 'loaded',
+            path: 'AGENTS.md',
+            content: expect.stringContaining('Repository agent instructions'),
+          },
+        },
+      });
+    }
+  });
+
   it('never treats a prepared reservation as a confirmed cloud successor on resume', async () => {
     const context = {
       actor,
