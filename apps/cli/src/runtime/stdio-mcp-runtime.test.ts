@@ -7,7 +7,7 @@ import { permissionProfiles } from '@lnwjud/permissions';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from '@lnwjud/capabilities';
 import { STDIO_ALLOWED_ROOTS_SETTING_KEY, STDIO_PERMISSION_PROFILE_SETTING_KEY, STDIO_STRICT_ROOTS_SETTING_KEY, UNRESTRICTED_SETTING_KEY, USER_SETTING_KEYS, serializeToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { createStdioMcpRuntime } from './stdio-mcp-runtime.js';
-import { sharedActivityLeaseDirectoryPath } from '@lnwjud/mcp-server';
+import { sharedActivityLeaseDirectoryPath, ToolRegistry } from '@lnwjud/mcp-server';
 
 const temporaryRoots: string[] = [];
 const TEST_CHECKPOINT_KEY = Buffer.alloc(32, 0x46).toString('base64');
@@ -75,10 +75,145 @@ describe('stdio MCP runtime', () => {
     try {
       expect(runtime.services.goals).toBeDefined();
       expect(runtime.services.scheduledContinuations).toBeDefined();
+      expect(runtime.services.automationFactory).toBeDefined();
     } finally {
       await runtime.close();
     }
   });
+
+  it('persists and completes a verified automation run across a STDIO runtime replacement without creating a schedule', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-automation-data-'));
+    const workspaceRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-automation-workspace-')));
+    temporaryRoots.push(dataPath, workspaceRoot);
+    const durableWorkspace = {
+      id: 'automation-workspace',
+      displayName: 'automation workspace',
+      rootPath: workspaceRoot,
+      realRootPath: workspaceRoot,
+      createdAt: '2026-09-20T00:00:00.000Z',
+    };
+    const seeded = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    await new SqliteWorkspaceRepository(seeded).insert(durableWorkspace);
+    seeded.close();
+
+    const first = createStdioMcpRuntime(dataPath, durableWorkspace, true, { fullBypassAll: true });
+    const started = await first.services.goals?.runGoal(first.actor, {
+      workspaceId: durableWorkspace.id,
+      goalKey: 'stdio-automation-restart',
+      objective: 'Complete one verified durable automation milestone.',
+      plan: { steps: [{ id: 'build', title: 'Build' }] },
+      leaseSeconds: 600,
+    });
+    expect(started).toMatchObject({ ok: true, value: { acquired: true, leaseToken: expect.any(String) } });
+    if (started === undefined || !started.ok || started.value.leaseToken === undefined) {
+      await first.close();
+      return;
+    }
+    const proof = {
+      goalId: started.value.goalId,
+      leaseToken: started.value.leaseToken,
+      leaseGeneration: started.value.leaseGeneration,
+    };
+    const options = {
+      authorizationModeProvider: () => 'full_bypass' as const,
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId: durableWorkspace.id, rootPath: workspaceRoot }),
+    };
+    const firstRegistry = new ToolRegistry(first.services, first.actor, options);
+    const created = await firstRegistry.invoke('automation_create', {
+      workspaceId: durableWorkspace.id,
+      goalId: started.value.goalId,
+      leaseToken: started.value.leaseToken,
+      goalLease: proof,
+      plan: {
+        milestones: [{
+          id: 'build', title: 'Build', goalStepId: 'build', dependsOn: [], provider: 'shell', role: 'blocking_job', cancelWithGoal: true,
+          dispatch: {
+            executable: process.execPath,
+            arguments: ['-e', 'process.exit(0)'],
+            cwd: workspaceRoot,
+            timeoutSeconds: 30,
+            maxOutputBytes: 16 * 1024,
+            includeStdout: false,
+            includeStderr: true,
+          },
+          verification: [{ id: 'exit', kind: 'command_exit', expectedExitCode: 0 }],
+        }],
+      },
+      userConfirmed: true,
+    });
+    expect(created.isError).not.toBe(true);
+    const runId = String(((created.structuredContent as { run?: { id?: unknown } } | undefined)?.run?.id));
+    expect(runId).not.toBe('undefined');
+    await first.close();
+
+    const replacement = createStdioMcpRuntime(dataPath, durableWorkspace, true, { fullBypassAll: true });
+    try {
+      const registry = new ToolRegistry(replacement.services, replacement.actor, options);
+      const restored = await registry.invoke('automation_status', { workspaceId: durableWorkspace.id, runId });
+      expect(restored.isError).not.toBe(true);
+      expect(restored.structuredContent).toMatchObject({ run: { id: runId, status: 'active', revision: 0 } });
+      const foreignRead = await new ToolRegistry(replacement.services, { clientId: 'foreign-client', clientName: 'foreign' })
+        .invoke('automation_status', { workspaceId: durableWorkspace.id, runId });
+      expect(foreignRead).toMatchObject({ isError: true, structuredContent: { error: { code: 'PROCESS_NOT_FOUND' } } });
+
+      let staleRevisionRejected = false;
+      for (let boundary = 0; boundary < 10; boundary += 1) {
+        const status = await registry.invoke('automation_status', { workspaceId: durableWorkspace.id, runId });
+        if (status.isError === true) throw new Error(JSON.stringify(status.structuredContent));
+        const snapshot = status.structuredContent as { run: { revision: number }; milestones: Array<{ status: string }> };
+        if (snapshot.milestones.every((milestone) => milestone.status === 'completed')) break;
+        const advanced = await registry.invoke('automation_run', {
+          workspaceId: durableWorkspace.id,
+          goalId: started.value.goalId,
+          runId,
+          leaseToken: started.value.leaseToken,
+          expectedRevision: snapshot.run.revision,
+          goalLease: proof,
+          userConfirmed: true,
+        });
+        if (advanced.isError === true) throw new Error(JSON.stringify(advanced.structuredContent));
+        if (!staleRevisionRejected) {
+          const stale = await registry.invoke('automation_run', {
+            workspaceId: durableWorkspace.id,
+            goalId: started.value.goalId,
+            runId,
+            leaseToken: started.value.leaseToken,
+            expectedRevision: snapshot.run.revision,
+            goalLease: proof,
+            userConfirmed: true,
+          });
+          expect(stale).toMatchObject({ isError: true, structuredContent: { error: { code: 'CONFLICT' } } });
+          staleRevisionRejected = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(staleRevisionRejected).toBe(true);
+
+      const verified = await registry.invoke('automation_status', { workspaceId: durableWorkspace.id, runId });
+      expect(verified.isError).not.toBe(true);
+      expect(verified.structuredContent).toMatchObject({ milestones: [{ status: 'completed' }] });
+      const revision = (verified.structuredContent as { run: { revision: number } }).run.revision;
+      const finalized = await registry.invoke('automation_finalize', {
+        workspaceId: durableWorkspace.id,
+        goalId: started.value.goalId,
+        runId,
+        leaseToken: started.value.leaseToken,
+        expectedRevision: revision,
+        goalLease: proof,
+        userConfirmed: true,
+      });
+      expect(finalized.isError).not.toBe(true);
+      expect(finalized.structuredContent).toMatchObject({
+        run: { run: { id: runId, status: 'completed' } }, goal: { status: 'completed' },
+      });
+    } finally {
+      await replacement.close();
+    }
+
+    const inspected = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    expect(inspected.connection.prepare('SELECT COUNT(*) AS count FROM goal_scheduled_continuations').get()).toEqual({ count: 0 });
+    inspected.close();
+  }, 30_000);
 
   it('observes persisted tool availability writes from another SQLite connection without restart or duplicate unrelated notifications', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-tool-availability-'));

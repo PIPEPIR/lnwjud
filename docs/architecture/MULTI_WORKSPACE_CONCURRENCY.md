@@ -6,8 +6,8 @@ Primary invariant: **one lnwjud installation can serve many concurrent AI sessio
 
 The dated phase evidence below preserves the catalog counts that were measured
 at each historical checkpoint (including the earlier 214/208 baseline). The
-current v5.3.1 runtime contract is 253 total definitions, 241 advertised by
-default, and all 253 when Codex delegation plus Agent Swarm is enabled; see the current catalog and
+current v5.4.0 runtime contract is 259 total definitions, 247 advertised by
+default, and all 259 when Codex delegation plus Agent Swarm is enabled; see the current catalog and
 release checklist for the authoritative release count.
 
 ## Goal
@@ -216,6 +216,34 @@ Do not let multiple sessions blindly write the same `upgrade-runtime.json`. Pref
 
 Use atomic temp-write + rename and bounded cleanup. Plugins/settings that are actually global should stay in their existing global stores instead of being copied into session files.
 
+### A11. Native automation is owned by actor, workspace, and root Goal
+
+An automation run is not a free-standing machine job. Its durable ownership key
+is:
+
+```text
+(ownerClientId, workspaceId, rootGoalId, automationRunId)
+```
+
+`automation_status` and `automation_events` require the matching actor and
+workspace. Create/run/control/finalize additionally require the exact current
+root Goal lease and revision compare-and-swap; a same MCP session or Full Bypass
+authorization is not ownership proof. `blocking_job` milestones participate in
+Goal liveness. `supporting_service` milestones remain observable but do not keep
+the Goal alive, and `cancelWithGoal` decides whether Goal cancellation owns their
+termination.
+
+The only implemented provider is `shell`. Launch recovery binds the exact
+durable task ID and request digest. A reserved dispatch may launch only after
+exact absence is proven; a found task is reattached, and an unknown result stays
+`dispatched_unresolved` and blocked. These tools are excluded from generic
+`tool_batch` so a batch cannot obscure lease, revision, recovery, or evidence
+boundaries.
+
+Automation never creates a scheduler entry. A rolling Goal continues through
+the one existing hourly recurring Native ChatGPT scheduled task, and automation
+adds only a bounded resume hint to that Goal's continuation state.
+
 ## Implementation phases
 
 | Phase | Status | Purpose |
@@ -228,6 +256,7 @@ Use atomic temp-write + rename and bounded cleanup. Plugins/settings that are ac
 | M5 | **complete** | Propagate workspace/session metadata through audit + Live Logs |
 | M6 | **complete** | Add workspace/session filters, scoped clear/export, UI badges/tabs |
 | M7 | **complete** | Concurrency/isolation acceptance, release gates, and repository-wide Full Verification complete |
+| M8 | **complete** | Bind native automation to actor/workspace/Goal ownership and fail-closed durable-shell recovery |
 
 ## Phase M1 — global MCP lifecycle
 

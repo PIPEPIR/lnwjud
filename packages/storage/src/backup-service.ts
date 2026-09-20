@@ -501,6 +501,7 @@ function sanitizeCrossHostDatabase(filename: string, context: CrossHostRestoreCo
     quarantineForeignWorkspaces(database, context, quarantinedItems);
     quarantineScheduledContinuations(database, context, quarantinedItems);
     quarantineGoalLeases(database, context, quarantinedItems);
+    quarantineAutomations(database, context, quarantinedItems);
     quarantineAgentSwarms(database, context, quarantinedItems);
     quarantineOpenMutationFences(database, context);
 
@@ -592,6 +593,49 @@ function quarantineGoalLeases(database: DatabaseSync, context: CrossHostRestoreC
   for (const row of rows) if (typeof row.id === 'string') {
     recordQuarantine(database, 'goal_lease', row.id, 'host_bound_goal_lease', null, context);
     quarantinedItems.push(`goal-lease:${row.id}`);
+  }
+}
+
+function quarantineAutomations(database: DatabaseSync, context: CrossHostRestoreContext, quarantinedItems: string[]): void {
+  if (!hasTable(database, 'automation_runs')
+    || !hasTable(database, 'automation_milestones')
+    || !hasTable(database, 'automation_attempts')
+    || !hasTable(database, 'automation_events')) return;
+  const liveStatuses = ['active', 'paused', 'blocked', 'completing'];
+  const rows = database.prepare(`SELECT id, status FROM automation_runs
+    WHERE status IN (${liveStatuses.map(() => '?').join(', ')}) ORDER BY created_at, id`)
+    .all(...liveStatuses) as unknown as Array<{ id?: unknown; status?: unknown }>;
+  if (rows.length === 0) return;
+  const updateRun = database.prepare(`UPDATE automation_runs
+    SET status = 'blocked', revision = revision + 1, updated_at = ? WHERE id = ?`);
+  const updateMilestones = database.prepare(`UPDATE automation_milestones
+    SET status = 'blocked', updated_at = ?
+    WHERE run_id = ? AND status IN ('ready','dispatching','running','verifying')`);
+  const updateAttempts = database.prepare(`UPDATE automation_attempts
+    SET dispatch_status = 'dispatched_unresolved', terminal_state = NULL, updated_at = ?
+    WHERE run_id = ? AND dispatch_status IN ('reserved','launched')`);
+  const nextSequence = database.prepare('SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence FROM automation_events WHERE run_id = ?');
+  const insertEvent = database.prepare(`INSERT INTO automation_events
+    (run_id, sequence, kind, milestone_id, attempt_id, payload_json, created_at)
+    VALUES (?, ?, 'cross_host_restore_quarantined', NULL, NULL, ?, ?)`);
+  for (const row of rows) {
+    if (typeof row.id !== 'string' || typeof row.status !== 'string') continue;
+    updateRun.run(context.restoredAt, row.id);
+    updateMilestones.run(context.restoredAt, row.id);
+    updateAttempts.run(context.restoredAt, row.id);
+    const sequenceRow = nextSequence.get(row.id) as { sequence?: unknown } | undefined;
+    const sequence = sequenceRow?.sequence;
+    if (typeof sequence !== 'number' || !Number.isInteger(sequence) || sequence < 0 || sequence > 4095) {
+      throw new Error(`Automation restore quarantine event sequence is invalid for ${row.id}`);
+    }
+    insertEvent.run(
+      row.id,
+      sequence,
+      JSON.stringify({ priorStatus: row.status, reason: 'cross_host_restore', hostCompatibility: 'cross_host' }),
+      context.restoredAt,
+    );
+    recordQuarantine(database, 'automation_run', row.id, 'host_bound_automation_runtime', null, context);
+    quarantinedItems.push(`automation:${row.id}`);
   }
 }
 

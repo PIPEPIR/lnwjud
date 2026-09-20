@@ -24,6 +24,7 @@ import {
   type ScheduledContinuationWorkerLivenessPort,
   type ScheduledTaskCancellationInstruction,
 } from '@lnwjud/domain';
+import type { StoredAutomationRun } from '@lnwjud/storage';
 import type { FileActor } from './file-service.js';
 import type { GoalSnapshot, RunGoalResult } from './goal-continuation-service.js';
 
@@ -143,6 +144,20 @@ export interface ClaimScheduledContinuationRequest {
   readonly leaseSeconds?: number;
 }
 
+export interface AutomationResumeHint {
+  readonly runId: string;
+  readonly revision: number;
+  readonly nextAction: 'advance' | 'finalize' | 'inspect_blocker';
+}
+
+export interface AutomationResumeLookupPort {
+  findActiveForGoal(
+    goalId: string,
+    ownerClientId: string,
+    workspaceId: string,
+  ): Result<StoredAutomationRun | undefined> | Promise<Result<StoredAutomationRun | undefined>>;
+}
+
 export type ClaimScheduledContinuationResult =
   | {
       readonly outcome: 'acquired';
@@ -165,6 +180,7 @@ export type ClaimScheduledContinuationResult =
       readonly leaseGeneration: number;
       readonly acquisition: 'normal' | 'expired_lease' | 'orphan_recovered';
       readonly runKey: string;
+      readonly automationResume?: AutomationResumeHint;
       readonly currentWakeMayReturn: true;
       readonly nextRequiredAction: 'continue_work_with_existing_recurring_watchdog';
     }
@@ -272,6 +288,7 @@ export type ExpediteScheduledContinuationResult =
 export interface ScheduledContinuationServiceOptions {
   readonly now?: () => Date;
   readonly workerLiveness?: ScheduledContinuationWorkerLivenessPort;
+  readonly automationResumes?: AutomationResumeLookupPort;
   /** IANA zone used in native ChatGPT VEVENT schedules. Defaults to the machine's resolved zone. */
   readonly hostTimeZone?: string;
 }
@@ -280,6 +297,7 @@ export class ScheduledContinuationService {
   private readonly now: () => Date;
   private readonly workerLiveness: ScheduledContinuationWorkerLivenessPort;
   private readonly hostTimeZone: string;
+  private readonly automationResumes: AutomationResumeLookupPort | undefined;
 
   public constructor(
     private readonly goals: ScheduledContinuationRepository & {
@@ -289,6 +307,7 @@ export class ScheduledContinuationService {
   ) {
     this.now = options.now ?? ((): Date => new Date());
     this.hostTimeZone = normalizeHostTimeZone(options.hostTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+    this.automationResumes = options.automationResumes;
     this.workerLiveness = options.workerLiveness ?? {
       observe: async (goalId, trackedTasks): ReturnType<ScheduledContinuationWorkerLivenessPort['observe']> => {
         const goal = await this.goals.getById(goalId);
@@ -613,6 +632,11 @@ export class ScheduledContinuationService {
         });
       }
       if (claimed.outcome === 'recurring_acquired') {
+        const automationResume = await this.automationResumeHint(
+          claimed.goal.id,
+          claimed.goal.ownerClientId,
+          claimed.goal.workspaceId,
+        );
         return ok({
           outcome: 'recurring_acquired',
           continuation,
@@ -621,6 +645,7 @@ export class ScheduledContinuationService {
           leaseGeneration: claimed.goal.leaseGeneration,
           acquisition: claimed.acquisition,
           runKey: claimed.runKey,
+          ...(automationResume === undefined ? {} : { automationResume }),
           currentWakeMayReturn: true,
           nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         });
@@ -716,6 +741,33 @@ export class ScheduledContinuationService {
       });
     } catch (error: unknown) {
       return mapError(error);
+    }
+  }
+
+  private async automationResumeHint(
+    goalId: string,
+    ownerClientId: string,
+    workspaceId: string,
+  ): Promise<AutomationResumeHint | undefined> {
+    if (this.automationResumes === undefined) return undefined;
+    try {
+      const active = await this.automationResumes.findActiveForGoal(goalId, ownerClientId, workspaceId);
+      if (!active.ok || active.value === undefined) return undefined;
+      const stored = active.value;
+      if (stored.run.goalId !== goalId
+        || stored.run.ownerClientId !== ownerClientId
+        || stored.run.workspaceId !== workspaceId
+        || stored.run.status === 'completed'
+        || stored.run.status === 'cancelled'
+        || stored.run.status === 'paused') return undefined;
+      const nextAction = stored.run.status === 'blocked' || stored.run.status === 'failed'
+        ? 'inspect_blocker' as const
+        : stored.run.status === 'completing' || stored.milestones.every((milestone) => milestone.status === 'completed')
+          ? 'finalize' as const
+          : 'advance' as const;
+      return { runId: stored.run.id, revision: stored.run.revision, nextAction };
+    } catch {
+      return undefined;
     }
   }
 

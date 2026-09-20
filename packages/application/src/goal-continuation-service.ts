@@ -109,6 +109,11 @@ export interface GetGoalRequest {
   readonly goalKey?: string;
 }
 
+export interface ValidateGoalLeaseRequest {
+  readonly goalId: string;
+  readonly leaseToken: string;
+}
+
 export interface CheckpointGoalRequest {
   readonly goalId: string;
   readonly leaseToken: string;
@@ -460,6 +465,25 @@ export class GoalContinuationService {
       return ok(pendingScheduledTaskCleanup === undefined
         ? snapshot
         : { ...snapshot, pendingScheduledTaskCleanup });
+    } catch (error: unknown) {
+      return this.mapError(error);
+    }
+  }
+
+  /**
+   * Validate the current session-bound lease without renewing or mutating it.
+   * Application services use this as the single ownership fence before a
+   * goal-relative mutation; trusted host authorization is intentionally not
+   * part of this check.
+   */
+  public async validateGoalLease(actor: FileActor, request: ValidateGoalLeaseRequest): Promise<Result<GoalSnapshot>> {
+    try {
+      const goalId = requiredBounded(request.goalId, 'goalId', 128);
+      const current = await this.goals.getById(goalId);
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      assertLeaseSnapshot(current, actor, request.leaseToken, this.now().toISOString());
+      return ok(toSnapshot(current));
     } catch (error: unknown) {
       return this.mapError(error);
     }

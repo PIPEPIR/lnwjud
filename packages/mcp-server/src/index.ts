@@ -12,6 +12,7 @@ export * from './server.js';
 export * from './shared-activity-snapshot.js';
 export * from './stdio.js';
 export * from './tool-registry.js';
+export * from './automation-runtime-adapter.js';
 export * from './tool-delivery-contract.js';
 export * from './mutation-policy.js';
 export * from './plugin-sdk.js';

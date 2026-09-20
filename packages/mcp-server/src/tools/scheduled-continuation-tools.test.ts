@@ -127,6 +127,7 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('recurring_acquired');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('automationResume');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('never create a successor');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('never consume the native task');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal cleanup is pending');

@@ -493,7 +493,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <SettingsCardHeading icon="↻" title={t('settingsPage.factoryResetTitle')} subtitle={t('settingsPage.factoryResetSubtitle')} badge="RESET" />
               <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('settingsPage.factoryResetWarning')}</StatusMessage>
               {factoryResetError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{factoryResetError}</StatusMessage>}
-              <div className="inline-actions">
+              <div className="inline-actions factory-reset-actions">
                 <button type="button" disabled={factoryResetBusy} onClick={() => { void factoryReset(); }}>
                   {factoryResetBusy ? t('settingsPage.factoryResetWorking') : t('settingsPage.factoryResetButton')}
                 </button>

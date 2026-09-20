@@ -403,12 +403,30 @@ export const ECC_TOOL_RUNTIME_FIXTURES = {
   ecc_memory_doctor: service({ workspaceId: eccWorkspaceId }, 'workspaceInfo.info'),
 } as const satisfies Readonly<Record<string, ToolRuntimeFixture>>;
 
+const automationPlan = {
+  milestones: [{
+    id: 'smoke', title: 'Smoke automation', goalStepId: 'smoke', dependsOn: [], provider: 'shell', role: 'blocking_job', cancelWithGoal: true,
+    dispatch: { executable: 'node', arguments: ['--version'], cwd: 'E:\\project', timeoutSeconds: 60, maxOutputBytes: 65_536, includeStdout: false, includeStderr: true },
+    verification: [{ id: 'exit', kind: 'command_exit', expectedExitCode: 0 }],
+  }],
+} as const;
+
+export const NATIVE_AUTOMATION_TOOL_RUNTIME_FIXTURES = {
+  automation_create: service({ workspaceId, goalId: 'goal-1', leaseToken: 'lease-token', plan: automationPlan }, 'automation.createRun'),
+  automation_status: service({ workspaceId, runId: 'automation-run-1' }, 'automation.status'),
+  automation_events: service({ workspaceId, runId: 'automation-run-1' }, 'automation.events'),
+  automation_run: service({ workspaceId, goalId: 'goal-1', runId: 'automation-run-1', leaseToken: 'lease-token', expectedRevision: 0 }, 'automation.advance'),
+  automation_control: service({ workspaceId, goalId: 'goal-1', runId: 'automation-run-1', leaseToken: 'lease-token', expectedRevision: 0, action: 'pause' }, 'automation.pause'),
+  automation_finalize: service({ workspaceId, goalId: 'goal-1', runId: 'automation-run-1', leaseToken: 'lease-token', expectedRevision: 0 }, 'automation.finalize'),
+} as const satisfies Readonly<Record<string, ToolRuntimeFixture>>;
+
 export const TOOL_RUNTIME_FIXTURES: Readonly<Record<string, ToolRuntimeFixture>> = Object.freeze({
   ...CORE_TOOL_RUNTIME_FIXTURES,
   ...PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES,
   ...PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES,
   ...PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES,
   ...ECC_TOOL_RUNTIME_FIXTURES,
+  ...NATIVE_AUTOMATION_TOOL_RUNTIME_FIXTURES,
 });
 
 export const CORE_TOOL_SMOKE_INPUTS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = Object.freeze(

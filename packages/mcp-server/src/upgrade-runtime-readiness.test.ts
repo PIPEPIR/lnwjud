@@ -4,6 +4,7 @@ import { ok } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
+import { SPECIALIZED_RUNTIME_TOOL_NAMES } from './tools/upgrade-tools.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 const actor: FileActor = { clientId: 'readiness-test', clientName: 'readiness-test' };
@@ -69,7 +70,7 @@ describe('upgrade runtime readiness facades', () => {
     const missingReadyCases = UPGRADE_TOOL_CATALOG
       .filter((entry) => (entry.availability ?? 'ready') === 'ready')
       .map((entry) => entry.name)
-      .filter((name) => !explicitCases.has(name))
+      .filter((name) => !explicitCases.has(name) && !SPECIALIZED_RUNTIME_TOOL_NAMES.has(name))
       .sort();
     expect(missingReadyCases).toEqual([]);
   });

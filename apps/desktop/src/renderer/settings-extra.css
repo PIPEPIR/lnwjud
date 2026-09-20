@@ -180,6 +180,10 @@
   pointer-events: none;
 }
 
+.factory-reset-actions {
+  margin-top: 12px;
+}
+
 .settings-card-heading {
   align-items: center;
   margin-bottom: 16px;

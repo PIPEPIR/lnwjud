@@ -110,6 +110,12 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       if (method === 'result') return { swarmId: '00000000-0000-4000-8000-000000000001', taskId: 'inspect', state: 'completed', text: '', eof: true, outputTruncated: false };
       return { swarmId: '00000000-0000-4000-8000-000000000001', state: method === 'cancel' ? 'cancelled' : 'running', tasks: [] };
     }),
+    automation: serviceProxy('automation', calls, (method) => {
+      if (method === 'events') return { events: [] };
+      if (method === 'advance') return { boundary: 'idle', run: { run: { id: 'automation-run-1', status: 'active', revision: 1 } } };
+      if (method === 'finalize') return { run: { run: { id: 'automation-run-1', status: 'completed', revision: 2 } }, goal: { goalId: 'goal-1', status: 'completed' } };
+      return { run: { id: 'automation-run-1', status: method === 'cancel' ? 'cancelled' : 'active', revision: 1 } };
+    }),
     goals: serviceProxy('goals', calls, (method) => {
       const goal = {
         goalId: 'goal-1', goalKey: 'smoke-goal', workspaceId: 'workspace-1', objective: 'Smoke durable goal contract',

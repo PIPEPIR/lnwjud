@@ -113,6 +113,31 @@ describe('SqliteBackupService', { timeout: 30_000 }, () => {
         'auto', 'local', '2026-08-02T00:00:00.000Z', 'native-task-1', 'fingerprint', 0,
         '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')
     `).run();
+    database.connection.prepare(`
+      INSERT INTO automation_runs (id, goal_id, workspace_id, owner_client_id, status, revision, created_at, updated_at)
+      VALUES ('foreign-run', 'foreign-goal', 'foreign-workspace', 'client', 'active', 0,
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')
+    `).run();
+    database.connection.prepare(`
+      INSERT INTO automation_milestones (
+        run_id, milestone_id, position, title, goal_step_id, depends_on_json, provider, role, cancel_with_goal,
+        dispatch_json, dispatch_digest, verification_json, status, attempt_count, created_at, updated_at
+      ) VALUES ('foreign-run', 'build', 0, 'Build', 'build', '[]', 'shell', 'blocking_job', 1,
+        '{"executable":"node","arguments":["--version"],"cwd":"C:\\\\Users\\\\alice\\\\project","timeoutSeconds":60,"maxOutputBytes":1024,"includeStdout":true,"includeStderr":true}',
+        ?, '[{"id":"exit","kind":"command_exit","expectedExitCode":0}]', 'running', 1,
+        '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')
+    `).run('a'.repeat(64));
+    database.connection.prepare(`
+      INSERT INTO automation_attempts (
+        id, run_id, milestone_id, ordinal, provider, dispatch_status, durable_task_id, request_digest,
+        evidence_json, terminal_state, created_at, updated_at
+      ) VALUES ('foreign-attempt', 'foreign-run', 'build', 1, 'shell', 'launched', 'foreign-task', ?,
+        '[]', NULL, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')
+    `).run('b'.repeat(64));
+    database.connection.prepare(`
+      INSERT INTO automation_events (run_id, sequence, kind, milestone_id, attempt_id, payload_json, created_at)
+      VALUES ('foreign-run', 0, 'run_created', NULL, NULL, '{}', '2026-08-01T00:00:00.000Z')
+    `).run();
     expect(database.connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'goal_scheduled%'").all()).toEqual([
       { name: 'goal_scheduled_continuations' },
       { name: 'goal_scheduled_continuation_runs' },
@@ -130,7 +155,13 @@ describe('SqliteBackupService', { timeout: 30_000 }, () => {
       applied: true,
       backupId: snapshot.id,
       crossHost: true,
-      quarantinedItems: expect.arrayContaining(['workspace:foreign-workspace', 'setting:pdf_provider_path', 'setting:secret_receipt', 'continuation:foreign-continuation']),
+      quarantinedItems: expect.arrayContaining([
+        'workspace:foreign-workspace',
+        'setting:pdf_provider_path',
+        'setting:secret_receipt',
+        'continuation:foreign-continuation',
+        'automation:foreign-run',
+      ]),
     });
 
     const restored = new SqliteDatabase(databaseFile);
@@ -141,6 +172,14 @@ describe('SqliteBackupService', { timeout: 30_000 }, () => {
     expect(restored.connection.prepare('SELECT value FROM settings WHERE key = ?').get('pdf_provider_path')).toBeUndefined();
     expect(restored.connection.prepare('SELECT value FROM settings WHERE key = ?').get('secret_receipt')).toBeUndefined();
     expect(restored.connection.prepare('SELECT status, native_task_id FROM goal_scheduled_continuations WHERE id = ?').get('foreign-continuation')).toMatchObject({ status: 'cancelled', native_task_id: null });
+    expect(restored.connection.prepare('SELECT status, revision FROM automation_runs WHERE id = ?').get('foreign-run'))
+      .toEqual({ status: 'blocked', revision: 1 });
+    expect(restored.connection.prepare('SELECT status FROM automation_milestones WHERE run_id = ?').get('foreign-run'))
+      .toEqual({ status: 'blocked' });
+    expect(restored.connection.prepare('SELECT dispatch_status, terminal_state FROM automation_attempts WHERE run_id = ?').get('foreign-run'))
+      .toEqual({ dispatch_status: 'dispatched_unresolved', terminal_state: null });
+    expect(restored.connection.prepare('SELECT sequence, kind FROM automation_events WHERE run_id = ? ORDER BY sequence').all('foreign-run'))
+      .toEqual([{ sequence: 0, kind: 'run_created' }, { sequence: 1, kind: 'cross_host_restore_quarantined' }]);
     const notice = restored.connection.prepare('SELECT value FROM settings WHERE key = ?').get('cross_host_restore_notice') as { value?: string } | undefined;
     expect(notice?.value).toContain(snapshot.id);
     expect(restored.connection.prepare('SELECT COUNT(*) AS count FROM restore_quarantine').get()).toMatchObject({ count: expect.any(Number) });

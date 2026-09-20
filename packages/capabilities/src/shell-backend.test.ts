@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ok, type Result } from '@lnwjud/domain';
-import { ShellCapabilityBackend } from './shell-backend.js';
+import { automationShellRequestDigest, ok, type Result } from '@lnwjud/domain';
+import { ShellCapabilityBackend, withAutomationShellDispatchContext } from './shell-backend.js';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from './task-ownership.js';
 
 const temporaryRoots: string[] = [];
@@ -18,6 +18,122 @@ afterEach(async () => {
 });
 
 describe('ShellCapabilityBackend', () => {
+  it('rejects a public run request that tries to select a reserved task ID', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-public-id-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    await expect(backend.execute({
+      operation: 'run',
+      task_id: 'automation-forged',
+      executable: process.execPath,
+      arguments: ['--version'],
+      cwd: root,
+      execution: 'background',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
+  it('launches a reserved automation task exactly once and fails closed on digest, owner, and legacy collisions', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-automation-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const ownerMetadata = {
+      [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'client-a', sessionId: 'session-a', workspaceId: 'workspace-a' },
+    };
+    const dispatch = {
+      executable: process.execPath,
+      arguments: ['-e', "setTimeout(() => process.stdout.write('once'), 50)"],
+      cwd: root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      windowsVerbatimArguments: false,
+    };
+    const taskId = 'automation-reserved-task';
+    const requestDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch });
+    const context = {
+      runId: 'run-a', milestoneId: 'build', attemptId: 'attempt-a', taskId, requestDigest,
+      goalId: 'goal-a', workspaceId: 'workspace-a', windowsVerbatimArguments: dispatch.windowsVerbatimArguments,
+    };
+    const input = withAutomationShellDispatchContext({
+      operation: 'run', executable: dispatch.executable, arguments: dispatch.arguments, cwd: dispatch.cwd,
+      execution: 'background', timeout_seconds: dispatch.timeoutSeconds, max_output_bytes: dispatch.maxOutputBytes,
+      include_stdout: dispatch.includeStdout, include_stderr: dispatch.includeStderr, userConfirmed: true, metadata: ownerMetadata,
+    }, context);
+
+    const first = await backend.execute(input);
+    expect(first).toMatchObject({ ok: true, value: { task_id: taskId, durable: true } });
+    if (!first.ok) return;
+    const repeated = await backend.execute(input);
+    expect(repeated).toMatchObject({ ok: true, value: { task_id: taskId, started_at: first.value.started_at } });
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', taskId, requestDigest))
+      .resolves.toMatchObject({ ok: true, value: { task_id: taskId } });
+    await expect(backend.statusForAutomation('client-b', 'workspace-a', taskId, requestDigest))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', taskId, 'f'.repeat(64)))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    const changedDispatch = { ...dispatch, arguments: ['--version'] };
+    const changedDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch: changedDispatch });
+    const forgedSameDigest = withAutomationShellDispatchContext({
+      operation: 'run', executable: changedDispatch.executable, arguments: changedDispatch.arguments, cwd: changedDispatch.cwd,
+      execution: 'background', timeout_seconds: changedDispatch.timeoutSeconds, max_output_bytes: changedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, context);
+    await expect(backend.execute(forgedSameDigest)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    const collision = withAutomationShellDispatchContext({
+      operation: 'run', executable: changedDispatch.executable, arguments: changedDispatch.arguments, cwd: changedDispatch.cwd,
+      execution: 'background', timeout_seconds: changedDispatch.timeoutSeconds, max_output_bytes: changedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, { ...context, requestDigest: changedDigest });
+    await expect(backend.execute(collision)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    const mismatchedTaskId = 'automation-verbatim-mismatch';
+    const mismatchedDispatch = { ...dispatch, windowsVerbatimArguments: true };
+    const mismatchedDigest = automationShellRequestDigest({
+      taskId: mismatchedTaskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch: mismatchedDispatch,
+    });
+    const mismatchedMode = withAutomationShellDispatchContext({
+      operation: 'run', executable: mismatchedDispatch.executable, arguments: mismatchedDispatch.arguments, cwd: mismatchedDispatch.cwd,
+      execution: 'background', timeout_seconds: mismatchedDispatch.timeoutSeconds, max_output_bytes: mismatchedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, {
+      ...context,
+      taskId: mismatchedTaskId,
+      requestDigest: mismatchedDigest,
+      windowsVerbatimArguments: true,
+    });
+    await expect(backend.execute(mismatchedMode)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'CONFLICT', message: expect.stringContaining('Windows argument mode') },
+    });
+
+    await expect(backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5, metadata: ownerMetadata }))
+      .resolves.toMatchObject({ ok: true, value: { state: 'completed', stdout: 'once' } });
+
+    const legacyTaskId = 'legacy-no-digest';
+    const legacyDirectory = path.join(taskStateDirectory, legacyTaskId);
+    await mkdir(legacyDirectory, { recursive: true });
+    await writeFile(path.join(legacyDirectory, 'task.json'), JSON.stringify({
+      version: 1,
+      task_id: legacyTaskId,
+      state: 'completed',
+      started_at: '2026-09-20T00:00:00.000Z',
+      finished_at: '2026-09-20T00:00:01.000Z',
+      exit_code: 0,
+      include_stdout: false,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: '2026-09-20T00:01:00.000Z',
+      owner_client_id: 'client-a',
+      owner_session_id: 'session-a',
+      owner_workspace_id: 'workspace-a',
+    }), 'utf8');
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', legacyTaskId, requestDigest))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  }, 20_000);
+
   it.each([
     ['ordinary executable', process.execPath, ['--version']],
     ['PowerShell encoded command', 'pwsh.exe', ['-EncodedCommand', 'VwByAGkAdABlAC0ATwB1AHQAcAB1AHQA']],
@@ -672,4 +788,57 @@ describe('ShellCapabilityBackend unrestricted', () => {
     await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
       .resolves.toMatchObject({ ok: true, value: { matched: true } });
   }, 15_000);
+
+  it('paginates durable history before in-memory tasks and rejects malformed cursors', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-pages-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const durable = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('durable')"],
+      cwd: root,
+      execution: 'background',
+      timeout_seconds: 30,
+      userConfirmed: true,
+    });
+    expect(durable).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
+    if (!durable.ok) return;
+    const durableTaskId = String(durable.value.task_id);
+    await expect(backend.execute({ operation: 'wait', task_id: durableTaskId, timeout_seconds: 5 }))
+      .resolves.toMatchObject({ ok: true, value: { state: 'completed' } });
+
+    const memory = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('memory')"],
+      cwd: root,
+      execution: 'foreground',
+      timeout_seconds: 30,
+      userConfirmed: true,
+    });
+    expect(memory).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'completed' } });
+    if (!memory.ok) return;
+    const memoryTaskId = String(memory.value.task_id);
+
+    const first = await backend.execute({ operation: 'list', limit: 1 });
+    expect(first).toMatchObject({
+      ok: true,
+      value: { tasks: [{ task_id: durableTaskId }], next_cursor: expect.any(String) },
+    });
+    if (!first.ok) return;
+    const second = await backend.execute({ operation: 'list', limit: 1, cursor: String(first.value.next_cursor) });
+    expect(second).toMatchObject({ ok: true, value: { tasks: [{ task_id: memoryTaskId }] } });
+    await expect(backend.execute({ operation: 'list', limit: 1, cursor: 'malformed' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT' },
+    });
+    await expect(backend.execute({ operation: 'list' })).resolves.toMatchObject({
+      ok: true,
+      value: { tasks: expect.arrayContaining([
+        expect.objectContaining({ task_id: durableTaskId }),
+        expect.objectContaining({ task_id: memoryTaskId }),
+      ]) },
+    });
+  }, 20_000);
 });

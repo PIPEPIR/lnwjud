@@ -337,6 +337,119 @@ describe('durable shell background tasks', () => {
     if (launched.ok) await store.wait('new-task', 5, undefined, owner);
   }, 15_000);
 
+  it('uses the persisted active index on warm launch without rescanning terminal task sidecars', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-warm-index-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const owner = { clientId: 'chatgpt', sessionId: 'session-a', workspaceId: 'workspace-a' };
+    const request = {
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('ok')"],
+      cwd: root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      owner,
+    } as const;
+    const terminalSidecars = new Set<string>();
+    await Promise.all(Array.from({ length: 64 }, async (_, index) => {
+      const taskId = `historical-${String(index).padStart(3, '0')}`;
+      const taskDirectory = path.join(taskStateDirectory, taskId);
+      await mkdir(taskDirectory, { recursive: true });
+      const startedAt = new Date(Date.now() - 10_000 - index).toISOString();
+      await writeFile(path.join(taskDirectory, 'task.json'), JSON.stringify({
+        version: 1,
+        task_id: taskId,
+        state: 'completed',
+        started_at: startedAt,
+        finished_at: new Date(Date.now() - 5_000 - index).toISOString(),
+        exit_code: 0,
+        include_stdout: false,
+        include_stderr: false,
+        max_output_bytes: 1024,
+        deadline_at: new Date(Date.now() + 60_000).toISOString(),
+      }), 'utf8');
+      terminalSidecars.add(path.join(taskDirectory, 'task.json'));
+      terminalSidecars.add(path.join(taskDirectory, 'worker.pid'));
+      terminalSidecars.add(path.join(taskDirectory, 'worker.started'));
+    }));
+
+    const firstStore = new DurableShellTaskStore(taskStateDirectory);
+    const first = await firstStore.launch({ taskId: 'first-terminal', ...request });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await expect(firstStore.wait('first-terminal', 5, undefined, owner)).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'completed' },
+    });
+
+    const terminalDirectory = path.join(taskStateDirectory, 'first-terminal');
+    terminalSidecars.add(path.join(terminalDirectory, 'task.json'));
+    terminalSidecars.add(path.join(terminalDirectory, 'worker.pid'));
+    terminalSidecars.add(path.join(terminalDirectory, 'worker.started'));
+    vi.mocked(readFile).mockClear();
+
+    const replacementStore = new DurableShellTaskStore(taskStateDirectory);
+    const second = await replacementStore.launch({ taskId: 'second-running', ...request });
+    expect(second.ok).toBe(true);
+    const terminalReads = vi.mocked(readFile).mock.calls.filter(
+      ([filename]) => terminalSidecars.has(String(filename)),
+    );
+    expect(terminalReads).toEqual([]);
+
+    if (second.ok) await replacementStore.wait('second-running', 5, undefined, owner);
+  }, 20_000);
+
+  it('hydrates only one owner-scoped journal page instead of all durable histories', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-page-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const ownerA = { clientId: 'chatgpt', sessionId: 'session-a', workspaceId: 'workspace-a' };
+    await Promise.all(Array.from({ length: 20 }, async (_, offset) => {
+      const ordinal = offset + 1;
+      const taskId = `history-${String(ordinal).padStart(2, '0')}`;
+      const taskDirectory = path.join(taskStateDirectory, taskId);
+      await mkdir(taskDirectory, { recursive: true });
+      await writeFile(path.join(taskDirectory, 'task.json'), JSON.stringify({
+        version: 1,
+        task_id: taskId,
+        state: 'completed',
+        started_at: `2026-09-20T10:00:${String(ordinal).padStart(2, '0')}.000Z`,
+        finished_at: `2026-09-20T10:01:${String(ordinal).padStart(2, '0')}.000Z`,
+        exit_code: 0,
+        include_stdout: false,
+        include_stderr: false,
+        max_output_bytes: 1024,
+        deadline_at: '2026-09-20T11:00:00.000Z',
+        owner_client_id: ordinal % 2 === 0 ? 'other' : ownerA.clientId,
+        owner_session_id: ordinal % 2 === 0 ? 'session-b' : ownerA.sessionId,
+        owner_workspace_id: ownerA.workspaceId,
+      }), 'utf8');
+    }));
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const first = await store.listPage(ownerA, 3);
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        tasks: [{ task_id: 'history-19' }, { task_id: 'history-17' }, { task_id: 'history-15' }],
+        nextCursor: expect.any(String),
+      },
+    });
+    if (!first.ok || first.value.nextCursor === undefined) return;
+
+    vi.mocked(readFile).mockClear();
+    const second = await store.listPage(ownerA, 3, first.value.nextCursor);
+    expect(second).toMatchObject({
+      ok: true,
+      value: { tasks: [{ task_id: 'history-13' }, { task_id: 'history-11' }, { task_id: 'history-09' }] },
+    });
+    const metadataReads = vi.mocked(readFile).mock.calls.filter(
+      ([filename]) => String(filename).endsWith(`${path.sep}task.json`),
+    );
+    expect(metadataReads).toHaveLength(3);
+  });
+
   it('lists durable task metadata without hydrating historical output', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-list-memory-'));
     temporaryRoots.push(root);

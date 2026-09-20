@@ -3,6 +3,12 @@ import type { CapabilityService, CapabilityToolName } from './index.js';
 
 export interface CapabilityBackend {
   execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
+  statusForAutomation?(
+    ownerClientId: string,
+    workspaceId: string,
+    taskId: string,
+    requestDigest: string,
+  ): Promise<Result<unknown>>;
 }
 
 export interface LocalCapabilityBackends {
@@ -37,6 +43,18 @@ export class LocalCapabilityService implements CapabilityService {
     return backend === undefined
       ? Promise.resolve(err(appError('INVALID_INPUT', 'Capability tool is not supported')))
       : backend.execute(input, signal, authorization);
+  }
+
+  public observeAutomationShell(
+    ownerClientId: string,
+    workspaceId: string,
+    taskId: string,
+    requestDigest: string,
+  ): Promise<Result<unknown>> {
+    const observe = this.backends.shell.statusForAutomation;
+    return observe === undefined
+      ? Promise.resolve(err(appError('INTERNAL_ERROR', 'Automation shell observation is unavailable', true)))
+      : observe.call(this.backends.shell, ownerClientId, workspaceId, taskId, requestDigest);
   }
 
   private backendFor(tool: CapabilityToolName): CapabilityBackend | undefined {

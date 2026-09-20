@@ -1,5 +1,6 @@
-import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
+import { defineTool, missingService, type McpInternalInvocationContext, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 import { appError, err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
+import { withAutomationShellDispatchContext } from '@lnwjud/capabilities';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS } from '@lnwjud/shared';
 import { SetOfMarksObservationStore, SetOfMarksService } from '../set-of-marks-service.js';
 import { ComputerUseService } from '../computer-use-service.js';
@@ -53,6 +54,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     input: unknown,
     signal?: AbortSignal,
     authorization?: InvocationAuthorization,
+    internal?: McpInternalInvocationContext,
   ): Promise<Result<unknown>> => {
     if (context.services.capabilities === undefined) return Promise.resolve(missingService());
     let normalized = tool === 'shell' || tool === 'wsl_exec'
@@ -73,7 +75,10 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     const owned = tool === 'shell' || tool === 'wsl_exec'
       ? withCapabilityOwnerMetadata(normalized, context.actor)
       : normalized;
-    const result = await context.services.capabilities.execute(tool, owned, signal, authorization);
+    const internalized = tool === 'shell' && internal?.automationDispatch !== undefined
+      ? withAutomationShellDispatchContext(owned, internal.automationDispatch)
+      : owned;
+    const result = await context.services.capabilities.execute(tool, internalized, signal, authorization);
     if (!result.ok) return withReplacementRecoveryDetails(result, replacementBackup);
     if (replacementBackup === undefined) return result;
     const value = isRecord(result.value) ? result.value : { result: result.value };
@@ -94,7 +99,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: shellCapabilitySchema,
       execution: { taskSupport: 'optional' },
-      handler: async (input, signal, authorization) => execute('shell', input, signal, authorization),
+      handler: async (input, signal, authorization, internal) => execute('shell', input, signal, authorization, internal),
     }),
     defineTool({
       name: 'dom_cdp',

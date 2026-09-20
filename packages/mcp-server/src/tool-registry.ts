@@ -8,9 +8,16 @@ import {
   type InvocationAuthorization,
   type InvocationAuthorizationMode,
   type InvocationAuthorizationSource,
+  type Result,
 } from '@lnwjud/domain';
 import { z } from 'zod';
-import { sanitizeException, type DiagnosticLogger, type FileActor } from '@lnwjud/application';
+import {
+  sanitizeException,
+  type AutomationDispatchContext,
+  type AutomationDispatchRequest,
+  type DiagnosticLogger,
+  type FileActor,
+} from '@lnwjud/application';
 import { CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY } from '@lnwjud/capabilities';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import {
@@ -45,7 +52,9 @@ import {
 } from './ponytail-runtime.js';
 import { inspectMutationOperation, permissionLevelForMutationDecision, requiresMutationConfirmation, type MutationPolicyDecision } from './mutation-policy.js';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
+import { AutomationRuntimeAdapter } from './automation-runtime-adapter.js';
 import { agentSwarmTools } from './tools/agent-swarm-tools.js';
+import { automationTools, AUTOMATION_TOOL_NAMES } from './tools/automation-tools.js';
 import { batchTools } from './tools/batch-tools.js';
 import { contextTools } from './tools/context-tools.js';
 import { filePageTools } from './tools/file-page-tools.js';
@@ -67,7 +76,7 @@ import { searchTools } from './tools/search-tools.js';
 import { scheduledContinuationTools } from './tools/scheduled-continuation-tools.js';
 import { skillTools } from './tools/skill-tools.js';
 import { workspaceTools } from './tools/workspace-tools.js';
-import type { McpApplicationServices, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
+import type { McpApplicationServices, McpInternalInvocationContext, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
 
 export type { McpApplicationServices } from './tools/tool-types.js';
 export type { ActiveProjectScope, WorkspaceScope } from './destructive-scope.js';
@@ -143,6 +152,9 @@ const DEFAULT_MCP_TOOL_RESPONSE_BUDGET_MS: number | null = null;
 const MAX_APPROVAL_SUMMARY_LENGTH = 8_192;
 const MAX_REMEMBERED_SHELL_TASKS = 512;
 const MAX_REMEMBERED_ACTIVITY_HANDLES = 512;
+const AUTOMATION_MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'automation_create', 'automation_run', 'automation_control', 'automation_finalize',
+]);
 
 interface BudgetedToolExecution {
   readonly response: McpToolResponse;
@@ -208,8 +220,13 @@ export class ToolRegistry {
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
     const contextEconomy = new ContextEconomyRuntime();
+    const automation = services.automation ?? services.automationFactory?.create(
+      new AutomationRuntimeAdapter(this, actor),
+      actor,
+    );
+    const contextServices = automation === undefined ? services : { ...services, automation };
     const context: McpToolContext = {
-      services,
+      services: contextServices,
       actor,
       contextEconomy,
       isToolExposed: (name) => this.isEffectivelyExposed(name),
@@ -254,10 +271,12 @@ export class ToolRegistry {
     const exposedBatchTools = batchTools({
       invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
       describe: (name) => exposedAllBaseTools.find((tool) => tool.name === name),
+      isAllowed: (name) => !AUTOMATION_TOOL_NAMES.includes(name as typeof AUTOMATION_TOOL_NAMES[number]),
     }).map((tool) => withToolEnvelopes(tool));
-    this.allTools = [...exposedAllBaseTools, ...exposedBatchTools];
-    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools].map((tool) => tool.name));
-    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools].map((tool) => tool.name));
+    const exposedAutomationTools = automationTools(context).map((tool) => withToolEnvelopes(tool));
+    this.allTools = [...exposedAllBaseTools, ...exposedBatchTools, ...exposedAutomationTools];
+    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
+    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
     this.toolAvailabilitySnapshotProvider = options.toolAvailabilitySnapshotProvider ?? ((): ToolAvailabilitySnapshot => DEFAULT_TOOL_AVAILABILITY_SNAPSHOT);
     this.schemaRegistry = new ToolSchemaRegistry();
     for (const tool of this.allTools) this.schemaRegistry.register(tool);
@@ -317,7 +336,52 @@ export class ToolRegistry {
     }).effectiveExposed;
   }
 
-  public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
+  public invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
+    return this.invokeInternal(name, input, traceContext, parentSignal);
+  }
+
+  /** Internal-only deterministic shell entrypoint; the reserved context never enters the public schema. */
+  public invokeAutomationShell(
+    request: AutomationDispatchRequest,
+    traceContext?: TraceContext,
+    parentSignal?: AbortSignal,
+  ): Promise<McpToolResponse> {
+    return this.invokeInternal('shell', {
+      workspaceId: request.context.workspaceId,
+      operation: 'run',
+      executable: request.dispatch.executable,
+      arguments: [...request.dispatch.arguments],
+      cwd: request.dispatch.cwd,
+      execution: 'background',
+      timeout_seconds: request.dispatch.timeoutSeconds,
+      max_output_bytes: request.dispatch.maxOutputBytes,
+      include_stdout: request.dispatch.includeStdout,
+      include_stderr: request.dispatch.includeStderr,
+      goalLease: request.goalLease,
+      ...(request.userConfirmed === undefined ? {} : { userConfirmed: request.userConfirmed }),
+    }, traceContext, parentSignal, { automationDispatch: request.context });
+  }
+
+  /** Internal-only exact observation scoped by owner, workspace and request digest. */
+  public observeAutomationShell(context: AutomationDispatchContext): Promise<Result<unknown>> {
+    if (this.services.capabilities?.observeAutomationShell === undefined) {
+      return Promise.resolve(err(appError('INTERNAL_ERROR', 'Automation shell observation is unavailable', true)));
+    }
+    return this.services.capabilities.observeAutomationShell(
+      this.actor.clientId,
+      context.workspaceId,
+      context.taskId,
+      context.requestDigest,
+    );
+  }
+
+  private async invokeInternal(
+    name: string,
+    input: unknown,
+    traceContext?: TraceContext,
+    parentSignal?: AbortSignal,
+    internal?: McpInternalInvocationContext,
+  ): Promise<McpToolResponse> {
     const invocationGuardMessage = this.currentInvocationGuardMessage();
     const profile = invocationGuardMessage === null ? this.profileProvider() : permissionProfiles.safe;
     const fullBypass = invocationGuardMessage === null && profile.name === 'full' && this.authorizationModeProvider() === 'full_bypass';
@@ -353,6 +417,16 @@ export class ToolRegistry {
       }
       const goalLease = readGoalLeaseProof(parsed.value);
       const parsedInput = stripGoalLeaseEnvelope(parsed.value);
+      if (AUTOMATION_MUTATION_TOOL_NAMES.has(tool.name) && goalLease !== undefined) {
+        if (!isRecord(parsedInput)
+          || parsedInput.goalId !== goalLease.goalId
+          || parsedInput.leaseToken !== goalLease.leaseToken) {
+          const message = `${tool.name} goalId and leaseToken must match goalLease`;
+          const response = mapError(appError('CONFLICT', message, true));
+          await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+          return response;
+        }
+      }
       if (
         tool.name === 'task_create'
         && goalLease !== undefined
@@ -569,6 +643,7 @@ export class ToolRegistry {
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
         callId,
+        internal,
       );
       const response = execution.response;
       const rawResultTargetSummary = summarizeStructuredResultTarget(response.structuredContent);
@@ -828,6 +903,7 @@ export class ToolRegistry {
     parentSignal?: AbortSignal,
     goalId?: string,
     callId?: string,
+    internal?: McpInternalInvocationContext,
   ): Promise<BudgetedToolExecution> {
     const controller = new AbortController();
     const registration = goalId === undefined || callId === undefined || this.services.goalRequestCancellation === undefined
@@ -875,7 +951,7 @@ export class ToolRegistry {
           }, responseBudgetMs);
         }
         try {
-          operation = tool.execute(input, controller.signal, authorization).then(mapResult);
+          operation = tool.execute(input, controller.signal, authorization, internal).then(mapResult);
         } catch (error: unknown) {
           releaseRegistration();
           reject(error);
@@ -1048,6 +1124,7 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
   'task_create',
+  ...AUTOMATION_TOOL_NAMES.filter((name) => AUTOMATION_MUTATION_TOOL_NAMES.has(name)),
 ]);
 const goalLeaseProofSchema = z.object({
   goalId: z.string().min(1).max(128),
@@ -1233,7 +1310,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.3.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.4.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

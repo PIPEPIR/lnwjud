@@ -4,6 +4,11 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { appError, err, ok, type GoalTaskCancellationObservation, type Result } from '@lnwjud/domain';
+import {
+  DurableShellTaskIndex,
+  type ActiveTaskInspection,
+  type DurableTaskLaunchRecord,
+} from './durable-shell-task-index.js';
 import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
 export type DurableShellTaskState = 'running' | 'completed' | 'failed' | 'timed_out' | 'cancelled' | 'termination_unverified';
@@ -24,6 +29,7 @@ export interface DurableShellLaunchRequest {
 interface DurableTaskMetadata {
   readonly version: 1;
   readonly task_id: string;
+  readonly request_digest?: string;
   state: DurableShellTaskState;
   readonly started_at: string;
   finished_at?: string;
@@ -60,6 +66,8 @@ interface DurableWorkerSpec {
   readonly metadataPath: string;
   readonly stdoutPath: string;
   readonly stderrPath: string;
+  readonly requestDigest: string;
+  readonly activeMarkerPath: string;
 }
 
 const METADATA_FILENAME = 'task.json';
@@ -91,22 +99,73 @@ export const DEFAULT_MAX_CONCURRENT_DURABLE_TASKS = 16;
 export class DurableShellTaskStore {
   private readonly maxConcurrentTasks: number;
   private readonly platform: NodeJS.Platform;
+  private readonly activeIndex: DurableShellTaskIndex;
 
   public constructor(private readonly rootDirectory: string, options: DurableShellTaskStoreOptions = {}) {
     this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
     this.platform = options.platform ?? process.platform;
+    this.activeIndex = new DurableShellTaskIndex(rootDirectory, {
+      maxConcurrentTasks: this.maxConcurrentTasks,
+      inspectTask: async (taskId): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId),
+      loadLaunchRecord: async (taskId): Promise<DurableTaskLaunchRecord | undefined> => this.loadLaunchRecord(taskId),
+    });
   }
 
-  public async launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
-    const activeTasks = await this.activeTaskCount();
-    if (activeTasks >= this.maxConcurrentTasks) {
-      return err(appError('CONFLICT', `Too many durable background tasks are already running (${activeTasks}/${this.maxConcurrentTasks}); inspect or stop existing tasks before starting another.`, true));
+  public launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
+    return this.launchWithDigest(request, durableShellRequestDigest(request));
+  }
+
+  /** Trusted deterministic launch used only after the shell backend verifies the canonical automation digest. */
+  public launchReserved(request: DurableShellLaunchRequest, requestDigest: string): Promise<Result<Record<string, unknown>>> {
+    if (!/^[a-f0-9]{64}$/i.test(requestDigest)) {
+      return Promise.resolve(err(appError('INVALID_INPUT', 'Reserved durable task digest is invalid')));
+    }
+    return this.launchWithDigest(request, requestDigest.toLowerCase());
+  }
+
+  private async launchWithDigest(
+    request: DurableShellLaunchRequest,
+    requestDigest: string,
+  ): Promise<Result<Record<string, unknown>>> {
+    if (!isSafeTaskId(request.taskId)) return err(appError('INVALID_INPUT', 'Durable task ID is invalid'));
+    const existing = await this.readMetadata(request.taskId, false, 1);
+    if (existing.ok) {
+      if (existing.value.request_digest !== requestDigest) {
+        return err(appError('CONFLICT', 'Durable task ID is already used by another request', true));
+      }
+      const reconciled = await this.reconcile(existing.value);
+      await this.releaseTerminalReservation(reconciled);
+      return ok(await this.snapshotFromMetadata(reconciled));
     }
 
-    const taskDirectory = this.taskDirectory(request.taskId);
-    await mkdir(taskDirectory, { recursive: true });
-    await mkdir(this.rootDirectory, { recursive: true });
     const startedAt = new Date().toISOString();
+    const reservation = await this.activeIndex.reserve({
+      taskId: request.taskId,
+      requestDigest,
+      ownerClientId: request.owner.clientId,
+      ...(request.owner.workspaceId === undefined ? {} : { ownerWorkspaceId: request.owner.workspaceId }),
+      launchRecord: {
+        version: 1,
+        taskId: request.taskId,
+        startedAt,
+        ownerClientId: request.owner.clientId,
+        ownerSessionId: request.owner.sessionId,
+        ...(request.owner.workspaceId === undefined ? {} : { ownerWorkspaceId: request.owner.workspaceId }),
+      },
+    });
+    if (!reservation.ok) return reservation;
+    if (!reservation.value.created) {
+      const concurrent = await this.readMetadata(request.taskId);
+      if (concurrent.ok && concurrent.value.request_digest === requestDigest) {
+        const reconciled = await this.reconcile(concurrent.value);
+        await this.releaseTerminalReservation(reconciled);
+        return ok(await this.snapshotFromMetadata(reconciled));
+      }
+      return err(appError('CONFLICT', 'Durable task launch is already in progress', true));
+    }
+
+    let workerOwnsReservation = false;
+    const taskDirectory = this.taskDirectory(request.taskId);
     const deadlineAt = new Date(Date.now() + request.timeoutSeconds * 1000).toISOString();
     const metadataPath = path.join(taskDirectory, METADATA_FILENAME);
     const stdoutPath = path.join(taskDirectory, STDOUT_FILENAME);
@@ -115,6 +174,7 @@ export class DurableShellTaskStore {
     const metadata: DurableTaskMetadata = {
       version: 1,
       task_id: request.taskId,
+      request_digest: requestDigest,
       state: 'running',
       started_at: startedAt,
       include_stdout: request.includeStdout,
@@ -141,8 +201,12 @@ export class DurableShellTaskStore {
       metadataPath,
       stdoutPath,
       stderrPath,
+      requestDigest,
+      activeMarkerPath: reservation.value.markerPath,
     };
     try {
+      await mkdir(taskDirectory, { recursive: true });
+      await mkdir(this.rootDirectory, { recursive: true });
       await writeFile(metadataPath, JSON.stringify(metadata), 'utf8');
       await writeFile(specPath, JSON.stringify(spec), 'utf8');
       const workerPath = await this.ensureWorkerScript();
@@ -158,7 +222,8 @@ export class DurableShellTaskStore {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       });
       await waitForSpawn(worker);
-      if (worker.pid === undefined) return err(appError('INTERNAL_ERROR', 'Durable task worker did not return a process ID', true));
+      if (worker.pid === undefined) throw new Error('Durable task worker did not return a process ID');
+      workerOwnsReservation = true;
       metadata.worker_pid = worker.pid;
       // Capture the launcher identity without delaying a short-lived task's
       // return path. The worker owns task.json, so the identity is published
@@ -171,7 +236,7 @@ export class DurableShellTaskStore {
       // Publish the worker identity on its own file before returning the task handle.
       // The worker owns task.json; keeping launcher identity separate avoids a race
       // where a very fast completion can be overwritten back to running.
-      await writeFile(path.join(taskDirectory, WORKER_PID_FILENAME), String(worker.pid), 'utf8');
+      await writeFile(path.join(taskDirectory, WORKER_PID_FILENAME), String(worker.pid), 'utf8').catch(() => undefined);
       worker.unref();
       return ok(await this.snapshotFromMetadata(metadata));
     } catch (error: unknown) {
@@ -181,23 +246,48 @@ export class DurableShellTaskStore {
       metadata.error = `Durable task could not start: ${message}`;
       metadata.finished_at = new Date().toISOString();
       await writeFile(metadataPath, JSON.stringify(metadata), 'utf8').catch(() => undefined);
+      if (!workerOwnsReservation) await this.activeIndex.release(request.taskId, requestDigest);
       return err(appError('INTERNAL_ERROR', 'Durable task could not start', true));
     }
   }
 
   public async list(owner?: CapabilityTaskOwner): Promise<Record<string, unknown>[]> {
     await mkdir(this.rootDirectory, { recursive: true });
-    const entries = await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []);
-    const snapshots: Record<string, unknown>[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const metadata = await this.readMetadata(entry.name);
-      if (!metadata.ok) continue;
-      if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) continue;
+    const taskIds = (await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isDirectory() && entry.name !== '.index')
+      .map((entry) => entry.name);
+    const hydrated = await mapWithConcurrency(taskIds, 16, async (taskId) => {
+      const metadata = await this.readMetadata(taskId);
+      if (!metadata.ok) return undefined;
+      if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) return undefined;
       const reconciled = await this.reconcile(metadata.value);
-      snapshots.push(await this.snapshotFromMetadata(reconciled, undefined, false));
-    }
+      await this.releaseTerminalReservation(reconciled);
+      return this.snapshotFromMetadata(reconciled, undefined, false);
+    });
+    const snapshots = hydrated.filter((snapshot): snapshot is Record<string, unknown> => snapshot !== undefined);
     return snapshots.sort((left, right) => String(right.started_at ?? '').localeCompare(String(left.started_at ?? '')));
+  }
+
+  public async listPage(
+    owner: CapabilityTaskOwner,
+    limit: number,
+    cursor?: string,
+  ): Promise<Result<{ readonly tasks: readonly Record<string, unknown>[]; readonly nextCursor?: string }>> {
+    const page = await this.activeIndex.listLaunches({
+      limit,
+      ...(cursor === undefined ? {} : { cursor }),
+      accept: (record) => capabilityTaskOwnerMatches(launchRecordOwner(record), owner),
+    });
+    if (!page.ok) return page;
+    const hydrated = await mapWithConcurrency(page.value.records, 16, async (record) => {
+      const metadata = await this.readMetadata(record.taskId);
+      if (!metadata.ok || !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) return undefined;
+      const reconciled = await this.reconcile(metadata.value);
+      await this.releaseTerminalReservation(reconciled);
+      return this.snapshotFromMetadata(reconciled, undefined, false);
+    });
+    const tasks = hydrated.filter((snapshot): snapshot is Record<string, unknown> => snapshot !== undefined);
+    return ok({ tasks, ...(page.value.nextCursor === undefined ? {} : { nextCursor: page.value.nextCursor }) });
   }
 
   public async snapshot(taskId: string, tailLines?: number, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
@@ -207,6 +297,7 @@ export class DurableShellTaskStore {
       return err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
     }
     const reconciled = await this.reconcile(metadata.value);
+    await this.releaseTerminalReservation(reconciled);
     return ok(await this.snapshotFromMetadata(reconciled, tailLines));
   }
 
@@ -218,6 +309,28 @@ export class DurableShellTaskStore {
       return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
     }
     const reconciled = await this.reconcile(metadata.value);
+    await this.releaseTerminalReservation(reconciled);
+    return ok(await this.snapshotFromMetadata(reconciled));
+  }
+
+  /** Trusted exact lookup for a reserved automation task. Legacy/no-digest rows fail closed. */
+  public async snapshotForAutomation(
+    taskId: string,
+    ownerClientId: string,
+    workspaceId: string,
+    requestDigest: string,
+  ): Promise<Result<Record<string, unknown>>> {
+    const metadata = await this.readMetadata(taskId);
+    if (!metadata.ok) return metadata;
+    const owner = metadataOwner(metadata.value);
+    if (owner.clientId !== ownerClientId || owner.workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Task belongs to another client or workspace'));
+    }
+    if (metadata.value.request_digest === undefined || metadata.value.request_digest !== requestDigest.toLowerCase()) {
+      return err(appError('CONFLICT', 'Durable task identity does not match the reserved automation request', true));
+    }
+    const reconciled = await this.reconcile(metadata.value);
+    await this.releaseTerminalReservation(reconciled);
     return ok(await this.snapshotFromMetadata(reconciled));
   }
 
@@ -236,6 +349,7 @@ export class DurableShellTaskStore {
 
     const before = await this.reconcile(metadataResult.value);
     if (isTerminal(before.state)) {
+      await this.releaseTerminalReservation(before);
       return ok({ matched: true, state: 'already_terminal', detail: before.state });
     }
     const cancelled = await this.cancel(taskId, storedOwner);
@@ -262,6 +376,7 @@ export class DurableShellTaskStore {
     const latest = await this.readMetadata(taskId);
     if (!latest.ok || !isTerminal(latest.value.state)) return snapshot;
     if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(latest.value), owner)) return snapshot;
+    await this.releaseTerminalReservation(latest.value);
     return ok(await this.snapshotFromMetadata(latest.value, tailLines));
   }
 
@@ -272,7 +387,10 @@ export class DurableShellTaskStore {
       return err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
     }
     let metadata = await this.reconcile(metadataResult.value);
-    if (isTerminal(metadata.state)) return ok(await this.snapshotFromMetadata(metadata));
+    if (isTerminal(metadata.state)) {
+      await this.releaseTerminalReservation(metadata);
+      return ok(await this.snapshotFromMetadata(metadata));
+    }
     metadata = await this.hydrateProcessIdentities(metadata);
     const workerProbe = metadata.worker_pid === undefined
       ? { state: 'gone' as const }
@@ -314,6 +432,7 @@ export class DurableShellTaskStore {
     delete metadata.error;
     metadata.finished_at = new Date().toISOString();
     await this.writeMetadata(metadata);
+    await this.releaseTerminalReservation(metadata);
     return ok(await this.snapshotFromMetadata(metadata));
   }
 
@@ -321,20 +440,43 @@ export class DurableShellTaskStore {
     return (await this.readMetadata(taskId)).ok;
   }
 
-  private async activeTaskCount(): Promise<number> {
-    await mkdir(this.rootDirectory, { recursive: true });
-    const entries = await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []);
-    let activeTasks = 0;
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const metadata = await this.readMetadata(entry.name);
-      if (!metadata.ok) continue;
-      const reconciled = await this.reconcile(metadata.value);
-      if (reconciled.state !== 'running' && reconciled.state !== 'termination_unverified') continue;
-      activeTasks += 1;
-      if (activeTasks >= this.maxConcurrentTasks) break;
+  private async inspectTaskForIndex(taskId: string): Promise<ActiveTaskInspection> {
+    const metadata = await this.readMetadata(taskId, false, 1);
+    if (!metadata.ok) {
+      try {
+        const handle = await open(path.join(this.taskDirectory(taskId), METADATA_FILENAME), 'r');
+        await handle.close();
+        return 'unknown';
+      } catch (error: unknown) {
+        return isFileNotFound(error) ? 'missing' : 'unknown';
+      }
     }
-    return activeTasks;
+    if (isTerminal(metadata.value.state)) return 'terminal';
+    const reconciled = await this.reconcile(metadata.value);
+    if (isTerminal(reconciled.state)) return 'terminal';
+    return reconciled.state === 'running' ? 'active' : 'unknown';
+  }
+
+  private async loadLaunchRecord(taskId: string): Promise<DurableTaskLaunchRecord | undefined> {
+    const metadata = await this.readMetadata(taskId, false, 1);
+    return metadata.ok ? this.launchRecord(metadata.value) : undefined;
+  }
+
+  private launchRecord(metadata: DurableTaskMetadata): DurableTaskLaunchRecord {
+    const owner = metadataOwner(metadata);
+    return {
+      version: 1,
+      taskId: metadata.task_id,
+      startedAt: metadata.started_at,
+      ownerClientId: owner.clientId,
+      ownerSessionId: owner.sessionId,
+      ...(owner.workspaceId === undefined ? {} : { ownerWorkspaceId: owner.workspaceId }),
+    };
+  }
+
+  private async releaseTerminalReservation(metadata: DurableTaskMetadata): Promise<void> {
+    if (!isTerminal(metadata.state)) return;
+    await this.activeIndex.release(metadata.task_id, metadata.request_digest ?? null);
   }
 
   private async reconcile(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
@@ -431,24 +573,29 @@ export class DurableShellTaskStore {
     };
   }
 
-  private async readMetadata(taskId: string): Promise<Result<DurableTaskMetadata>> {
+  private async readMetadata(
+    taskId: string,
+    hydrateWorkerIdentity = true,
+    attempts = METADATA_READ_RETRIES,
+  ): Promise<Result<DurableTaskMetadata>> {
     const metadataPath = path.join(this.taskDirectory(taskId), METADATA_FILENAME);
-    for (let attempt = 0; attempt < METADATA_READ_RETRIES; attempt += 1) {
+    const readAttempts = Math.max(1, attempts);
+    for (let attempt = 0; attempt < readAttempts; attempt += 1) {
       try {
         const parsed: unknown = JSON.parse(await readFile(metadataPath, 'utf8'));
         if (isMetadata(parsed) && parsed.task_id === taskId) {
-          if (parsed.worker_pid === undefined) {
+          if (hydrateWorkerIdentity && !isTerminal(parsed.state) && parsed.worker_pid === undefined) {
             const publishedPid = await readPublishedPid(path.join(this.taskDirectory(taskId), WORKER_PID_FILENAME));
             if (publishedPid !== undefined) parsed.worker_pid = publishedPid;
           }
-          if (parsed.worker_started_at === undefined) {
+          if (hydrateWorkerIdentity && !isTerminal(parsed.state) && parsed.worker_started_at === undefined) {
             const publishedStartedAt = await readPublishedStartedAt(path.join(this.taskDirectory(taskId), WORKER_STARTED_FILENAME));
             if (publishedStartedAt !== undefined) parsed.worker_started_at = publishedStartedAt;
           }
           return ok(parsed);
         }
       } catch {
-        if (attempt === METADATA_READ_RETRIES - 1) break;
+        if (attempt === readAttempts - 1) break;
       }
       await delay(15);
     }
@@ -524,6 +671,7 @@ function isMetadata(value: unknown): value is DurableTaskMetadata {
   const record = value as Record<string, unknown>;
   return record.version === 1
     && typeof record.task_id === 'string'
+    && (record.request_digest === undefined || (typeof record.request_digest === 'string' && /^[a-f0-9]{64}$/i.test(record.request_digest)))
     && typeof record.state === 'string'
     && typeof record.started_at === 'string'
     && typeof record.include_stdout === 'boolean'
@@ -551,6 +699,32 @@ function metadataOwner(metadata: DurableTaskMetadata): CapabilityTaskOwner {
     sessionId: metadata.owner_session_id,
     ...(metadata.owner_workspace_id === undefined ? {} : { workspaceId: metadata.owner_workspace_id }),
   };
+}
+
+function launchRecordOwner(record: DurableTaskLaunchRecord): CapabilityTaskOwner {
+  return {
+    clientId: record.ownerClientId,
+    sessionId: record.ownerSessionId,
+    ...(record.ownerWorkspaceId === undefined ? {} : { workspaceId: record.ownerWorkspaceId }),
+  };
+}
+
+async function mapWithConcurrency<T, U>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(values.length, Math.max(1, concurrency)) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function isTerminal(state: DurableShellTaskState): boolean {
@@ -796,6 +970,10 @@ function isNoSuchProcess(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ESRCH';
 }
 
+function isFileNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -862,6 +1040,16 @@ async function persist() {
       await unlink(temporaryPath).catch(() => undefined);
     }
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+}
+
+async function releaseReservation() {
+  try {
+    const marker = JSON.parse(await readFile(spec.activeMarkerPath, 'utf8'));
+    if (marker?.version !== 1 || marker.taskId !== spec.taskId || marker.requestDigest !== spec.requestDigest) return;
+    await unlink(spec.activeMarkerPath);
+  } catch {
+    // A later warm reservation revalidates a stale marker against task.json.
   }
 }
 
@@ -936,7 +1124,8 @@ async function finish(state, exitCode, error) {
   else metadata.finished_at = new Date().toISOString();
   await Promise.allSettled([...pendingWrites]);
   await Promise.allSettled([stdoutHandle.close(), stderrHandle.close()]);
-  await persist().catch(() => undefined);
+  const persisted = await persist().then(() => true, () => false);
+  if (persisted && state !== 'termination_unverified') await releaseReservation();
 }
 
 try {
@@ -985,8 +1174,30 @@ try {
 }
 `;
 
+export function durableShellRequestDigest(request: DurableShellLaunchRequest): string {
+  const canonicalRequest = {
+    version: 1,
+    task_id: request.taskId,
+    executable: request.executable,
+    arguments: [...request.arguments],
+    cwd: request.cwd,
+    windows_verbatim_arguments: request.windowsVerbatimArguments ?? null,
+    timeout_seconds: request.timeoutSeconds,
+    max_output_bytes: request.maxOutputBytes,
+    include_stdout: request.includeStdout,
+    include_stderr: request.includeStderr,
+    owner_client_id: request.owner.clientId,
+    owner_workspace_id: request.owner.workspaceId ?? null,
+  };
+  return createHash('sha256').update(JSON.stringify(canonicalRequest)).digest('hex');
+}
+
 function normalizeMaxConcurrentTasks(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_CONCURRENT_DURABLE_TASKS;
   if (!Number.isInteger(value) || value < 1 || value > 128) throw new Error('maxConcurrentTasks must be between 1 and 128');
   return value;
+}
+
+function isSafeTaskId(value: string): boolean {
+  return value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9._:-]+$/.test(value);
 }

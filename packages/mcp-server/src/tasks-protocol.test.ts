@@ -12,11 +12,23 @@ type TaskMap = Record<string, Record<string, unknown>>;
 function servicesWithTasks(tasks: TaskMap, log?: string[]): McpApplicationServices {
   return {
     capabilities: {
-      async execute(tool: string, request: { operation?: string; task_id?: string }) {
+      async execute(tool: string, request: { operation?: string; task_id?: string; limit?: number; cursor?: string }) {
         expect(tool).toBe('shell');
         log?.push(`${request.operation}:${request.task_id ?? ''}`);
         const operation = request.operation ?? 'run';
-        if (operation === 'list') return ok({ tasks: Object.values(tasks) });
+        if (operation === 'list') {
+          const values = Object.values(tasks);
+          const limit = request.limit ?? values.length;
+          let offset = 0;
+          if (request.cursor !== undefined) {
+            const match = /^mock:(\d+)$/.exec(request.cursor);
+            if (match === null) return err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
+            offset = Number(match[1]);
+          }
+          const page = values.slice(offset, offset + limit);
+          const nextOffset = offset + page.length;
+          return ok({ tasks: page, ...(nextOffset < values.length ? { next_cursor: `mock:${nextOffset}` } : {}) });
+        }
         const task = request.task_id === undefined ? undefined : tasks[request.task_id];
         if (task === undefined) return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
         if (operation === 'cancel') {

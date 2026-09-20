@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { CodexDiscovery } from '@lnwjud/codex';
+import { ToolRegistry } from '@lnwjud/mcp-server';
 import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
@@ -130,10 +131,81 @@ describe('DesktopRuntime persistence', () => {
     try {
       expect(runtime.mcpServices.goals).toBeDefined();
       expect(runtime.mcpServices.scheduledContinuations).toBeDefined();
+      expect(runtime.mcpServices.automationFactory).toBeDefined();
     } finally {
       await runtime.close();
     }
   });
+
+  it('restores owner-scoped automation state through the Desktop MCP composition after restart', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-automation-data-'));
+    const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-automation-workspace-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRoot = await realpath(rawWorkspaceRoot);
+
+    const first = createDesktopRuntime(dataRoot);
+    const workspace = await first.services.addWorkspace({ rootPath: workspaceRoot });
+    const started = await first.mcpServices.goals?.runGoal(first.mcpActor, {
+      workspaceId: workspace.id,
+      goalKey: 'desktop-automation-restart',
+      objective: 'Persist one Desktop automation run.',
+      plan: { steps: [{ id: 'build', title: 'Build' }] },
+      leaseSeconds: 600,
+    });
+    expect(started).toMatchObject({ ok: true, value: { acquired: true, leaseToken: expect.any(String) } });
+    if (started === undefined || !started.ok || started.value.leaseToken === undefined) {
+      await first.close();
+      return;
+    }
+    const proof = {
+      goalId: started.value.goalId,
+      leaseToken: started.value.leaseToken,
+      leaseGeneration: started.value.leaseGeneration,
+    };
+    const registry = new ToolRegistry(first.mcpServices, first.mcpActor, {
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId: workspace.id, rootPath: workspaceRoot }),
+    });
+    const created = await registry.invoke('automation_create', {
+      workspaceId: workspace.id,
+      goalId: started.value.goalId,
+      leaseToken: started.value.leaseToken,
+      goalLease: proof,
+      plan: {
+        milestones: [{
+          id: 'build', title: 'Build', goalStepId: 'build', dependsOn: [], provider: 'shell', role: 'blocking_job', cancelWithGoal: true,
+          dispatch: {
+            executable: process.execPath,
+            arguments: ['--version'],
+            cwd: workspaceRoot,
+            timeoutSeconds: 30,
+            maxOutputBytes: 16 * 1024,
+            includeStdout: false,
+            includeStderr: true,
+          },
+          verification: [{ id: 'exit', kind: 'command_exit', expectedExitCode: 0 }],
+        }],
+      },
+      userConfirmed: true,
+    });
+    expect(created.isError).not.toBe(true);
+    const runId = String(((created.structuredContent as { run?: { id?: unknown } } | undefined)?.run?.id));
+    await first.close();
+
+    const restarted = createDesktopRuntime(dataRoot);
+    try {
+      const restored = await new ToolRegistry(restarted.mcpServices, restarted.mcpActor)
+        .invoke('automation_status', { workspaceId: workspace.id, runId });
+      expect(restored.isError).not.toBe(true);
+      expect(restored.structuredContent).toMatchObject({
+        run: { id: runId, goalId: started.value.goalId, workspaceId: workspace.id, ownerClientId: restarted.mcpActor.clientId, status: 'active' },
+        milestones: [{ id: 'build', status: 'pending' }],
+      });
+    } finally {
+      await restarted.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
   it('updates one connected Desktop MCP client immediately when in-process tool availability changes', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-workspace-'));

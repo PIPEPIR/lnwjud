@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.3.1', async () => {
+  it('[version-contract] pins the product release to v5.4.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.3.1');
-    expect(desktopPackage.version).toBe('5.3.1');
+    expect(rootPackage.version).toBe('5.4.0');
+    expect(desktopPackage.version).toBe('5.4.0');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.3.1');
+      expect(packageJson.version, packagePath).toBe('5.4.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.3.1'");
-    expect(shared).toContain("APP_VERSION = '5.3.1'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.4.0'");
+    expect(shared).toContain("APP_VERSION = '5.4.0'");
   });
 
   it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
@@ -101,7 +101,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 253 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 259 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });
@@ -212,6 +212,12 @@ describe('cross-platform desktop packaging', () => {
     expect(posixLauncher).toContain('exec "$APP" --mcp-stdio "$@"');
     expect(stdioLauncher).not.toContain(path.win32.join('%ProgramFiles%', 'nodejs'));
     expect(stdioLauncher).not.toContain(path.win32.join('%LOCALAPPDATA%', 'Programs', 'nodejs'));
+    const desktopServices = await readFile(path.join(desktopRoot, 'src', 'main', 'desktop-services.ts'), 'utf8');
+    expect(desktopServices).toContain('new SqliteAutomationRepository(database)');
+    expect(desktopServices).toContain('automationFactory:');
+    expect(desktopServices).toContain('new AutomationVerifier(workspaceRepository, runtime, pathGuard)');
+    expect(desktopServices).toContain('automationResumes: automationRepository');
+    expect(desktopServices).not.toMatch(/AutomationScheduler|automationScheduler|automation_schedule/);
     await access(path.join(desktopRoot, 'dist', 'main', 'main.js'));
     await access(path.join(desktopRoot, 'dist', 'preload', 'index.cjs'));
     await access(path.join(desktopRoot, 'dist', 'renderer', 'index.html'));

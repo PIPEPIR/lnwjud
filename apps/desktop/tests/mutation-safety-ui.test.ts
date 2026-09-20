@@ -52,7 +52,7 @@ const dashboard: DashboardSnapshot = {
   appVersion: APP_VERSION,
 };
 
-function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'security' | 'mcp' = 'security'): string {
+function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' = 'security'): string {
   return renderToStaticMarkup(createElement(SettingsPage, {
     locale,
     initialSection: section,
@@ -111,14 +111,19 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 5.3.1 application version', () => {
-    expect(APP_VERSION).toBe('5.3.1');
+  it('renders the actual 5.4.0 application version', () => {
+    expect(APP_VERSION).toBe('5.4.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, hostPlatform: 'win32', mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v5.3.1');
+    expect(markup).toContain('v5.4.0');
     expect(markup).toContain('data-host-platform="win32"');
+  });
+
+  it('keeps the factory reset action separated from its warning', () => {
+    const markup = settingsMarkup('en', {}, 'general');
+    expect(markup).toContain('class="inline-actions factory-reset-actions"');
   });
 
   it('labels the sidebar runtime as Desktop Agent and keeps the OS suffix cross-platform', () => {
