@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AuditService, type ActivityAuditEvent, type ActivityTargetDetail, type AuditEvent, type AuditEventQuery, type AuditEventRepository, type AuditEventSummaryProjection } from './audit-service.js';
+import { AuditService, type ActivityAuditEvent, type ActivitySessionSummary, type ActivityTargetDetail, type AuditEvent, type AuditEventQuery, type AuditEventRepository, type AuditEventSummaryProjection } from './audit-service.js';
 
 class MemoryAuditRepository implements AuditEventRepository {
   public readonly events: AuditEvent[] = [];
@@ -32,6 +32,10 @@ class MemoryAuditRepository implements AuditEventRepository {
       action: event.action,
       resultCode: event.resultCode,
     }));
+  }
+
+  public async listActivitySessions(): Promise<ActivitySessionSummary[]> {
+    return [];
   }
 
   public async listActivityScoped(): Promise<ActivityAuditEvent[]> {

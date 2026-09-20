@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type UIEvent } from 'react';
-import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSessionSummary, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
 import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
 import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
+import { collectSessionFilterOptions, collectWorkspaceFilterOptions } from '../../scope-filter-options.js';
 
 export type LogTab = LogSource;
 export type LogEventKind = 'task' | 'result' | 'error';
@@ -38,6 +39,8 @@ interface LogStreamPanelProps {
   readonly onResolveTargetDetail?: (detailRef: string) => Promise<ActivityTargetDetail | null>;
   readonly onSearchTargetDetails?: (query: string, candidates: readonly { readonly id: string; readonly detailRef: string | null }[]) => Promise<readonly string[]>;
   readonly workspaces?: readonly WorkspaceSummary[];
+  readonly sessions?: readonly LogSessionSummary[];
+  readonly onSessionChange?: (scope: LogScopeSelection) => Promise<void>;
   readonly workspaceLabel?: string;
   readonly sessionLabel?: string;
   readonly scopeAllLabel?: string;
@@ -71,11 +74,21 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const streamRef = useRef<HTMLDivElement | null>(null);
   const feed = activeLogFeed(feedFreeze, currentFeed);
   const feedLines = feed.lines;
-  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feedLines, feed.workspaces), [feed]);
-  const sessionOptions = useMemo(() => collectSessionOptions(feedLines, workspaceId, feed.workspaces), [feed, workspaceId]);
+  const sessionSamples = useMemo(() => [
+    ...feedLines,
+    ...(props.sessions ?? []).map((session) => ({ workspaceId: session.workspaceId, sessionId: session.sessionId, timestamp: session.startedAt })),
+  ], [feedLines, props.sessions]);
+  const workspaceOptions = useMemo(() => collectWorkspaceFilterOptions(sessionSamples, feed.workspaces), [sessionSamples, feed.workspaces]);
+  const sessionOptions = useMemo(
+    () => collectSessionFilterOptions(sessionSamples, workspaceId, feed.workspaces, props.locale ?? 'th', props.sessionLabel ?? 'Session'),
+    [sessionSamples, workspaceId, feed.workspaces, props.locale, props.sessionLabel],
+  );
   useEffect(() => {
-    if (sessionId !== null && !sessionOptions.includes(sessionId)) setSessionId(null);
-  }, [sessionId, sessionOptions]);
+    if (sessionId !== null && !sessionOptions.some((option) => option.id === sessionId)) {
+      setSessionId(null);
+      void props.onSessionChange?.({ workspaceId, sessionId: null });
+    }
+  }, [props.onSessionChange, sessionId, sessionOptions, workspaceId]);
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const searchCandidates = useMemo(() => visibleLogLines(feedLines, scope, '', feed.workspaces), [feed, scope]);
   useEffect(() => {
@@ -160,16 +173,24 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       <div className="scope-filter-bar">
         <label>
           <span>{props.workspaceLabel ?? 'Workspace'}</span>
-          <select value={workspaceId ?? ''} onChange={(event) => setWorkspaceId(event.target.value.length === 0 ? null : event.target.value)}>
+          <select value={workspaceId ?? ''} onChange={(event) => {
+            const nextWorkspaceId = event.target.value.length === 0 ? null : event.target.value;
+            setWorkspaceId(nextWorkspaceId);
+            if (sessionId !== null) void props.onSessionChange?.({ workspaceId: nextWorkspaceId, sessionId });
+          }}>
             <option value="">{props.scopeAllLabel ?? 'All'}</option>
             {workspaceOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
         </label>
         <label>
           <span>{props.sessionLabel ?? 'Session'}</span>
-          <select value={sessionId ?? ''} onChange={(event) => setSessionId(event.target.value.length === 0 ? null : event.target.value)}>
+          <select value={sessionId ?? ''} onChange={(event) => {
+            const nextSessionId = event.target.value.length === 0 ? null : event.target.value;
+            setSessionId(nextSessionId);
+            void props.onSessionChange?.({ workspaceId, sessionId: nextSessionId });
+          }}>
             <option value="">{props.scopeAllLabel ?? 'All'}</option>
-            {sessionOptions.map((value) => <option key={value} value={value}>{shortScopeId(value)}</option>)}
+            {sessionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
         </label>
       </div>
@@ -253,44 +274,6 @@ export function filterLogLinesByScope(lines: readonly LogLine[], scope: LogScope
 
 export function visibleLogLines(lines: readonly LogLine[], scope: LogScopeSelection, search = '', workspaces: readonly WorkspaceSummary[] = [], hiddenMatches: ReadonlySet<string> = new Set()): readonly LogLine[] {
   return [...filterLogLinesByScope(lines, scope, search, workspaces, hiddenMatches)].sort(compareLogLinesNewestFirst);
-}
-
-function collectWorkspaceOptions(lines: readonly LogLine[], workspaces: readonly WorkspaceSummary[] | undefined): readonly { readonly id: string; readonly label: string }[] {
-  const workspaceList = workspaces ?? [];
-  const canonicalWorkspaces = workspaceList.filter((workspace, index) =>
-    workspace.kind !== 'machine_root'
-    && canonicalWorkspaceScopeId(workspaceList, workspace.id) === workspace.id
-    && workspaceList.findIndex((candidate) => canonicalWorkspaceScopeId(workspaceList, candidate.id) === workspace.id) === index,
-  );
-  const nameCounts = new Map<string, number>();
-  for (const workspace of canonicalWorkspaces) {
-    const key = workspace.displayName.trim().toLocaleLowerCase();
-    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
-  }
-  const labels = new Map<string, string>();
-  for (const workspace of canonicalWorkspaces) {
-    const key = workspace.displayName.trim().toLocaleLowerCase();
-    const duplicateName = (nameCounts.get(key) ?? 0) > 1;
-    labels.set(workspace.id, duplicateName
-      ? `${workspace.displayName} — ${workspace.id} — ${workspace.realRootPath}`
-      : `${workspace.displayName} — ${workspace.id}`);
-  }
-  for (const line of lines) {
-    if (line.workspaceId === null) continue;
-    const canonicalId = canonicalWorkspaceScopeId(workspaceList, line.workspaceId);
-    if (labels.has(canonicalId)) continue;
-    labels.set(canonicalId, shortScopeId(canonicalId));
-  }
-  return [...labels.entries()].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function collectSessionOptions(lines: readonly LogLine[], workspaceId: string | null, workspaces: readonly WorkspaceSummary[] | undefined): readonly string[] {
-  const values = new Set<string>();
-  for (const line of lines) {
-    if (workspaceId !== null && !workspaceScopeMatches(workspaces ?? [], line.workspaceId, workspaceId)) continue;
-    if (line.sessionId !== null) values.add(line.sessionId);
-  }
-  return [...values].sort();
 }
 
 function ScopeBadges(props: { readonly line: LogLine; readonly showWorkspace: boolean; readonly showSession: boolean; readonly workspaces: readonly WorkspaceSummary[] | undefined }): ReactElement | null {

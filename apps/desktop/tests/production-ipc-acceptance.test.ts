@@ -153,6 +153,19 @@ describe('production desktop IPC acceptance', () => {
     expect(onLocaleChanged).toHaveBeenCalledExactlyOnceWith('en');
   });
 
+  it('routes factory reset only through a trusted renderer and explicit host hook', async () => {
+    const services = desktopServices();
+    const onFactoryReset = vi.fn(async () => ({ accepted: true }));
+    registerIpcHandlers(() => ({}) as never, services, { onFactoryReset });
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+    const untrusted = { senderFrame: { url: 'https://example.invalid/' } };
+    const handler = requiredHandler(ipcChannels.factoryReset);
+
+    await expect(handler(trusted)).resolves.toEqual({ accepted: true });
+    expect(onFactoryReset).toHaveBeenCalledOnce();
+    await expect(handler(untrusted)).rejects.toThrow('IPC sender rejected');
+  });
+
   it('opens only allowlisted setup pages for a trusted renderer', async () => {
     const services = desktopServices();
     registerIpcHandlers(() => ({}) as never, services);

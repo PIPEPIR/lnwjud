@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.3.0';
+export const APP_VERSION = '5.3.1';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -59,6 +59,7 @@ export const ipcChannels = {
   openToolSetupTarget: 'lnwjud:open-tool-setup-target',
   copyToolCommand: 'lnwjud:copy-tool-command',
   getLogSnapshot: 'lnwjud:get-log-snapshot',
+  loadLogSessionHistory: 'lnwjud:load-log-session-history',
   clearLogBuffer: 'lnwjud:clear-log-buffer',
   resolveActivityTargetDetail: 'lnwjud:resolve-activity-target-detail',
   searchActivityTargetDetails: 'lnwjud:search-activity-target-details',
@@ -67,6 +68,7 @@ export const ipcChannels = {
   captureIncident: 'lnwjud:capture-incident',
   openLogViewer: 'lnwjud:open-log-viewer',
   getUpdateStatus: 'lnwjud:get-update-status',
+  factoryReset: 'lnwjud:factory-reset',
   checkForUpdates: 'lnwjud:check-for-updates',
   installUpdate: 'lnwjud:install-update',
   getGitDiff: 'lnwjud:get-git-diff',
@@ -368,6 +370,13 @@ export interface SearchActivityTargetDetailsResult {
   readonly matchingIds: readonly string[];
 }
 
+export interface LogSessionSummary {
+  readonly sessionId: string;
+  readonly workspaceId: string | null;
+  readonly startedAt: string;
+  readonly lastActivityAt: string;
+}
+
 export interface WorkLogEntry {
   readonly id: string;
   readonly timestamp: string;
@@ -556,12 +565,23 @@ export interface LogSnapshot {
   readonly lines: readonly LogLine[];
   readonly tunnelLogPath: string | null;
   readonly tunnelLogExists: boolean;
+  readonly sessions?: readonly LogSessionSummary[];
   readonly tunnelAuth?: TunnelAuthStatus | undefined;
 }
 
 export interface LogScopeRequest {
   readonly workspaceId?: string;
   readonly sessionId?: string;
+}
+
+export interface LoadLogSessionHistoryRequest extends LogScopeRequest {
+  readonly sessionId: string;
+  readonly limit?: number;
+}
+
+export interface LoadLogSessionHistoryResult {
+  readonly workLog: readonly WorkLogEntry[];
+  readonly logSnapshot: LogSnapshot;
 }
 
 export type ClearWorkLogRequest = LogScopeRequest;
@@ -627,7 +647,18 @@ export function workspaceScopeMatches(workspaces: readonly WorkspaceSummary[], c
   return canonicalWorkspaceScopeId(workspaces, candidate) === canonicalWorkspaceScopeId(workspaces, selected);
 }
 
-export type IncidentClassification = 'desktop_session_ended_uncleanly' | 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
+export const INCIDENT_CLASSIFICATIONS = [
+  'desktop_session_ended_uncleanly',
+  'local_tool_failed',
+  'tunnel_disconnected',
+  'remote_turn_stopped',
+  'healthy_or_inconclusive',
+] as const;
+export type IncidentClassification = typeof INCIDENT_CLASSIFICATIONS[number];
+
+export function isIncidentClassification(value: unknown): value is IncidentClassification {
+  return typeof value === 'string' && (INCIDENT_CLASSIFICATIONS as readonly string[]).includes(value);
+}
 export interface IncidentExportResult {
   readonly exported: boolean;
   readonly cancelled: boolean;
@@ -762,6 +793,7 @@ export interface DashboardSnapshot {
   readonly recovery: RecoveryCenterSummary;
   readonly connectionModes: ConnectionModes;
   readonly workLog: readonly WorkLogEntry[];
+  readonly workLogSessions?: readonly LogSessionSummary[];
   readonly inFlight: readonly InFlightWorkItem[];
   readonly tunnel: TunnelStatus;
   readonly remoteMcp: RemoteMcpStatus;
@@ -1041,6 +1073,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setToolAvailability]: SetToolAvailabilityRequest;
   readonly [ipcChannels.resetToolAvailability]: ResetToolAvailabilityRequest;
   readonly [ipcChannels.getLogSnapshot]: undefined;
+  readonly [ipcChannels.loadLogSessionHistory]: LoadLogSessionHistoryRequest;
   readonly [ipcChannels.clearLogBuffer]: ClearLogBufferRequest;
   readonly [ipcChannels.resolveActivityTargetDetail]: ResolveActivityTargetDetailRequest;
   readonly [ipcChannels.searchActivityTargetDetails]: SearchActivityTargetDetailsRequest;
@@ -1049,6 +1082,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.captureIncident]: undefined;
   readonly [ipcChannels.openLogViewer]: undefined;
   readonly [ipcChannels.getUpdateStatus]: undefined;
+  readonly [ipcChannels.factoryReset]: undefined;
   readonly [ipcChannels.checkForUpdates]: undefined;
   readonly [ipcChannels.installUpdate]: undefined;
   readonly [ipcChannels.getGitDiff]: GetGitDiffRequest;
@@ -1112,6 +1146,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.openToolSetupTarget]: { readonly opened: true };
   readonly [ipcChannels.copyToolCommand]: { readonly copied: true };
   readonly [ipcChannels.getLogSnapshot]: LogSnapshot;
+  readonly [ipcChannels.loadLogSessionHistory]: LoadLogSessionHistoryResult;
   readonly [ipcChannels.clearLogBuffer]: { readonly cleared: boolean };
   readonly [ipcChannels.resolveActivityTargetDetail]: ResolveActivityTargetDetailResult;
   readonly [ipcChannels.searchActivityTargetDetails]: SearchActivityTargetDetailsResult;
@@ -1120,6 +1155,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.captureIncident]: IncidentExportResult;
   readonly [ipcChannels.openLogViewer]: { readonly opened: boolean };
   readonly [ipcChannels.getUpdateStatus]: UpdateStatus;
+  readonly [ipcChannels.factoryReset]: { readonly accepted: boolean };
   readonly [ipcChannels.checkForUpdates]: UpdateStatus;
   readonly [ipcChannels.installUpdate]: { readonly accepted: boolean; readonly status: UpdateStatus };
   readonly [ipcChannels.getGitDiff]: GetGitDiffResponse;
@@ -1183,6 +1219,7 @@ export interface LnwjudApi {
   openToolSetupTarget(request: OpenToolSetupTargetRequest): Promise<IpcResponseMap[typeof ipcChannels.openToolSetupTarget]>;
   copyToolCommand(request: CopyToolCommandRequest): Promise<IpcResponseMap[typeof ipcChannels.copyToolCommand]>;
   getLogSnapshot(): Promise<IpcResponseMap[typeof ipcChannels.getLogSnapshot]>;
+  loadLogSessionHistory(request: LoadLogSessionHistoryRequest): Promise<IpcResponseMap[typeof ipcChannels.loadLogSessionHistory]>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<IpcResponseMap[typeof ipcChannels.clearLogBuffer]>;
   resolveActivityTargetDetail(request: ResolveActivityTargetDetailRequest): Promise<IpcResponseMap[typeof ipcChannels.resolveActivityTargetDetail]>;
   searchActivityTargetDetails(request: SearchActivityTargetDetailsRequest): Promise<IpcResponseMap[typeof ipcChannels.searchActivityTargetDetails]>;
@@ -1191,6 +1228,7 @@ export interface LnwjudApi {
   captureIncident(): Promise<IpcResponseMap[typeof ipcChannels.captureIncident]>;
   openLogViewer(): Promise<IpcResponseMap[typeof ipcChannels.openLogViewer]>;
   getUpdateStatus(): Promise<IpcResponseMap[typeof ipcChannels.getUpdateStatus]>;
+  factoryReset(): Promise<IpcResponseMap[typeof ipcChannels.factoryReset]>;
   checkForUpdates(): Promise<IpcResponseMap[typeof ipcChannels.checkForUpdates]>;
   installUpdate(): Promise<IpcResponseMap[typeof ipcChannels.installUpdate]>;
   getGitDiff(request: GetGitDiffRequest): Promise<IpcResponseMap[typeof ipcChannels.getGitDiff]>;

@@ -2,6 +2,7 @@ import {
   decodeActivityTargetReference,
   redactActivityTargetDetail,
   type ActivityAuditEvent,
+  type ActivitySessionSummary,
   type ActivityTargetDetail,
   type AuditEvent,
   type AuditEventQuery,
@@ -109,6 +110,29 @@ export class SqliteAuditRepository implements AuditEventRepository {
       action: row.action,
       resultCode: row.result_code,
     }] : []);
+  }
+
+  public async listActivitySessions(actionPrefix?: string): Promise<ActivitySessionSummary[]> {
+    const rows = this.database.connection.prepare(
+      `SELECT session_id, workspace_id, MIN(timestamp) AS started_at, MAX(timestamp) AS last_activity_at
+       FROM audit_events
+       WHERE session_id IS NOT NULL${actionPrefix === undefined ? '' : ' AND action LIKE ?'}
+       GROUP BY session_id, workspace_id
+       ORDER BY last_activity_at DESC, session_id ASC`,
+    ).all(...(actionPrefix === undefined ? [] : [`${actionPrefix}%`]));
+    return rows.flatMap((row) => {
+      if (!isRecord(row)
+        || typeof row.session_id !== 'string'
+        || (typeof row.workspace_id !== 'string' && row.workspace_id !== null)
+        || typeof row.started_at !== 'string'
+        || typeof row.last_activity_at !== 'string') return [];
+      return [{
+        sessionId: row.session_id,
+        ...(row.workspace_id === null ? {} : { workspaceId: row.workspace_id }),
+        startedAt: row.started_at,
+        lastActivityAt: row.last_activity_at,
+      }];
+    });
   }
 
   public async listActivityScoped(query: AuditEventQuery, limit = 100): Promise<ActivityAuditEvent[]> {

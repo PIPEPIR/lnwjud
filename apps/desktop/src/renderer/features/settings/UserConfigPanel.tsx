@@ -358,7 +358,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
           <div className="mcp-server-settings-list">
             {draft.extensions.extraMcpServers.length === 0 ? <EmptyState>{t('userConfig.noCustomMcp')}</EmptyState> : null}
             {draft.extensions.extraMcpServers.map((server, index) => (
-              <article className="mcp-server-settings-item" key={`${server.name}-${index}`}>
+              <article className="mcp-server-settings-item" key={index}>
                 <div className="section-heading"><strong>{server.name || t('userConfig.mcpServerNumber', { number: index + 1 })}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{t('userConfig.remove')}</button></div>
                 <div className="setting-grid two-col">
                   <Field label={t('userConfig.serverName')} value={server.name} onChange={(value) => updateServer(index, { name: value })} />

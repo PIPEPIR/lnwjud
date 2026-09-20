@@ -46,6 +46,7 @@ describe('guided tunnel onboarding UI', () => {
     expect(th).toContain('secure storage');
     expect(th).toContain('เริ่มตั้งค่า');
     expect(th).toContain('ไว้ทีหลัง');
+    expect(th).toContain('ต้องเปิด Dev Mode ในหน้า Plugin Settings ก่อน');
     expect(en).toContain('Connect ChatGPT to lnwjud');
     expect(en).toContain('Start setup');
     expect(en).toContain('Set up later');
@@ -59,7 +60,9 @@ describe('guided tunnel onboarding UI', () => {
 
   it('renders the correct first required step from actual tunnel state', () => {
     expect(guideMarkup('th', tunnel())).toContain('1. สร้าง OpenAI Tunnel');
+    expect(guideMarkup('th', tunnel())).toContain('ต้องเปิด Dev Mode ในหน้า Plugin Settings ก่อน');
     expect(guideMarkup('en', tunnel({ hasApiKey: true }))).toContain('1. Create an OpenAI Tunnel');
+    expect(guideMarkup('en', tunnel({ hasApiKey: true }))).toContain('enable Dev Mode in Plugin Settings first');
     expect(guideMarkup('en', tunnel({ profileExists: true }))).toContain('2. Create a Runtime API key');
     expect(guideMarkup('en', tunnel({ hasApiKey: true, profileExists: true }))).toContain('4. Start the Tunnel');
   });

@@ -100,10 +100,29 @@ describe('preload Tool Catalog validation', () => {
     });
   });
 
+  it('validates and exposes factory reset through the preload bridge', async () => {
+    electron.invoke.mockResolvedValueOnce({ accepted: true });
+    await expect(electron.exposed!.factoryReset()).resolves.toEqual({ accepted: true });
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.factoryReset);
+  });
+
   it('allows the ngrok authtoken setup target through the preload bridge', async () => {
     electron.invoke.mockResolvedValueOnce({ opened: true });
     await expect(electron.exposed!.openExternalSetupPage({ target: 'ngrok_authtoken' })).resolves.toEqual({ opened: true });
     expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.openExternalSetupPage, { target: 'ngrok_authtoken' });
+  });
+
+  it('accepts the unclean desktop-session incident classification from IPC', async () => {
+    electron.invoke.mockResolvedValueOnce({
+      exported: true,
+      cancelled: false,
+      classification: 'desktop_session_ended_uncleanly',
+      capturedAt: checkedAt,
+    });
+    await expect(electron.exposed!.captureIncident()).resolves.toMatchObject({
+      exported: true,
+      classification: 'desktop_session_ended_uncleanly',
+    });
   });
 
   it.each([

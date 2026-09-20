@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactElement } from 'react';
-import type { IncidentClassification, LiveLogExportReference, LogLine, LogSource, TunnelAuthStatus, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import type { IncidentClassification, LiveLogExportReference, LogLine, LogSessionSummary, LogSource, TunnelAuthStatus, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
@@ -21,6 +21,8 @@ interface LiveLogsPageProps {
   readonly incidentCapturedAt: string | null;
   readonly incidentNotice: string | null;
   readonly workspaces: readonly WorkspaceSummary[];
+  readonly sessions?: readonly LogSessionSummary[];
+  readonly onLoadSessionHistory?: (scope: LogScopeSelection) => Promise<unknown>;
 }
 
 type LogTab = LogSource;
@@ -95,6 +97,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
             detailEmptyLabel={t('logDetail.empty')}
             legacyIncompleteLabel={t('logDetail.legacyIncomplete')}
             workspaces={props.workspaces}
+            {...(source === 'tunnel' || props.onLoadSessionHistory === undefined ? {} : { sessions: props.sessions, onSessionChange: async (scope: LogScopeSelection): Promise<void> => { await props.onLoadSessionHistory?.(scope); } })}
             workspaceLabel={t('scope.workspace')}
             sessionLabel={t('scope.session')}
             scopeAllLabel={t('scope.all')}

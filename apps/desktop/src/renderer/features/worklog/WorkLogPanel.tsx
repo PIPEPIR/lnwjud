@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
-import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type LogSessionSummary, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
 import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
 import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
+import { collectSessionFilterOptions, collectWorkspaceFilterOptions, type ScopeFilterSample } from '../../scope-filter-options.js';
 
 export type WorkLogFilter = 'all' | 'error';
 
@@ -36,6 +37,8 @@ interface WorkLogPanelProps {
   readonly onSearchTargetDetails?: (query: string, candidates: readonly { readonly id: string; readonly detailRef: string | null }[]) => Promise<readonly string[]>;
   readonly entries: readonly WorkLogEntry[];
   readonly inFlight: readonly InFlightWorkItem[];
+  readonly sessions?: readonly LogSessionSummary[];
+  readonly onSessionChange?: (scope: LogScopeSelection) => Promise<void>;
   readonly searchPlaceholder?: string;
   readonly copyLabel?: string;
   readonly copiedLabel?: string;
@@ -72,14 +75,25 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   );
   const [feedFreeze, setFeedFreeze] = useState<typeof currentFeed | null>(null);
   const feed = activeLogFeed(feedFreeze, currentFeed);
-  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feed.entries, feed.inFlight, feed.workspaces), [feed]);
-  const sessionOptions = useMemo(() => collectSessionOptions(feed.entries, feed.inFlight, workspaceId, feed.workspaces), [feed, workspaceId]);
+  const scopeFilterSamples = useMemo<readonly ScopeFilterSample[]>(() => [
+    ...feed.entries.map((entry) => ({ workspaceId: entry.workspaceId, sessionId: entry.sessionId, timestamp: entry.timestamp })),
+    ...feed.inFlight.map((item) => ({ workspaceId: item.workspaceId, sessionId: item.sessionId, timestamp: item.startedAt })),
+    ...(props.sessions ?? []).map((session) => ({ workspaceId: session.workspaceId, sessionId: session.sessionId, timestamp: session.startedAt })),
+  ], [feed, props.sessions]);
+  const workspaceOptions = useMemo(() => collectWorkspaceFilterOptions(scopeFilterSamples, feed.workspaces), [scopeFilterSamples, feed.workspaces]);
+  const sessionOptions = useMemo(
+    () => collectSessionFilterOptions(scopeFilterSamples, workspaceId, feed.workspaces, props.locale ?? 'th', props.sessionLabel ?? 'Session'),
+    [scopeFilterSamples, workspaceId, feed.workspaces, props.locale, props.sessionLabel],
+  );
   useEffect(() => {
     if (workspaceId !== null && !workspaceOptions.some((option) => option.id === workspaceId)) setWorkspaceId(null);
   }, [workspaceId, workspaceOptions]);
   useEffect(() => {
-    if (sessionId !== null && !sessionOptions.includes(sessionId)) setSessionId(null);
-  }, [sessionId, sessionOptions]);
+    if (sessionId !== null && !sessionOptions.some((option) => option.id === sessionId)) {
+      setSessionId(null);
+      void props.onSessionChange?.({ workspaceId, sessionId: null });
+    }
+  }, [props.onSessionChange, sessionId, sessionOptions, workspaceId]);
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const candidates = useMemo(
     () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, '', scope, feed.workspaces),
@@ -169,16 +183,24 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       <div className="scope-filter-bar">
         <label>
           <span>{props.workspaceLabel ?? 'Workspace'}</span>
-          <select value={workspaceId ?? ''} onChange={(event) => setWorkspaceId(event.target.value.length === 0 ? null : event.target.value)}>
+          <select value={workspaceId ?? ''} onChange={(event) => {
+            const nextWorkspaceId = event.target.value.length === 0 ? null : event.target.value;
+            setWorkspaceId(nextWorkspaceId);
+            if (sessionId !== null) void props.onSessionChange?.({ workspaceId: nextWorkspaceId, sessionId });
+          }}>
             <option value="">{props.scopeAllLabel ?? 'All'}</option>
             {workspaceOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
         </label>
         <label>
           <span>{props.sessionLabel ?? 'Session'}</span>
-          <select value={sessionId ?? ''} onChange={(event) => setSessionId(event.target.value.length === 0 ? null : event.target.value)}>
+          <select value={sessionId ?? ''} onChange={(event) => {
+            const nextSessionId = event.target.value.length === 0 ? null : event.target.value;
+            setSessionId(nextSessionId);
+            void props.onSessionChange?.({ workspaceId, sessionId: nextSessionId });
+          }}>
             <option value="">{props.scopeAllLabel ?? 'All'}</option>
-            {sessionOptions.map((value) => <option key={value} value={value}>{shortScopeId(value)}</option>)}
+            {sessionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
         </label>
       </div>
@@ -287,44 +309,6 @@ function matchesScope(item: Pick<WorkLogEntry, 'workspaceId' | 'sessionId'> | Pi
 function scopedActivityId(item: InFlightWorkItem): string {
   if (item.workspaceId === null && item.sessionId === null) return item.callId;
   return [item.workspaceId ?? 'global', item.sessionId ?? 'global', item.callId].join(':');
-}
-
-function collectWorkspaceOptions(entries: readonly WorkLogEntry[], inFlight: readonly InFlightWorkItem[], workspaces: readonly WorkspaceSummary[] | undefined): readonly { readonly id: string; readonly label: string }[] {
-  const workspaceList = workspaces ?? [];
-  const canonicalWorkspaces = workspaceList.filter((workspace, index) =>
-    workspace.kind !== 'machine_root'
-    && canonicalWorkspaceScopeId(workspaceList, workspace.id) === workspace.id
-    && workspaceList.findIndex((candidate) => canonicalWorkspaceScopeId(workspaceList, candidate.id) === workspace.id) === index,
-  );
-  const nameCounts = new Map<string, number>();
-  for (const workspace of canonicalWorkspaces) {
-    const key = workspace.displayName.trim().toLocaleLowerCase();
-    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
-  }
-  const labels = new Map<string, string>();
-  for (const workspace of canonicalWorkspaces) {
-    const key = workspace.displayName.trim().toLocaleLowerCase();
-    const duplicateName = (nameCounts.get(key) ?? 0) > 1;
-    labels.set(workspace.id, duplicateName
-      ? `${workspace.displayName} — ${workspace.id} — ${workspace.realRootPath}`
-      : `${workspace.displayName} — ${workspace.id}`);
-  }
-  for (const item of [...entries, ...inFlight]) {
-    if (item.workspaceId === null) continue;
-    const canonicalId = canonicalWorkspaceScopeId(workspaceList, item.workspaceId);
-    if (labels.has(canonicalId)) continue;
-    labels.set(canonicalId, shortScopeId(canonicalId));
-  }
-  return [...labels.entries()].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function collectSessionOptions(entries: readonly WorkLogEntry[], inFlight: readonly InFlightWorkItem[], workspaceId: string | null, workspaces: readonly WorkspaceSummary[] | undefined): readonly string[] {
-  const values = new Set<string>();
-  for (const item of [...entries, ...inFlight]) {
-    if (workspaceId !== null && !workspaceScopeMatches(workspaces ?? [], item.workspaceId, workspaceId)) continue;
-    if (item.sessionId !== null) values.add(item.sessionId);
-  }
-  return [...values].sort();
 }
 
 function ScopeBadges(props: { readonly item: Pick<WorkLogEntry, 'workspaceId' | 'sessionId'> | Pick<InFlightWorkItem, 'workspaceId' | 'sessionId'>; readonly showWorkspace: boolean; readonly showSession: boolean; readonly workspaces: readonly WorkspaceSummary[] | undefined }): ReactElement | null {

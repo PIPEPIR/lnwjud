@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { CodexDiscovery } from '@lnwjud/codex';
+import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
 
@@ -186,6 +187,100 @@ describe('DesktopRuntime persistence', () => {
       await secondRuntime.close();
     }
   }, RUNTIME_TEST_TIMEOUT_MS);
+
+  it('keeps completed MCP work-log sessions visible across a Desktop runtime restart', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-worklog-restart-data-'));
+    const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-worklog-restart-workspace-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRoot = await realpath(rawWorkspaceRoot);
+
+    const firstRuntime = createDesktopRuntime(dataRoot, { logSessionId: 'desktop-launch-a' });
+    let priorSessionId: string | null = null;
+    try {
+      const workspace = await firstRuntime.services.addWorkspace({ rootPath: workspaceRoot });
+      const status = await firstRuntime.services.startMcp({ workspaceId: workspace.id });
+      if (status.url === null) throw new Error('MCP listener did not expose a URL');
+      const client = new Client({ name: 'desktop-worklog-restart-test', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(status.url));
+      try {
+        await client.connect(transport);
+        const info = await client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspace.id } });
+        expect(info.isError).not.toBe(true);
+        const previousRows = (await firstRuntime.services.getDashboard()).workLog.filter((entry) => entry.toolName === 'workspace_info');
+        expect(previousRows.length).toBeGreaterThan(0);
+        priorSessionId = previousRows.find((entry) => entry.sessionId !== null)?.sessionId ?? null;
+        expect(priorSessionId).toBe('desktop-launch-a');
+        await expect(readFile(path.join(dataRoot, 'mcp-activity.log'), 'utf8')).resolves.toContain('"sessionId":"desktop-launch-a"');
+      } finally {
+        await client.close().catch(() => undefined);
+      }
+    } finally {
+      await firstRuntime.close();
+    }
+
+    const restartedRuntime = createDesktopRuntime(dataRoot, { logSessionId: 'desktop-launch-b' });
+    try {
+      const restoredRows = (await restartedRuntime.services.getDashboard()).workLog.filter((entry) => entry.toolName === 'workspace_info');
+      expect(restoredRows.some((entry) => entry.sessionId === priorSessionId)).toBe(true);
+      const restoredWorkspace = (await restartedRuntime.services.listWorkspaces()).find((entry) => entry.rootPath === workspaceRoot);
+      if (restoredWorkspace === undefined) throw new Error('Workspace registration was not restored');
+      const status = await restartedRuntime.services.startMcp({ workspaceId: restoredWorkspace.id });
+      if (status.url === null) throw new Error('Restarted MCP listener did not expose a URL');
+      const client = new Client({ name: 'desktop-worklog-restart-test-b', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(status.url));
+      try {
+        await client.connect(transport);
+        const info = await client.callTool({ name: 'workspace_info', arguments: { workspaceId: restoredWorkspace.id } });
+        expect(info.isError).not.toBe(true);
+      } finally {
+        await client.close().catch(() => undefined);
+      }
+      const allRows = (await restartedRuntime.services.getDashboard()).workLog.filter((entry) => entry.toolName === 'workspace_info');
+      expect(allRows.some((entry) => entry.sessionId === 'desktop-launch-a')).toBe(true);
+      expect(allRows.some((entry) => entry.sessionId === 'desktop-launch-b')).toBe(true);
+    } finally {
+      await restartedRuntime.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
+  it('discovers and loads a session older than the 500-row dashboard window', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-old-session-data-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const database = new SqliteDatabase(path.join(dataRoot, 'lnwjud.sqlite'));
+    const repository = new SqliteAuditRepository(database);
+    const insertActivity = async (id: string, timestamp: string, workspaceId: string, sessionId: string): Promise<void> => {
+      await repository.insert({
+        id, timestamp, actorId: 'test', actorName: 'test', workspaceId, sessionId,
+        action: 'mcp_tool:read_file', resultCode: 'SUCCESS', durationMs: 1,
+        metadata: { toolName: 'read_file', callId: id, phase: 'completed', targetDetail: { detailRef: null, itemCount: 0, preview: [], legacyIncomplete: false } },
+      });
+    };
+    await insertActivity('old-event', '2026-08-20T00:00:00.000Z', 'workspace-old', 'session-old');
+    const base = Date.parse('2026-08-21T00:00:00.000Z');
+    for (let index = 0; index < 520; index += 1) {
+      await insertActivity(`new-${index}`, new Date(base + index * 1_000).toISOString(), 'workspace-new', 'session-new');
+    }
+    database.close();
+
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const dashboard = await runtime.services.getDashboard() as Awaited<ReturnType<typeof runtime.services.getDashboard>> & {
+        readonly workLogSessions?: readonly { readonly sessionId: string; readonly workspaceId: string | null; readonly startedAt: string; readonly lastActivityAt: string }[];
+      };
+      expect(dashboard.workLog.some((entry) => entry.sessionId === 'session-old')).toBe(false);
+      expect(dashboard.workLogSessions).toEqual(expect.arrayContaining([expect.objectContaining({ sessionId: 'session-old', workspaceId: 'workspace-old' })]));
+
+      const historyServices = runtime.services as typeof runtime.services & {
+        loadLogSessionHistory(request: { readonly sessionId: string; readonly workspaceId?: string; readonly limit?: number }): Promise<{ readonly workLog: readonly { readonly sessionId: string | null; readonly id: string }[] }>;
+      };
+      const history = await historyServices.loadLogSessionHistory({ sessionId: 'session-old', workspaceId: 'workspace-old' });
+      expect(history.workLog).toEqual([expect.objectContaining({ id: 'old-event', sessionId: 'session-old' })]);
+    } finally {
+      await runtime.close();
+    }
+  }, LONG_RUNTIME_TEST_TIMEOUT_MS);
 
   it('applies and restores permission settings without restoring an MCP listener', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));

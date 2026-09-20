@@ -36,6 +36,8 @@ import {
   type ExportLogsRequest,
   type ExportWorkLogRequest,
   type IpcResponseMap,
+  type LoadLogSessionHistoryRequest,
+  type LoadLogSessionHistoryResult,
   type LogSnapshot,
   type ManagedBrowserStatus,
   type PdfProviderInstallResult,
@@ -106,6 +108,7 @@ import { CrashDiagnosticsRecorder, RendererRecoveryBarrier, RendererRecoveryPoli
 import { DesktopSessionDiagnostics } from './desktop-session-diagnostics.js';
 import { configureNativeCrashDiagnostics, pruneNativeCrashDumpsForDataPath } from './native-crash-diagnostics.js';
 import { RuntimeDiagnosticsHistoryRecorder, type RuntimeDiagnosticsSample } from './runtime-diagnostics-history.js';
+import { FACTORY_RESET_APPLY_ARG, applyPendingFactoryResetSync, clearFactoryResetBootstrapSync, clearFactoryResetStageSync, factoryResetBootstrapUserDataPath, stageFactoryResetSync } from './factory-reset.js';
 import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
@@ -184,6 +187,7 @@ export interface DesktopIpcServices {
   setToolAvailability(request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
   resetToolAvailability(request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
   getLogSnapshot(): Promise<LogSnapshot>;
+  loadLogSessionHistory(request: LoadLogSessionHistoryRequest): Promise<LoadLogSessionHistoryResult>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   resolveActivityTargetDetail(detailRef: string): Promise<{ readonly status: 'complete' | 'unavailable'; readonly detail: ActivityTargetDetail | null }>;
   searchActivityTargetDetails(candidates: readonly ActivityTargetSearchCandidate[], query: string): Promise<readonly string[]>;
@@ -197,6 +201,7 @@ export type MainWindowProvider = () => BrowserWindow | null;
 export interface DesktopIpcHooks {
   readonly onLocaleChanged?: (locale: UiLocale) => void;
   readonly onUserSettingsChanged?: (settings: UserSettings) => void;
+  readonly onFactoryReset?: () => Promise<{ readonly accepted: boolean }>;
   readonly ipcDrainBarrier?: DesktopIpcDrainBarrier;
 }
 
@@ -355,6 +360,10 @@ const defaultDesktopServices: DesktopIpcServices = {
     lines: [],
     tunnelLogPath: null,
     tunnelLogExists: false,
+  }),
+  loadLogSessionHistory: async (): Promise<LoadLogSessionHistoryResult> => ({
+    workLog: [],
+    logSnapshot: { lines: [], tunnelLogPath: null, tunnelLogExists: false },
   }),
   clearLogBuffer: async (): Promise<{ readonly cleared: boolean }> => ({ cleared: false }),
   resolveActivityTargetDetail: async (): Promise<{ readonly status: 'unavailable'; readonly detail: null }> => ({ status: 'unavailable', detail: null }),
@@ -715,6 +724,10 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return services.getLogSnapshot();
   });
+  registerHandler(ipcChannels.loadLogSessionHistory, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.loadLogSessionHistory(parseLoadLogSessionHistoryRequest(payload));
+  });
   registerHandler(ipcChannels.clearLogBuffer, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.clearLogBuffer(parseClearLogBufferRequest(payload));
@@ -750,6 +763,11 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return currentUpdateStatus;
+  });
+  registerHandler(ipcChannels.factoryReset, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return hooks.onFactoryReset === undefined ? { accepted: false } : hooks.onFactoryReset();
   });
   registerHandler(ipcChannels.checkForUpdates, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -880,6 +898,19 @@ function parseClearWorkLogRequest(payload: unknown): ClearWorkLogRequest {
   const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
   const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
   return { ...(workspaceId === undefined ? {} : { workspaceId }), ...(sessionId === undefined ? {} : { sessionId }) };
+}
+
+function parseLoadLogSessionHistoryRequest(payload: unknown): LoadLogSessionHistoryRequest {
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
+  const sessionId = boundedNonEmptyString(payload.sessionId, 'sessionId', 512).trim();
+  const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
+  const limit = payload.limit === undefined ? undefined : payload.limit;
+  if (limit !== undefined && (!Number.isInteger(limit) || typeof limit !== 'number' || limit < 1 || limit > 500)) throw new Error('Invalid IPC payload: limit');
+  return {
+    sessionId,
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+    ...(limit === undefined ? {} : { limit }),
+  };
 }
 
 function parseClearLogBufferRequest(payload: unknown): ClearLogBufferRequest {
@@ -1316,6 +1347,7 @@ let desktopLocale: UiLocale = 'th';
 let desktopUserSettings: UserSettings = defaultUserSettings;
 let autoUpdaterInitialized = false;
 let quitRequested = false;
+let factoryResetQueued = false;
 const desktopIpcDrainBarrier = new DesktopIpcDrainBarrier();
 let desktopShutdownCoordinator: DesktopShutdownCoordinator | null = null;
 let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
@@ -1419,6 +1451,52 @@ function refreshDesktopTrayMenu(): void {
     updateLabel: createTrayUpdateLabel(currentUpdateStatus, desktopLocale),
     quit: (): void => { app.quit(); },
   })));
+}
+
+async function requestFactoryReset(dataPath: string): Promise<{ readonly accepted: boolean }> {
+  if (factoryResetQueued) return { accepted: true };
+  const messages = nativeMessages(desktopLocale);
+  const confirmation = await dialog.showMessageBox({
+    type: 'warning',
+    title: messages.factoryResetTitle,
+    message: messages.factoryResetMessage,
+    detail: messages.factoryResetDetail,
+    buttons: [messages.factoryResetConfirm, messages.cancel],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (confirmation.response !== 0) return { accepted: false };
+
+  stageFactoryResetSync(dataPath);
+  factoryResetQueued = true;
+  setTimeout(() => {
+    const relaunch = (): void => {
+      const bootstrapUserDataPath = factoryResetBootstrapUserDataPath(dataPath);
+      const args = process.argv.slice(1).filter((argument) =>
+        argument !== FACTORY_RESET_APPLY_ARG && !argument.startsWith('--user-data-dir='));
+      app.relaunch({ args: [...args, `--user-data-dir=${bootstrapUserDataPath}`, FACTORY_RESET_APPLY_ARG] });
+      app.exit(0);
+    };
+    const coordinator = desktopShutdownCoordinator;
+    if (coordinator === null) {
+      relaunch();
+      return;
+    }
+    quitRequested = true;
+    void coordinator.requestQuit(relaunch).then((result) => {
+      if (result !== 'deferred') return;
+      factoryResetQueued = false;
+      try { clearFactoryResetStageSync(dataPath); } catch (error: unknown) {
+        console.error(`Factory reset marker cleanup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }).catch((error: unknown) => {
+      factoryResetQueued = false;
+      try { clearFactoryResetStageSync(dataPath); } catch { /* Keep the original reset error as the primary diagnostic. */ }
+      console.error(`Factory reset shutdown failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+  }, 0);
+  return { accepted: true };
 }
 
 function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateStatus {
@@ -2117,12 +2195,17 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
   const secrets = await resolveDesktopRuntimeSecrets(dataPath);
   recordDesktopStartup('runtime-secrets:end');
   recordDesktopStartup('runtime-create:begin');
+  const desktopLogSession = desktopSessionDiagnostics?.snapshot() ?? null;
   const runtime = createDesktopRuntime(dataPath, {
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
     collectIncidentMemory,
     captureRuntimeDiagnostics: () => { runtimeDiagnosticsHistory?.captureNow(); },
+    ...(desktopLogSession === null ? {} : {
+      logSessionId: desktopLogSession.current.sessionId,
+      ...(desktopLogSession.previous === null ? {} : { previousLogSessionStartedAt: desktopLogSession.previous.startedAt }),
+    }),
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
@@ -2332,10 +2415,11 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     applyDesktopUserSettings(runtime.getUserSettings());
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start({ skipExisting: true });
+    runtime.logHub.start();
     registerIpcHandlers(() => mainWindow, runtime.services, {
       onLocaleChanged: setDesktopLocale,
       onUserSettingsChanged: applyDesktopUserSettings,
+      onFactoryReset: () => requestFactoryReset(dataPath),
       ipcDrainBarrier: desktopIpcDrainBarrier,
     });
     recordDesktopStartup('window:create:begin');
@@ -2375,7 +2459,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
-    runtime.logHub.start({ skipExisting: true });
+    runtime.logHub.start();
     registerIpcHandlers(() => mainWindow, runtime.services, { ipcDrainBarrier: desktopIpcDrainBarrier });
     const viewer = openLogViewerWindow();
     if (viewer !== null) {
@@ -2625,38 +2709,61 @@ function configureDataPath(configuredDataPath?: string): string {
   return dataPath;
 }
 
-const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
-const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
-if (configuredUserDataPath !== undefined) {
-  configureCrashRecovery(configuredUserDataPath);
-  recordDesktopStartup('entrypoint');
-  recordDesktopStartup('instance-lock:begin');
-}
-const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
-if (configuredUserDataPath !== undefined) recordDesktopStartup(`instance-lock:end:${gotInstanceLock ? 'acquired' : 'denied'}`);
-if (!gotInstanceLock) {
-  app.quit();
-} else {
-  if (configuredUserDataPath !== undefined) configureDesktopSessionDiagnostics(configuredUserDataPath);
-  if (holdsSingleInstanceLock) {
-    app.on('second-instance', (_event, argv) => {
-      const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
-      if (existing !== null) {
-        if (existing.isMinimized()) existing.restore();
-        existing.show();
-        existing.focus();
-      } else if (argv.includes('--log-viewer')) {
-        openLogViewerWindow();
-      } else {
-        revealMainWindow();
-      }
-    });
+const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);
+if (factoryResetApplyRequested) {
+  const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
+  try {
+    if (!applyPendingFactoryResetSync(dataPath, resolveTunnelProfileDirectory())) {
+      throw new Error('Factory reset marker is missing');
+    }
+    const args = process.argv.slice(1).filter((argument) =>
+      argument !== FACTORY_RESET_APPLY_ARG && !argument.startsWith('--user-data-dir='));
+    app.relaunch({ args });
+    app.exit(0);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'unknown reset error';
+    console.error(`Factory reset failed: ${message}`);
+    try { dialog.showErrorBox('lnwjud reset failed', message); } catch { /* stderr remains available if native dialogs fail. */ }
+    app.exit(1);
   }
-  if (wantsMcpStdio(process.argv)) {
-    bootstrapMcpStdio();
-  } else if (process.argv.includes('--log-viewer')) {
-    bootstrapLogViewerOnly(configuredUserDataPath);
+} else {
+  const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
+  const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
+  if (configuredUserDataPath !== undefined) {
+    try { clearFactoryResetBootstrapSync(configuredUserDataPath); } catch (error: unknown) {
+      console.error(`Factory reset bootstrap cleanup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+  const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
+  if (!gotInstanceLock) {
+    app.quit();
   } else {
-    bootstrapDesktop(configuredUserDataPath);
+    if (configuredUserDataPath !== undefined) {
+      configureCrashRecovery(configuredUserDataPath);
+      recordDesktopStartup('entrypoint');
+      recordDesktopStartup('instance-lock:acquired');
+      configureDesktopSessionDiagnostics(configuredUserDataPath);
+    }
+    if (holdsSingleInstanceLock) {
+      app.on('second-instance', (_event, argv) => {
+        const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
+        if (existing !== null) {
+          if (existing.isMinimized()) existing.restore();
+          existing.show();
+          existing.focus();
+        } else if (argv.includes('--log-viewer')) {
+          openLogViewerWindow();
+        } else {
+          revealMainWindow();
+        }
+      });
+    }
+    if (wantsMcpStdio(process.argv)) {
+      bootstrapMcpStdio();
+    } else if (process.argv.includes('--log-viewer')) {
+      bootstrapLogViewerOnly(configuredUserDataPath);
+    } else {
+      bootstrapDesktop(configuredUserDataPath);
+    }
   }
 }

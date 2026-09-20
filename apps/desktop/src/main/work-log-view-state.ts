@@ -2,6 +2,8 @@ import type { AuditEvent } from '@lnwjud/audit';
 
 const LOG_VIEW_STATE_KEY = 'internal.log_view.work_log_clear_state.v1';
 const LEGACY_GLOBAL_CLEAR_KEY = 'work_log_cleared_at';
+const STARTUP_CLEAR_MIGRATION_KEY = 'internal.log_view.work_log_startup_clear_migrated.v1';
+const AUTOMATIC_STARTUP_CLEAR_WINDOW_MS = 2 * 60 * 1000;
 
 export interface WorkLogClearScope {
   readonly workspaceId?: string;
@@ -33,6 +35,23 @@ export class WorkLogViewState {
         ? { ...current, workspaces: { ...current.workspaces, [scope.workspaceId]: timestamp } }
         : { ...current, all: timestamp };
     this.store.set(LOG_VIEW_STATE_KEY, JSON.stringify(next));
+  }
+
+  public migrateAutomaticStartupClear(previousSessionStartedAt: string): boolean {
+    if (this.store.get(STARTUP_CLEAR_MIGRATION_KEY) === '1') return false;
+    const state = parseState(this.store.get(LOG_VIEW_STATE_KEY));
+    const previousStartedAt = validTimestamp(previousSessionStartedAt);
+    const clearTimestamp = validTimestamp(state.all);
+    let migrated = false;
+    if (previousStartedAt !== null && clearTimestamp !== null) {
+      const deltaMs = Date.parse(clearTimestamp) - Date.parse(previousStartedAt);
+      if (deltaMs >= 0 && deltaMs <= AUTOMATIC_STARTUP_CLEAR_WINDOW_MS) {
+        this.store.set(LOG_VIEW_STATE_KEY, JSON.stringify({ ...state, all: null } satisfies WorkLogClearState));
+        migrated = true;
+      }
+    }
+    this.store.set(STARTUP_CLEAR_MIGRATION_KEY, '1');
+    return migrated;
   }
 
   public isVisible(event: Pick<AuditEvent, 'timestamp' | 'workspaceId' | 'sessionId'>): boolean {

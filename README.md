@@ -53,11 +53,21 @@
 
 ## Current published version: v5.3.0
 
-## Current source version: v5.3.0
+## Current source version: v5.3.1
 
 Latest published release: **v5.3.0**. The download buttons above point directly to the published v5.3.0 assets.
 
-### What's new in v5.3.0
+### What's new in v5.3.1
+
+- **Issue #98 fixed:** `dom_cdp.navigate` now decodes the real `Page.navigate` response shape and always returns structured navigation acknowledgement instead of succeeding in Chrome but failing MCP output validation.
+- **Persistent logs and readable session history:** Desktop keeps prior Work Log/Live Log sessions across restarts, uses human-readable session timestamps, and shows project name + path in workspace filters.
+- **Safer reset and setup flow:** Factory Reset clears lnwjud state without deleting unrelated tunnel-client profiles, then returns to the first-run setup guide. The guide now calls out ChatGPT Plugin Developer mode and the Settings connection cards link directly to the relevant ChatGPT/tunnel/API-key setup pages.
+- **Input and log UX fixes:** text inputs no longer lose focus after each character, clearing Work Log also removes already-loaded historical entries, and startup log replay drains the bounded history immediately instead of taking tens of seconds to catch up.
+- **Lower dashboard cost:** activity-session history is loaded once and updated incrementally instead of rescanning/aggregating the full audit table every 2-second dashboard refresh.
+- **Shared skill routing and runtime cleanup:** skill selection is centralized, Serena/skill preflight behavior is more consistent, and the 5.3.1 runtime keeps the lifecycle and crash-diagnostic hardening from 5.3.0.
+- **CI/runtime maintenance:** GitHub Actions use the current Node 24-capable action runtimes, and the optional Dev Windows Installer workflow is manual-only so ordinary `dev` pushes do not build installers in GitHub Actions.
+
+### Historical: What's new in v5.3.0
 
 - **Issue #94 RAM leak fixed:** successful modern MCP requests now tear down their per-request `McpServer` lifecycle, unsubscribe `toolAvailabilityService` listeners, and release retained tool registries/schemas; pagination continuations are also bounded as secondary hardening.
 - **Crash evidence survives hard exits:** Desktop session heartbeats distinguish clean shutdown from abrupt termination. A recent unclean previous session is reported after restart only when stronger current failure evidence is absent. Local-only Crashpad evidence adds bounded crash-dump metadata plus per-process memory diagnostics, while a bounded 6-hour runtime trend samples memory, Electron process groups, CPU/event-loop pressure, active Node resources, retained log-buffer/dedupe counters, MCP activity/errors, and tool-availability listener counts once per minute.

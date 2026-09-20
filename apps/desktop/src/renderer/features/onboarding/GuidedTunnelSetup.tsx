@@ -190,6 +190,8 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
         <button type="button" className="guided-tunnel-close" aria-label={t('guidedTunnel.later')} onClick={close}>×</button>
       </div>
 
+      <div className="alert-box-warning" role="note">⚠️ {t('guidedTunnel.devModeWarning')}</div>
+
       <ol className="guided-tunnel-progress" aria-label={t('guidedTunnel.progress')}>
         {STEPS.map((candidate, index) => (
           <li key={candidate} className={index < stepIndex ? 'is-complete' : index === stepIndex ? 'is-current' : ''}>
