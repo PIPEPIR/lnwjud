@@ -51,13 +51,22 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.3.1
+## Current published version: v5.4.0
 
 ## Current source version: v5.4.0
 
-Latest published release: **v5.3.1**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
+Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
 
-### What's new in v5.3.1
+### What's new in v5.4.0
+
+- Native Goal automation is now durable across restart: automation plans, runs, attempts, milestone verification evidence, scheduled wake hints, and exact shell-dispatch recovery are persisted and bound to the owning Goal/workspace/lease.
+- Issue #100 is fixed by replacing historical durable-shell launch scans with indexed active-task state plus bounded history reads, preventing latency from growing with months of completed background-task history.
+- Automation terminal handling is crash-safe at the Goal boundary: finalize can reconcile `completing` after the root Goal has committed, cancellation linearizes root cancellation before local terminal state, and both paths have direct fault-injection coverage.
+- `automation_finalize` is treated as a destructive/opaque mutation because it can stop Goal-owned in-flight requests/tasks. Paused automations no longer receive an `advance` wake hint, and Windows verbatim-argument mode is included in immutable automation dispatch identity and runtime validation.
+- The release pipeline publishes only verified target-native artifacts from the exact successful main CI commit: Windows x64 Setup/Portable, macOS arm64/x64 DMG+ZIP, and Linux arm64/x64 AppImage+DEB, together with update feeds, per-target provenance, `RELEASE_MANIFEST.json`, and SHA-256 evidence.
+- The Settings Factory Reset action spacing/layout cleanup is included in the published desktop package.
+
+### Historical: What's new in v5.3.1
 
 - Browser CDP navigation now has a dedicated `Page.navigate` decoder instead of passing the method through the `Runtime.evaluate` value reader. Successful requests return a structured acknowledgement containing the requested/complete state plus frame/loader/download fields when present; protocol errors, `errorText`, malformed responses, protected-tab authorization, and raw-error sanitization remain guarded. This resolves Issue #98 where navigation could succeed in Chrome but fail MCP output validation because `structuredContent` was missing.
 - Desktop log/session history persists across application restart and is presented with human-readable timestamps. Work Log and Live Log share scope formatting, workspace filters show project name + real path, and clearing a session/workspace/all history also removes any historical entries already loaded in renderer state.
@@ -452,13 +461,13 @@ Choose the guide for the host you will run lnwjud on:
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current published Windows 10/11 x64 v5.3.1 artifacts are `lnwjud-Setup-5.3.1.exe` (recommended installer) and `lnwjud-Portable-5.3.1.exe` (no installation required).
+   Current published Windows 10/11 x64 v5.4.0 artifacts are `lnwjud-Setup-5.4.0.exe` (recommended installer) and `lnwjud-Portable-5.4.0.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run the currently published `lnwjud-Portable-5.3.1.exe` directly.
+If you prefer not to install the app, run the currently published `lnwjud-Portable-5.4.0.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -504,7 +513,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.3.1. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.4.0. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -565,12 +574,12 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ v5.3.1 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำสำหรับ v5.4.0 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.3.1.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.3.1.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.4.0.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-5.4.0.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
