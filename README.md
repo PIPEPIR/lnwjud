@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.3.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.4.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.3.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.3.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.3.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.3.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.3.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.3.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,13 +51,21 @@
 
 ---
 
-## Current published version: v5.3.1
+## Current published version: v5.4.0
 
 ## Current source version: v5.4.0
 
-Latest published release: **v5.3.1**. The download buttons above point directly to the published v5.3.1 assets.
+Latest published release: **v5.4.0**. The download buttons above point directly to the published v5.4.0 assets.
 
-### What's new in v5.3.1
+### What's new in v5.4.0
+
+- **Crash-safe native Goal automation:** v5.4.0 adds persisted automation runs, milestone dispatch/verification, Goal-owned lifecycle control, scheduled resume, exact durable-shell recovery, and cross-restart reconciliation.
+- **Issue #100 fixed:** durable shell task history no longer grows linearly with historical background-task records; active-task indexing and bounded history reads keep long-lived installations responsive.
+- **Automation safety hardening:** finalize/cancel operations recover cleanly across partial persistence failures, `automation_finalize` now uses destructive confirmation semantics, paused runs are not advertised as resumable work, and Windows verbatim-argument mode is part of immutable dispatch identity.
+- **Verified cross-platform release pipeline:** Windows x64, macOS arm64/x64, and Linux arm64/x64 packages are published only from the exact successful main CI commit with per-target provenance, aggregate manifest, and SHA-256 evidence.
+- **Settings cleanup:** the Factory Reset action spacing/layout cleanup is included in the published desktop build.
+
+### Historical: What's new in v5.3.1
 
 - **Issue #98 fixed:** `dom_cdp.navigate` now decodes the real `Page.navigate` response shape and always returns structured navigation acknowledgement instead of succeeding in Chrome but failing MCP output validation.
 - **Persistent logs and readable session history:** Desktop keeps prior Work Log/Live Log sessions across restarts, uses human-readable session timestamps, and shows project name + path in workspace filters.
