@@ -212,6 +212,12 @@ describe('cross-platform desktop packaging', () => {
     expect(posixLauncher).toContain('exec "$APP" --mcp-stdio "$@"');
     expect(stdioLauncher).not.toContain(path.win32.join('%ProgramFiles%', 'nodejs'));
     expect(stdioLauncher).not.toContain(path.win32.join('%LOCALAPPDATA%', 'Programs', 'nodejs'));
+    const desktopServices = await readFile(path.join(desktopRoot, 'src', 'main', 'desktop-services.ts'), 'utf8');
+    expect(desktopServices).toContain('new SqliteAutomationRepository(database)');
+    expect(desktopServices).toContain('automationFactory:');
+    expect(desktopServices).toContain('new AutomationVerifier(workspaceRepository, runtime, pathGuard)');
+    expect(desktopServices).toContain('automationResumes: automationRepository');
+    expect(desktopServices).not.toMatch(/AutomationScheduler|automationScheduler|automation_schedule/);
     await access(path.join(desktopRoot, 'dist', 'main', 'main.js'));
     await access(path.join(desktopRoot, 'dist', 'preload', 'index.cjs'));
     await access(path.join(desktopRoot, 'dist', 'renderer', 'index.html'));
