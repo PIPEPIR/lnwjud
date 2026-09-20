@@ -8,7 +8,7 @@ Zod schemas in `packages/mcp-server/src/tools/` are the implementation source
 of truth. The existing human-oriented catalog remains useful for field details,
 while this document records the primitive/core contract, preserves the earlier
 compatibility baseline, and records policy class, annotations, and schema source.
-The complete v4 inventory contains 233 tool definitions. The default runtime currently advertises 226 through `tools/list`, and all 233 are advertised when the six `codex_*` delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled. The seven Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
+The historical v4 inventory contained 233 tool definitions. The current runtime contains 259 definitions, advertises 247 through `tools/list` by default, and advertises all 259 when the six `codex_*` delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled. The seven Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
 in `packages/mcp-server/src/upgrade-catalog.ts` and the exact runtime order is
 verified by `packages/mcp-server/src/tool-registry.test.ts`.
 
@@ -31,10 +31,12 @@ allowed to fail later.
 
 **Managed-browser target boundary:** page-targeted `dom_cdp` work is fail-closed and ID-pinned. The caller must first `list_tabs`, select the intended exact returned ID after inspecting URL/title, or create a safe target with `new_tab`; every target-scoped action and `steps` batch then carries that same top-level `tab_id`. A missing/closed ID is an error, never permission to select the first or OS-active tab. Native address-bar typing is not a browser-navigation fallback. Mutating a ChatGPT tab additionally requires both `allow_protected_tab_action: true` and real `userConfirmed: true`; Full Bypass does not satisfy that explicit-user condition.
 
+**Native automation ownership boundary (v5.4.0):** the six `automation_*` tools are an execution layer beneath an existing Durable Goal, not an independent scheduler. Creation and every mutation require the current Goal lease, the stored root `goalId`, matching actor/workspace ownership, and revision compare-and-swap. Full Bypass may skip ordinary application authorization, but it never skips this live Goal ownership fence. Only the `shell` provider is implemented; `process` and `codex` are unsupported rather than advertised as planned-working providers. An uncertain launch is persisted as `dispatched_unresolved` and must be observed; a new attempt is allowed only after exact absence is proven. Automation reuses the Goal's one existing hourly recurring Native ChatGPT scheduled continuation and never creates or retimes a schedule itself.
+
 <!-- BEGIN GENERATED TOOL REGISTRY -->
 ## Generated live ToolRegistry index
 
-This complete inventory is generated from `ToolRegistry.listAll()`: **253 total tool definitions**. The runtime advertises **241 tools by default** and **253 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
+This complete inventory is generated from `ToolRegistry.listAll()`: **259 total tool definitions**. The runtime advertises **247 tools by default** and **259 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
 Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm docs:tools:check` and fails on drift.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Read-only | Destructive |
@@ -292,6 +294,12 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 251 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
 | 252 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
 | 253 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 254 | `automation_create` | WRITE | default | operational | service_dispatch | no | no |
+| 255 | `automation_status` | READ | default | operational | service_dispatch | yes | no |
+| 256 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
+| 257 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 258 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
+| 259 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | no |
 <!-- END GENERATED TOOL REGISTRY -->
 
 ## Protocol and result rules
@@ -308,6 +316,9 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
   contract. A new compound tool cannot hide data that a primitive tool can read.
 - `workspaceId` is required where the operation is workspace-scoped unless an
   explicitly normalized absolute path is accepted by that tool's schema.
+- Automation events are append-only, redacted, actor/workspace scoped, and
+  returned in bounded sequence pages. Raw task output remains in the owned shell
+  task store rather than being copied into automation rows or events.
 
 ## Permission classes
 
@@ -320,13 +331,13 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 
 Desktop uses its configured local permission profile. Packaged stdio keeps `full` as the backward-compatible default but accepts `safe|balanced|full|custom` through the launcher, environment, or Desktop STDIO policy settings. Desktop HTTP/Secure Tunnel and direct STDIO have independent Full Bypass toggles under the Full Access (Unrestricted) group; both default OFF and are effective only with profile `full`.
 
-No mode scans or registers drive letters automatically. With Full Bypass OFF, optional strict-root mode constrains access to explicit canonical roots and the normal ownership/path/Active Project/host approval/command-policy boundaries remain enforced. With Full Bypass ON, the gateway and inner runtimes skip every lnwjud application approval and scope check, including always-confirm tools, protected paths, explicit absolute outside paths, and `goalLease`. The authorization is carried separately from tool input and must never be forged as caller `userConfirmed: true`. Schema validation, relative-traversal rejection, exact task/process/worktree ownership, Windows ACL/UAC, provider availability, remote/child policy, and runtime errors remain.
+No mode scans or registers drive letters automatically. With Full Bypass OFF, optional strict-root mode constrains access to explicit canonical roots and the normal ownership/path/Active Project/host approval/command-policy boundaries remain enforced. With Full Bypass ON, the gateway and inner runtimes skip ordinary lnwjud application approval and scope checks, including always-confirm tools, protected paths, and explicit absolute outside paths. A live rolling scheduled-Goal mutation fence is different: workspace mutations and native automation mutations still require the exact current `goalLease` goal/token/generation proof so a stale worker cannot mutate after handoff. The authorization is carried separately from tool input and must never be forged as caller `userConfirmed: true`. Schema validation, relative-traversal rejection, exact task/process/worktree ownership, Windows ACL/UAC, provider availability, remote/child policy, and runtime errors remain.
 
 Mutations still receive typed policy classification for audit/dispatch behavior. With Full Bypass OFF, the only configurable scoped auto-approval exception is exact recoverable `delete_file`; every other approval-required mutation needs independent trusted host exact-action approval and providerless runtimes fail closed. Full Bypass ON supersedes those lnwjud authorization checks for its transport. Arbitrary commands and project-owned scripts remain opaque execution, not an OS sandbox, and outside-project changes are not automatically recoverable through Recovery Trash.
 
 ## Core primitive runtime catalog
 
-The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **233 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
+The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **259 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
 
 ## Schema groups and contract examples
 
@@ -405,6 +416,58 @@ they do not accept arbitrary shell command strings. The gateway previews exact
 executable/argv for approval and re-resolves immediately before spawn so a
 changed command requires fresh approval.
 
+### Native Goal automation
+
+```ts
+automation_create: {
+  workspaceId: string;
+  goalId: string;
+  leaseToken: string;
+  plan: {
+    milestones: Array<{
+      id: string;
+      title: string;
+      goalStepId: string;
+      dependsOn: string[];
+      provider: 'shell';
+      role: 'blocking_job' | 'supporting_service';
+      cancelWithGoal: boolean;
+      dispatch: {
+        executable: string;
+        arguments: string[];
+        cwd: string;
+        timeoutSeconds: number;
+        maxOutputBytes: number;
+        includeStdout: boolean;
+        includeStderr: boolean;
+        windowsVerbatimArguments?: boolean;
+      };
+      verification: Array<
+        | { id: string; kind: 'command_exit'; expectedExitCode: number }
+        | { id: string; kind: 'file_sha256'; path: string; expectedSha256: string }
+        | { id: string; kind: 'git_diff_check' }
+      >;
+    }>;
+  };
+}
+automation_status: { workspaceId: string; runId: string }
+automation_events: { workspaceId: string; runId: string; afterSequence?: number; limit?: number }
+automation_run: { workspaceId: string; goalId: string; runId: string; leaseToken: string; expectedRevision: number; userConfirmed?: boolean }
+automation_control: { workspaceId: string; goalId: string; runId: string; leaseToken: string; expectedRevision: number; action: 'pause' | 'resume' | 'cancel'; summary?: string; userConfirmed?: boolean }
+automation_finalize: { workspaceId: string; goalId: string; runId: string; leaseToken: string; expectedRevision: number; userConfirmed?: boolean }
+```
+
+Plans contain 1–128 acyclic milestones; every milestone maps to an existing Goal
+step and carries at least one verification requirement. There may be only one
+non-terminal automation run per Goal. `automation_status` and
+`automation_events` are read-only but still require matching actor/workspace
+ownership. Mutation tools also require the current root Goal lease and exact
+stored revision. `automation_run` advances to one deterministic dispatch,
+observation, or verification boundary; callers continue with the returned
+revision. The automation tools are deliberately ineligible for `tool_batch` so
+lease, revision, and evidence decisions cannot be hidden inside generic batch
+execution.
+
 ### Local capability and extension tools
 
 The detailed action enums and bounds are defined in `schemas.ts` and the
@@ -417,7 +480,7 @@ capability backends. Important invariants are:
 - `vision`, `health`, and `system_info` remain truthful read-only diagnostics;
 - `web_fetch` remains HTTP(S)-only and bounded by explicit byte/timeout fields;
 - `skills_*` and `mcp_*` remain bridge tools and do not silently flatten
-  child-server tools into the 233-definition complete inventory; `mcp_list` and
+  child-server tools into the 259-definition complete inventory; `mcp_list` and
   `mcp_describe` are read-only inspection while `mcp_call` is opaque mutation.
 
 The additive Windows gateway contract is:

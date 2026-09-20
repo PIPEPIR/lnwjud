@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v5.3.1 (มีทั้งหมด 253 definitions; advertise 241 tools โดยปริยายก่อนใช้ per-tool override และครบ 253 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v5.3.1 (มีทั้งหมด 259 definitions; advertise 247 tools โดยปริยายก่อนใช้ per-tool override และครบ 259 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -26,6 +26,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery รวมถึง incident diagnostics แบบ bounded ที่เก็บ session heartbeat, local Crashpad metadata, current per-process memory และ runtime trend ย้อนหลังสูงสุดประมาณ 6 ชั่วโมง (1 นาทีต่อ sample) สำหรับ RSS/V8 heap/external/ArrayBuffer, Browser/Tab/GPU/Utility working/private bytes, system RAM, CPU/event-loop, active Node resources, retained LogHub line/byte/dedupe counters, MCP activity/error/in-flight และจำนวน `toolAvailabilityService` listeners โดยไม่แนบ raw heap dump อัตโนมัติ
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF
 - ปิด Native ChatGPT recurring watchdog ก่อน terminal completion เป็นเส้นทางหลัก และกู้ exact pending cleanup locator จาก durable state ได้หาก host surface/turn หลุดระหว่างปิดงาน; terminal cleanup-only wake ไม่มีสิทธิ์กลับไปแก้ workspace
+- รัน Native Goal automation แบบ milestone ที่ตรวจหลักฐานได้ โดยใช้ durable shell เดิม, current Goal lease และ recurring watchdog เดิมหนึ่งรายการ โดยไม่สร้าง scheduler ใหม่หรือ replay งานที่ผลลัพธ์ยังไม่ทราบ
 - เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking โดย per-tool override ไม่สามารถข้าม Settings/runtime prerequisite ได้ เช่น `codex_*` และ `agent_swarm_run` จะยังไม่ถูก expose จนกว่า Codex Delegation จะเปิดและ runtime ที่จำเป็นพร้อม
 - MCP connection ที่ค้างอยู่รับการเปลี่ยน tool list ผ่าน SDK `notifications/tools/list_changed`; stdio process เห็น state จาก SQLite ร่วมด้วย bounded watcher โดยไม่ต้อง restart
 
@@ -131,7 +132,7 @@ Bridge นี้ทำให้ lnwjud เป็น MCP gateway ได้ แต
 4. เรียก tool จริง เช่น workspace_list หรือ workspace_info
 5. ตรวจผลใน Live Logs, process logs หรือ tunnel log
 
-สำหรับ runtime contract ปัจจุบัน full registry มี 231 tool definitions; ค่า default โฆษณา 224 tools และครบ 231 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. การเห็น catalog เป็นหลักฐานของ runtime ที่ทดสอบ ไม่ได้ยืนยันว่า tunnel หรือ client ภายนอกกำลังเชื่อมอยู่ในขณะนั้น
+สำหรับ runtime contract ปัจจุบัน full registry มี 259 tool definitions; ค่า default โฆษณา 247 tools และครบ 259 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. การเห็น catalog เป็นหลักฐานของ runtime ที่ทดสอบ ไม่ได้ยืนยันว่า tunnel หรือ client ภายนอกกำลังเชื่อมอยู่ในขณะนั้น
 
 ถ้า Start Tunnel เชื่อมแล้วหลุดวน:
 
@@ -154,7 +155,7 @@ Bridge นี้ทำให้ lnwjud เป็น MCP gateway ได้ แต
 | Codex | discover executable, status, run task, task status/logs/stop, quota-safe audit boundary |
 | Compound work | tool_batch, dependency waves, timeout, cancel, partial results, parallel read และ serialized mutation |
 | Context intelligence | route intent, context ranking, debug/review/change/symbol/test/dependency/frontend/backend context, dev_context, Context Economy, ledger, diff/reference delivery, quota telemetry |
-| Automation | recipe catalog/list/describe/run, dry-run, execution plan, lifecycle hooks และ recovery |
+| Automation | recipe/dry-run/execution plan และ Native Goal automation 6 tools สำหรับ create/status/events/run/control/finalize โดยยืนยันผลด้วย durable shell evidence |
 | Agent lifecycle | managed tasks, delegates, parallel delegation, session context/checkpoint/resume/history และ handoff bundle |
 | Windows | environment, service, process, port, registry, event log, runtime, path และ startup context |
 | Browser/UI | CDP, DOM, accessibility, input events, managed window, screenshot, UI state, form/network/console context |
@@ -165,6 +166,24 @@ Bridge นี้ทำให้ lnwjud เป็น MCP gateway ได้ แต
 | Discovery | capabilities, tool categories, tool search, tool function finder, tool schema registry, stable aliases |
 | Quality | benchmark_run, regression_report, cache stats/clear/invalidate และ release compatibility gates |
 | Project profile | อ่าน/ตั้ง project intelligence profile เพื่อเสริม context โดยไม่ลดสิทธิ์การเข้าถึง |
+
+## Native Goal automation
+
+> **ข้อกำหนดก่อนใช้:** ต้องมี Durable Goal ที่ active, อยู่ใน workspace เดียวกัน และถือ `goalLease` ปัจจุบันของ Goal นั้น การอยู่ใน MCP session เดียวกันหรือเปิด Full Bypass ไม่ถือเป็นหลักฐาน ownership แทน lease
+
+Native Goal automation เป็น execution layer ใต้ Goal ไม่ใช่ scheduler แยกต่างหาก:
+
+1. `automation_create` สร้าง milestone graph แบบ bounded และ acyclic โดยทุก milestone ต้องผูกกับ Goal step ที่มีอยู่จริง
+2. `automation_status` และ `automation_events` อ่าน run/event page ของ actor และ workspace เจ้าของเท่านั้น
+3. `automation_run` เดินหน้าเพียงหนึ่งขอบเขตที่แน่นอนต่อครั้ง ได้แก่ dispatch, observe หรือ verify แล้วให้ caller ใช้ revision ใหม่รอบถัดไป
+4. `automation_control` ใช้ pause/resume/cancel; การ cancel จะใช้ `cancelWithGoal` กับ task ที่ Goal เป็นเจ้าของตามที่ประกาศไว้
+5. `automation_finalize` สำเร็จเมื่อทุก milestone และ evidence terminal, scheduled-task cleanup เสร็จ และอ่านกลับได้ว่า root Goal เป็น terminal จริง
+
+provider ที่รองรับจริงมีเฉพาะ `shell`; `process` และ `codex` ไม่ได้ถูกโฆษณาว่าพร้อมใช้งาน แต่ละ milestone ระบุ role เป็น `blocking_job` หรือ `supporting_service` และตรวจได้ด้วย `command_exit`, `file_sha256` หรือ `git_diff_check`. Raw stdout/stderr ยังอยู่ใน durable shell task store ไม่ถูกคัดลอกลง automation event หรือ SQLite row ที่ใช้ orchestration
+
+การกู้หลัง crash เป็นแบบ fail-closed: reservation ผูก exact task ID กับ request digest ก่อน launch, task ที่พบจะ reattach, ผล probe ที่ยังไม่ทราบจะคง `dispatched_unresolved` และ block ไว้ และจะเริ่ม attempt ใหม่ได้ต่อเมื่อพิสูจน์ exact absence แล้วเท่านั้น Automation ไม่สร้าง/ลบ/retime schedule; มันใช้ Native ChatGPT scheduled continuation แบบ hourly รายการเดียวที่ root Goal มีอยู่แล้ว
+
+durable shell ใช้ active index และ launch journal เพื่อไม่ต้องสแกนประวัติ terminal ทั้งหมดใน warm path. รายละเอียด layout, bootstrap, pagination, fail-closed marker และวิธีวัดประสิทธิภาพอยู่ใน [Durable shell performance and recovery](development/DURABLE_SHELL_PERFORMANCE.md)
 
 ## Workspace, filesystem และ full visibility
 
@@ -305,7 +324,7 @@ Audit ถูกเก็บแบบ NDJSON ที่ redacted และไม�
 | Permission class | แยก filesystem.read/write/delete, shell, Git, process, browser, network และ system operation |
 | Profile | safe, balanced, full หรือ custom กำหนดค่าเริ่มต้นของ READ/WRITE/EXECUTE/DANGEROUS |
 | Standard-mode hard block | เมื่อ Full Bypass ปิด ปฏิเสธ action ที่ policy ของ lnwjud ห้ามแม้ full profile จะอนุญาต เช่น disk format หรือ shutdown/reboot |
-| Full Bypass | toggle แยก Desktop/STDIO ที่ใช้ได้เฉพาะ profile full; ข้าม approval, host prompt, profile/command policy, Active Project/roots/protected path และ `goalLease` ของ lnwjud |
+| Full Bypass | toggle แยก Desktop/STDIO ที่ใช้ได้เฉพาะ profile full; ข้าม approval, host prompt, profile/command policy และ Active Project/roots/protected path แต่ไม่ข้าม live rolling Goal ownership fence |
 | Audit | บันทึก operation metadata ที่ผ่าน redaction และเชื่อมกับ Live Logs |
 
 ค่า profile โดยสรุป:
@@ -319,7 +338,7 @@ Audit ถูกเก็บแบบ NDJSON ที่ redacted และไม�
 
 Desktop HTTP MCP และ Secure Tunnel ใช้ Desktop profile/Full Bypass เดียวกัน ส่วน packaged direct STDIO ใช้ STDIO profile/Full Bypass แยกต่างหาก โดย default profile ยังคงเป็น `full` เพื่อ backward compatibility และสามารถเลือก `safe`, `balanced`, `full`, `custom` พร้อม Strict Roots ได้. Full Bypass ทั้งสองตัวเริ่ม OFF และไม่เปิดเองจากการเลือก Full.
 
-เมื่อ Full Bypass ปิด การลบไฟล์และคำสั่ง destructive ต้องผ่าน confirmation/operation policy. เมื่อเปิด lnwjud จะข้าม application approval, always-confirm families, host approval, command/scope/protected-path/`goalLease` checks และยอมรับ explicit absolute outside path โดยไม่ปลอม `userConfirmed`. Schema/input, relative traversal, process/task/worktree ownership, Windows ACL/UAC, provider/runtime, remote service และ child MCP policy ยังมีผล; งานนอก workspace อาจไม่มี Recovery Trash.
+เมื่อ Full Bypass ปิด การลบไฟล์และคำสั่ง destructive ต้องผ่าน confirmation/operation policy. เมื่อเปิด lnwjud จะข้าม application approval, always-confirm families, host approval และ command/scope/protected-path checks พร้อมยอมรับ explicit absolute outside path โดยไม่ปลอม `userConfirmed`. แต่ถ้ามี rolling scheduled Goal ที่ live งาน workspace mutation และ Native Goal automation ยังต้องส่ง exact current `goalLease` goal/token/generation เพื่อกัน worker เก่าทำงานหลัง handoff. Schema/input, relative traversal, process/task/worktree ownership, Windows ACL/UAC, provider/runtime, remote service และ child MCP policy ยังมีผล; งานนอก workspace อาจไม่มี Recovery Trash.
 
 ## Capability discovery และ extensibility
 
@@ -333,7 +352,7 @@ skill_match และ skill_load โหลด local skill ตาม intent ผ�
 
 ## รายชื่อ MCP tools ใน runtime snapshot
 
-runtime contract ปัจจุบันมีทั้งหมด 231 tool definitions; ค่า default ส่งกลับ 224 tools และส่งกลับครบ 231 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. Planned และ feature-disabled definitions ยังคงอยู่ใน complete inventory แต่ไม่ถูก advertise. รายชื่อ full registry ตามลำดับ canonical มีดังนี้:
+runtime contract ปัจจุบันมีทั้งหมด 259 tool definitions; ค่า default ส่งกลับ 247 tools และส่งกลับครบ 259 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. Planned และ feature-disabled definitions ยังคงอยู่ใน complete inventory แต่ไม่ถูก advertise. รายชื่อ full registry ตามลำดับ canonical มีดังนี้:
 
 ~~~text
 workspace_list
@@ -375,6 +394,7 @@ codex_task_list
 codex_task_status
 codex_task_logs
 codex_stop
+agent_swarm_run
 shell
 dom_cdp
 computer_use
@@ -398,6 +418,7 @@ wsl_exec
 wsl_fs
 skills_list
 skills_read
+ponytail_session
 mcp_list
 mcp_describe
 mcp_call
@@ -418,9 +439,21 @@ session_handoff
 verify_incremental
 run_goal
 get_goal
+get_goal_plan
+update_goal_plan
+update_goal_acceptance
+revise_goal_intent
+create_context_capsule
+get_context_capsule
+list_context_capsules
+context_pressure
+record_delivery_receipt
+list_delivery_receipts
+advance_goal_iteration
 checkpoint_goal
 finish_goal
 cancel_goal
+reconcile_goals
 list_goals
 prepare_scheduled_continuation
 record_scheduled_continuation_receipt
@@ -565,8 +598,22 @@ docx_merge
 self_heal_plan
 self_heal_apply
 skills_import
-agent_swarm_run
+ecc_status
+ecc_catalog
+ecc_load
+ecc_configure
+ecc_security_scan
+ecc_memory_save
+ecc_memory_search
+ecc_memory_read
+ecc_memory_doctor
 tool_batch
+automation_create
+automation_status
+automation_events
+automation_run
+automation_control
+automation_finalize
 ~~~
 
 ## การตั้งค่าที่เกี่ยวข้อง

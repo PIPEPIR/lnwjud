@@ -42,7 +42,7 @@ MCP clients (ChatGPT / Codex / Claude / other agents)
              MCP stdio or loopback Streamable HTTP
                          |
                          v
-                  ToolRegistry (253 total definitions; 241 default; all 253 with Codex + Agent Swarm)
+                  ToolRegistry (259 total definitions; 247 default; all 259 with Codex + Agent Swarm)
                          |
        +-----------------+------------------+
        |                 |                  |
@@ -70,8 +70,8 @@ MCP clients (ChatGPT / Codex / Claude / other agents)
 
 | Layer | Current responsibility | Upgrade extension point |
 | --- | --- | --- |
-| `packages/domain` | IDs, errors, result contracts, policy-neutral types | context/page/task IDs |
-| `packages/application` | workspace, file, search, Git, process, project, Codex, doctor use cases | parallel/context/index/recipe services |
+| `packages/domain` | IDs, errors, result contracts, policy-neutral types, automation state machine and bounded plan validation | context/page/task IDs |
+| `packages/application` | workspace, file, search, Git, process, project, Codex, doctor and Goal-owned automation use cases | parallel/context/index/recipe services |
 | `packages/workspace` | workspace registration, root/path guards, secret policy | index ownership and invalidation |
 | `packages/filesystem` | bounded text/binary reads, writes, checkpoints, patching | resumable reads and read-many primitives |
 | `packages/search` | executable resolution, direct ripgrep search, and context-economy policy primitives | indexed search, continuation, and deterministic summaries |
@@ -80,9 +80,9 @@ MCP clients (ChatGPT / Codex / Claude / other agents)
 | `packages/codex` | executable/capability discovery and owned Codex tasks | delegation/session handoff |
 | `packages/permissions` | safe/balanced/full/custom profiles and hard blocks | Permission System v2 policy graph |
 | `packages/audit` | redaction and structured audit events | child-call, cache, hook and planner events |
-| `packages/storage` | SQLite database, migrations, repositories | index/cache/session/telemetry stores |
-| `packages/mcp-server` | tool definitions, registry, stdio/HTTP transports | batch/context/router/recipe registration |
-| `packages/capabilities` | shell, CDP, Windows UI, input, vision, media, Office, scheduler, WSL, OCR boundary | Windows/browser intelligence |
+| `packages/storage` | SQLite database, migrations, repositories, automation run/milestone/attempt/event persistence | index/cache/session/telemetry stores |
+| `packages/mcp-server` | tool definitions, registry, stdio/HTTP transports, six-tool native automation surface and shell adapter | batch/context/router/recipe registration |
+| `packages/capabilities` | shell, durable task index, CDP, Windows UI, input, vision, media, Office, scheduler, WSL, OCR boundary | Windows/browser intelligence |
 | `packages/extensions` | skills and local MCP bridge discovery/calls | plugin SDK, schema registry, aliases |
 | `packages/ipc-contracts` | typed Electron main/preload/renderer contracts | dashboard and Live Logs v2 contracts |
 | `apps/cli` | CLI runtime and packaged stdio launcher | benchmark and automation entrypoints |
@@ -105,14 +105,15 @@ builds the high-impact slices on top of it:
 | WinRT OCR | `VisionCapabilityBackend` routes only `action: ocr` to `WindowsOcrCapabilityBackend` and the packaged C# helper | no package identity/helper/language returns `available: false` |
 | Router | deterministic token/tag scorer with primitive visibility, reason codes, permission metadata, and local-rerank fallback | ranking never grants permission and local data never leaves the machine |
 | Durable Goal Continuation | `GoalContinuationService` + SQLite `goals`/append-only `goal_checkpoints`; stable client ownership, expiring hashed-token leases, revision CAS, active task IDs | corrupt state, stale revisions, wrong owner/lease, or terminal mutations fail closed; a resumed turn inspects persisted state instead of repeating work |
+| Native Goal Automation | `AutomationService` + SQLite automation rows + existing durable shell adapter/verifier; bounded milestone DAG, Goal-step mapping, revision CAS, owned task evidence | only `shell` is supported; uncertain dispatch becomes `dispatched_unresolved`, unknown observation blocks, and only exact absence permits a replacement attempt |
 | Tool Catalog + Doctor | live `ToolRegistry` metadata + cached main-process requirement registry + typed remediation registry feed both renderer surfaces | safe probe failure is `unknown`/`needs_setup`, permission deny is `blocked`, and renderer/external MCP text cannot manufacture trusted commands, URLs, or permission claims |
 | Later Windows/dev/productivity waves | catalog descriptors include requirements, availability, cancellation, dry-run, and audit target; Sandbox has an artifact-only WSB plan | missing optional runtime is `optional`/`planned`, never a fake successful execution |
 
 Long-running operations use the existing task handles where a concrete backend
 exists. Activity events now carry bounded `traceId`/`traceParent` values into
 NDJSON and SQLite audit metadata. The 184-tool snapshot remains a historical
-compatibility baseline. The complete inventory contains 233 tool definitions.
-Current transports advertise 226 by default or all 233 when the six Codex delegation tools plus Agent Swarm
+compatibility baseline. The current complete inventory contains 259 tool definitions.
+Current transports advertise 247 by default or all 259 when the six Codex delegation tools plus Agent Swarm
 are enabled; planned and feature-disabled definitions remain inventory-only,
 and registry additions remain append-only.
 
@@ -183,10 +184,13 @@ and surfaces unexpected exits/reconnect state.
 - Desktop HTTP/Secure Tunnel and direct STDIO expose separate Full Bypass toggles
   under Full Access (Unrestricted). They default OFF, require profile `full`, and
   are never inferred merely from selecting Full.
-- Trusted Full Bypass skips all lnwjud application prompts/denials, including
-  always-confirm tools, host approval, command policy, Active Project/allowed
-  roots/protected paths, explicit absolute outside targets, and `goalLease`. The
-  authorization travels out-of-band and never rewrites caller `userConfirmed`.
+- Trusted Full Bypass skips ordinary lnwjud application prompts/denials,
+  including always-confirm tools, host approval, command policy, Active
+  Project/allowed roots/protected paths, and explicit absolute outside targets.
+  It does not bypass a live rolling scheduled-Goal ownership fence: workspace
+  mutation and native automation still require the exact current `goalLease`
+  goal/token/generation proof. The authorization travels out-of-band and never
+  rewrites caller `userConfirmed`.
 - `READ` is non-mutating, `WRITE` changes workspace data, `EXECUTE` starts or
   controls processes/commands, and `DANGEROUS` covers destructive, interactive,
   external, or full-access meta operations.
@@ -316,6 +320,30 @@ bytes avoided, ledger hits, and estimated savings. Automatic ignore is not
 authorization: `read_file`, `read_many_files`, full scans, and explicit search
 or index requests retain full permitted access.
 
+## Phase 49 native Goal automation checkpoint
+
+Native automation is deliberately subordinate to Durable Goal state. A caller
+creates one bounded acyclic milestone plan beneath an already leased Goal; each
+milestone maps to an existing Goal step, selects the implemented `shell`
+provider, declares `blocking_job` or `supporting_service`, and supplies explicit
+`command_exit`, `file_sha256`, or `git_diff_check` evidence. `process` and
+`codex` providers are unsupported and are not represented as working options.
+
+The runtime advances one deterministic boundary at a time. It persists a
+dispatch reservation before launch, binds the exact durable shell task ID and
+request digest, observes after restart, and never treats an unknown outcome as
+permission to replay. `dispatched_unresolved` remains blocked until the exact
+owned dispatch is found or exact absence is proven. Completion requires every
+milestone and verification to be terminal, synchronizes evidence to the root
+Goal, waits for native scheduled-task cleanup, and then confirms the Goal is
+terminal before marking the automation run completed.
+
+Automation does not introduce another scheduler. It reuses the root Goal's one
+existing hourly recurring Native ChatGPT scheduled continuation and contributes
+only a bounded resume hint. Ordinary checkpoints and wakeups neither create nor
+retime a successor. Event history is append-only and redacted; raw command
+output stays in the owned durable shell task store.
+
 ## Upgrade sequencing
 
 The safe dependency direction is:
@@ -334,6 +362,7 @@ Phase 00 contract
   -> browser/Windows/visual validation
   -> session/gateway/task/agent/multi-agent/handoff
   -> response/permission/audit/telemetry/planner/resilience/benchmark hardening
+  -> durable shell index and Goal-owned native automation
 ```
 
 Each phase adds tests and preserves the baseline primitive catalog. A later
