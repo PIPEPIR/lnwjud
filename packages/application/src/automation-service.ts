@@ -122,6 +122,8 @@ export interface AutomationRunLocator {
 }
 
 export interface MutateAutomationRunRequest extends AutomationRunLocator {
+  /** Public callers bind their proof to the stored root goal; internal callers may omit it for compatibility. */
+  readonly goalId?: string;
   readonly leaseToken: string;
   readonly expectedRevision: number;
   readonly userConfirmed?: boolean;
@@ -531,6 +533,9 @@ export class AutomationService {
     stored: StoredAutomationRun,
     request: MutateAutomationRunRequest,
   ): Promise<Result<GoalSnapshot>> {
+    if (request.goalId !== undefined && request.goalId !== stored.run.goalId) {
+      return err(appError('CONFLICT', 'Automation run does not belong to the supplied goal', true));
+    }
     if (!Number.isInteger(request.expectedRevision) || request.expectedRevision < 0) {
       return err(appError('INVALID_INPUT', 'expectedRevision is invalid'));
     }

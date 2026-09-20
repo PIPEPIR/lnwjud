@@ -10,6 +10,16 @@ import {
   upgradeToolOutputSchema,
 } from '../upgrade-tool-contracts.js';
 
+export const SPECIALIZED_RUNTIME_TOOL_NAMES = new Set([
+  'agent_swarm_run',
+  'automation_create',
+  'automation_status',
+  'automation_events',
+  'automation_run',
+  'automation_control',
+  'automation_finalize',
+]);
+
 /**
  * Upgrade tools are registered from one authoritative contract boundary.
  * Each tool receives a strict, tool-specific input schema so hallucinated or
@@ -19,7 +29,7 @@ import {
  */
 export function upgradeTools(context: McpToolContext, incrementalVerifier: IncrementalVerifier, activityTracker?: ActivityTracker): McpToolDefinition[] {
   const runtime = new UpgradeRuntimeService(context.services, context.actor, context.contextEconomy, context.isToolExposed, incrementalVerifier, activityTracker);
-  return UPGRADE_TOOL_CATALOG.filter((entry) => entry.name !== 'agent_swarm_run').map((entry) => defineTool({
+  return UPGRADE_TOOL_CATALOG.filter((entry) => !SPECIALIZED_RUNTIME_TOOL_NAMES.has(entry.name)).map((entry) => defineTool({
     name: entry.name,
     description: entry.description,
     permission: entry.permission,

@@ -198,6 +198,12 @@ export const UPGRADE_TOOL_CATALOG: readonly UpgradeToolCatalogEntry[] = [
   read('ecc_memory_search', 48, 'Search active ECC Memory Vault entries with bounded local lexical retrieval.', ['ecc', 'memory', 'vault', 'search']),
   read('ecc_memory_read', 48, 'Read one ECC Memory Vault entry by stable memory id after completeness checks.', ['ecc', 'memory', 'vault']),
   read('ecc_memory_doctor', 48, 'Validate ECC Memory Vault documents, symlinks, duplicates, and schema health without rewriting them.', ['ecc', 'memory', 'vault', 'diagnostics']),
+  write('automation_create', 49, 'Create a bounded owner-scoped durable shell automation plan beneath an existing leased Goal.', ['automation', 'goal', 'durable', 'shell'], { requirements: ['durable Goal runtime', 'shell capability'], supportsCancel: false, supportsDryRun: false, auditTarget: 'automation-run' }),
+  read('automation_status', 49, 'Read one owner- and workspace-scoped durable automation run.', ['automation', 'goal', 'durable', 'status']),
+  read('automation_events', 49, 'Read a bounded page of owner- and workspace-scoped durable automation events.', ['automation', 'goal', 'durable', 'events']),
+  execute('automation_run', 49, 'Advance one durable automation run to its next deterministic dispatch, observation, or verification boundary.', ['automation', 'goal', 'durable', 'shell'], { requirements: ['durable Goal runtime', 'shell capability'], supportsCancel: true, supportsDryRun: false, auditTarget: 'automation-dispatch' }),
+  dangerous('automation_control', 49, 'Pause, resume, or cancel one durable automation run under its current Goal lease.', ['automation', 'goal', 'durable', 'control'], { requirements: ['durable Goal runtime'], supportsCancel: true, supportsDryRun: false, auditTarget: 'automation-control' }),
+  write('automation_finalize', 49, 'Finalize a fully verified automation run only after its root Goal reaches confirmed terminal completion.', ['automation', 'goal', 'durable', 'verification'], { requirements: ['durable Goal runtime', 'verified evidence'], supportsCancel: false, supportsDryRun: false, auditTarget: 'automation-finalize' }),
 ];
 
 export function upgradeCatalogEntry(name: string): UpgradeToolCatalogEntry | undefined {

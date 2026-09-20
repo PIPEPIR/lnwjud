@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { MAX_SEARCH_RESULTS, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, MAX_MULTI_FILE_BYTES } from '@lnwjud/domain';
+import {
+  MAX_AUTOMATION_EVENTS_PER_RUN,
+  MAX_AUTOMATION_MILESTONES,
+  MAX_SEARCH_RESULTS,
+  MAX_TREE_DEPTH,
+  MAX_TREE_ENTRIES,
+  MAX_MULTI_FILE_BYTES,
+} from '@lnwjud/domain';
 
 const MAX_PATH_LENGTH = 4096;
 const MAX_WORKSPACE_ID_LENGTH = 128;
@@ -102,6 +109,82 @@ export const codexRunSchema = z.object({ workspaceId: workspaceIdSchema, instruc
 export const codexTaskHandleSchema = z.object({ workspaceId: workspaceIdSchema, codexTaskId: z.string().trim().min(1).max(128) }).strict();
 export const codexStopSchema = codexTaskHandleSchema.extend({ userConfirmed: z.boolean().optional() }).strict();
 export const codexTaskLogsSchema = codexTaskHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
+
+const automationIdentifierSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+const automationLeaseTokenSchema = z.string().min(1).max(256);
+const automationVerificationSchema = z.discriminatedUnion('kind', [
+  z.object({
+    id: automationIdentifierSchema,
+    kind: z.literal('command_exit'),
+    expectedExitCode: z.number().int().min(-2_147_483_648).max(2_147_483_647),
+  }).strict(),
+  z.object({
+    id: automationIdentifierSchema,
+    kind: z.literal('file_sha256'),
+    path: z.string().trim().min(1).max(32_768).refine((value) => !value.includes('\0'), 'Path is invalid'),
+    expectedSha256: z.string().regex(/^[a-fA-F0-9]{64}$/).transform((value) => value.toLowerCase()),
+  }).strict(),
+  z.object({
+    id: automationIdentifierSchema,
+    kind: z.literal('git_diff_check'),
+  }).strict(),
+]);
+const automationDispatchSchema = z.object({
+  executable: z.string().trim().min(1).max(1_024),
+  arguments: z.array(z.string().max(32_768)).max(128),
+  cwd: z.string().trim().min(1).max(32_768).refine((value) => !value.includes('\0'), 'Path is invalid'),
+  windowsVerbatimArguments: z.boolean().optional(),
+  timeoutSeconds: z.number().min(0.1).max(604_800),
+  maxOutputBytes: z.number().int().min(1).max(8 * 1024 * 1024),
+  includeStdout: z.boolean(),
+  includeStderr: z.boolean(),
+}).strict();
+const automationMilestoneSchema = z.object({
+  id: automationIdentifierSchema,
+  title: z.string().trim().min(1).max(512),
+  goalStepId: automationIdentifierSchema,
+  dependsOn: z.array(automationIdentifierSchema).max(MAX_AUTOMATION_MILESTONES),
+  provider: z.literal('shell'),
+  role: z.enum(['blocking_job', 'supporting_service']),
+  cancelWithGoal: z.boolean(),
+  dispatch: automationDispatchSchema,
+  verification: z.array(automationVerificationSchema).min(1).max(16),
+}).strict();
+export const automationPlanSchema = z.object({
+  milestones: z.array(automationMilestoneSchema).min(1).max(MAX_AUTOMATION_MILESTONES),
+}).strict();
+export const automationCreateSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  goalId: automationIdentifierSchema,
+  leaseToken: automationLeaseTokenSchema,
+  plan: automationPlanSchema,
+}).strict();
+export const automationStatusSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  runId: automationIdentifierSchema,
+}).strict();
+export const automationEventsSchema = automationStatusSchema.extend({
+  afterSequence: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(Math.min(500, MAX_AUTOMATION_EVENTS_PER_RUN)).optional(),
+}).strict();
+const automationMutationShape = {
+  workspaceId: workspaceIdSchema,
+  goalId: automationIdentifierSchema,
+  runId: automationIdentifierSchema,
+  leaseToken: automationLeaseTokenSchema,
+  expectedRevision: z.number().int().nonnegative(),
+  userConfirmed: z.boolean().optional(),
+} as const;
+export const automationRunSchema = z.object(automationMutationShape).strict();
+export const automationControlSchema = z.object({
+  ...automationMutationShape,
+  action: z.enum(['pause', 'resume', 'cancel']),
+  summary: z.string().trim().min(1).max(2_048).optional(),
+}).strict().refine((value) => value.action === 'cancel' || value.summary === undefined, {
+  path: ['summary'],
+  message: 'summary is supported only when action=cancel',
+});
+export const automationFinalizeSchema = z.object(automationMutationShape).strict();
 
 const batchCallSchema = z.object({
   id: z.string().trim().min(1).max(128).optional(),

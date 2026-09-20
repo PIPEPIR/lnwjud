@@ -4,6 +4,9 @@ import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
   AutomationDispatchContext,
+  AutomationDispatchPort,
+  AutomationService,
+  AutomationVerificationRuntimePort,
   ApplyPatchRequest,
   CheckpointService,
   CodexService,
@@ -42,6 +45,24 @@ export interface WorkspaceInfoPort {
 
 export interface ProjectSnapshotPort {
   snapshot(actor: FileActor, workspaceId: string): Promise<Result<unknown>>;
+}
+
+export type McpAutomationService = Pick<AutomationService,
+  | 'createRun'
+  | 'status'
+  | 'events'
+  | 'advance'
+  | 'pause'
+  | 'resume'
+  | 'cancel'
+  | 'finalize'
+>;
+
+export interface McpAutomationServiceFactory {
+  create(
+    runtime: AutomationDispatchPort & AutomationVerificationRuntimePort,
+    actor: FileActor,
+  ): McpAutomationService;
 }
 
 export interface McpRuntimeTiming {
@@ -98,6 +119,10 @@ export interface McpApplicationServices {
   readonly process?: Pick<ProcessService, 'start' | 'list' | 'status' | 'logs' | 'stop' | 'previewProjectCommand' | 'startProjectCommand'>;
   readonly codex?: Pick<CodexService, 'status' | 'run' | 'list' | 'taskStatus' | 'taskLogs' | 'stop'>;
   readonly agentSwarm?: Pick<AgentSwarmService, 'start' | 'status' | 'result' | 'cancel' | 'list'>;
+  /** Direct injection for tests and single-registry hosts. */
+  readonly automation?: McpAutomationService;
+  /** Production hosts bind an actor/session-specific registry adapter lazily to preserve task ownership. */
+  readonly automationFactory?: McpAutomationServiceFactory;
 }
 
 export interface McpToolAnnotations {

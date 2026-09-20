@@ -6,6 +6,8 @@ import path from 'node:path';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
+  AutomationService,
+  AutomationVerifier,
   CheckpointService,
   CodexService,
   FileService,
@@ -101,7 +103,7 @@ import {
   type SecretProtector,
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
-import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
+import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteAutomationRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
 import { comparableHostPath, isDriveRoot, isMachineRootPath, resolveHostPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
@@ -321,6 +323,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
+  const automationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
@@ -486,7 +489,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     taskCancellation,
     requestCancellation,
   });
-  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
+  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, {
+    workerLiveness: goalMutationFence,
+    automationResumes: automationRepository,
+  });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
@@ -528,6 +534,16 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     process: processService,
     codex: codexService,
     agentSwarm: agentSwarmService,
+    automationFactory: {
+      create(runtime) {
+        return new AutomationService(
+          automationRepository,
+          goalService,
+          runtime,
+          new AutomationVerifier(workspaceRepository, runtime, pathGuard),
+        );
+      },
+    },
   };
   const activityLogPath = mcpActivityLogPath(dataPath);
   const logSessionId = options.logSessionId?.trim() || undefined;
@@ -1023,6 +1039,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
     { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', probe: windowsSandboxRequirement },
     { id: 'browser_event_stream', required: false, summaryKey: 'requirement.browser_event_stream', remediationId: 'configure_browser_events', probe: async () => ({ status: 'pass', detail: 'Input-dependent: console/network event retention is established for the selected live CDP tab at call time' }) },
+    { id: 'automation_runtime', required: false, summaryKey: 'requirement.automation_runtime', probe: async () => ({
+      status: mcpServices.automation !== undefined || mcpServices.automationFactory !== undefined ? 'pass' : 'fail',
+      detail: mcpServices.automation !== undefined || mcpServices.automationFactory !== undefined
+        ? 'Durable automation repository, Goal binding, verifier, and shell adapter are wired'
+        : 'Durable automation runtime is unavailable',
+    }) },
     { id: 'feature_delivery', required: false, summaryKey: 'requirement.feature_delivery', probe: async () => ({ status: 'pass', detail: 'Delivery state comes from the canonical upgrade catalog' }) },
   ];
   const requirementRegistry = new RequirementRegistry(requirementDefinitions, { ttlMs: 30_000, timeoutMs: 2_000 });

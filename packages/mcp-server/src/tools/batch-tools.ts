@@ -7,6 +7,7 @@ import { toolBatchSchema } from './schemas.js';
 export interface BatchToolInvoker {
   invoke(name: string, input: unknown, signal?: AbortSignal): Promise<McpToolResponse>;
   describe(name: string): Pick<McpToolDefinition, 'permission' | 'annotations'> | undefined;
+  isAllowed?(name: string): boolean;
 }
 
 interface BatchCallInput {
@@ -69,6 +70,18 @@ export function batchTools(invoker: BatchToolInvoker): readonly McpToolDefinitio
 }
 
 function normalizePlan(input: ToolBatchInput, invoker: BatchToolInvoker): Result<BatchExecutionPlan> {
+  const rawCalls = [
+    ...(input.calls ?? []),
+    ...(input.groups ?? []).flatMap((group) => group.calls),
+  ];
+  const ineligible = rawCalls.find((call) => invoker.isAllowed?.(call.tool) === false);
+  if (ineligible !== undefined) {
+    return err({
+      code: 'INVALID_INPUT',
+      message: `Tool is not eligible for tool_batch: ${ineligible.tool}`,
+      recoverable: false,
+    });
+  }
   let nextId = 1;
   const normalizeCall = (raw: BatchCallInput): BatchInvocation => {
     const id = raw.id ?? `call-${nextId}`;

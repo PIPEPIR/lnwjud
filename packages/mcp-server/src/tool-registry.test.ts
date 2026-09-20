@@ -12,6 +12,7 @@ import type { ActivitySinkEvent } from './activity-tracker.js';
 import { CODEX_DELEGATION_TOOL_NAMES, isCodexDelegationTool, ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
 import { GoalRequestCancellationService } from '@lnwjud/application';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
+import { AUTOMATION_TOOL_NAMES } from './tools/automation-tools.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
 
@@ -124,9 +125,12 @@ describe('MCP tool registry', () => {
       'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
       ...UPGRADE_TOOL_CATALOG
-        .filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState))
+        .filter((entry) => !isCodexDelegationTool(entry.name)
+          && !AUTOMATION_TOOL_NAMES.includes(entry.name as typeof AUTOMATION_TOOL_NAMES[number])
+          && isAdvertisedDeliveryState(entry.deliveryState))
         .map((entry) => entry.name),
       'tool_batch',
+      ...AUTOMATION_TOOL_NAMES,
     ]);
   });
 

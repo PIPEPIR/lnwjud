@@ -90,6 +90,17 @@ describe('canonical bilingual tool catalog', () => {
     expect(catalogDefinitions.ecc_security_scan?.supportsDryRun).toBe(true);
   });
 
+  it('gates the appended native automation surface on its real runtime wiring', () => {
+    for (const name of ['automation_create', 'automation_status', 'automation_events', 'automation_run', 'automation_control', 'automation_finalize'] as const) {
+      expect(catalogDefinitions[name]).toMatchObject({
+        category: 'automation',
+        requirementIds: expect.arrayContaining(['registered_workspace', 'automation_runtime']),
+      });
+    }
+    expect(catalogDefinitions.automation_control?.riskMode).toBe('input_dependent');
+    expect(catalogDefinitions.automation_run?.supportsCancel).toBe(true);
+  });
+
   it('keeps provider-specific tools on their real prerequisites', () => {
     expect(catalogDefinitions.inspect_pdf?.requirementIds).toContain('local_pdf_provider');
     expect(catalogDefinitions.pdf_extract_tables?.requirementIds).toContain('local_pdf_provider');

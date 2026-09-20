@@ -52,7 +52,9 @@ import {
 } from './ponytail-runtime.js';
 import { inspectMutationOperation, permissionLevelForMutationDecision, requiresMutationConfirmation, type MutationPolicyDecision } from './mutation-policy.js';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
+import { AutomationRuntimeAdapter } from './automation-runtime-adapter.js';
 import { agentSwarmTools } from './tools/agent-swarm-tools.js';
+import { automationTools, AUTOMATION_TOOL_NAMES } from './tools/automation-tools.js';
 import { batchTools } from './tools/batch-tools.js';
 import { contextTools } from './tools/context-tools.js';
 import { filePageTools } from './tools/file-page-tools.js';
@@ -150,6 +152,9 @@ const DEFAULT_MCP_TOOL_RESPONSE_BUDGET_MS: number | null = null;
 const MAX_APPROVAL_SUMMARY_LENGTH = 8_192;
 const MAX_REMEMBERED_SHELL_TASKS = 512;
 const MAX_REMEMBERED_ACTIVITY_HANDLES = 512;
+const AUTOMATION_MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'automation_create', 'automation_run', 'automation_control', 'automation_finalize',
+]);
 
 interface BudgetedToolExecution {
   readonly response: McpToolResponse;
@@ -215,8 +220,13 @@ export class ToolRegistry {
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
     const contextEconomy = new ContextEconomyRuntime();
+    const automation = services.automation ?? services.automationFactory?.create(
+      new AutomationRuntimeAdapter(this, actor),
+      actor,
+    );
+    const contextServices = automation === undefined ? services : { ...services, automation };
     const context: McpToolContext = {
-      services,
+      services: contextServices,
       actor,
       contextEconomy,
       isToolExposed: (name) => this.isEffectivelyExposed(name),
@@ -261,10 +271,12 @@ export class ToolRegistry {
     const exposedBatchTools = batchTools({
       invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
       describe: (name) => exposedAllBaseTools.find((tool) => tool.name === name),
+      isAllowed: (name) => !AUTOMATION_TOOL_NAMES.includes(name as typeof AUTOMATION_TOOL_NAMES[number]),
     }).map((tool) => withToolEnvelopes(tool));
-    this.allTools = [...exposedAllBaseTools, ...exposedBatchTools];
-    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools].map((tool) => tool.name));
-    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools].map((tool) => tool.name));
+    const exposedAutomationTools = automationTools(context).map((tool) => withToolEnvelopes(tool));
+    this.allTools = [...exposedAllBaseTools, ...exposedBatchTools, ...exposedAutomationTools];
+    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
+    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
     this.toolAvailabilitySnapshotProvider = options.toolAvailabilitySnapshotProvider ?? ((): ToolAvailabilitySnapshot => DEFAULT_TOOL_AVAILABILITY_SNAPSHOT);
     this.schemaRegistry = new ToolSchemaRegistry();
     for (const tool of this.allTools) this.schemaRegistry.register(tool);
@@ -405,6 +417,16 @@ export class ToolRegistry {
       }
       const goalLease = readGoalLeaseProof(parsed.value);
       const parsedInput = stripGoalLeaseEnvelope(parsed.value);
+      if (AUTOMATION_MUTATION_TOOL_NAMES.has(tool.name) && goalLease !== undefined) {
+        if (!isRecord(parsedInput)
+          || parsedInput.goalId !== goalLease.goalId
+          || parsedInput.leaseToken !== goalLease.leaseToken) {
+          const message = `${tool.name} goalId and leaseToken must match goalLease`;
+          const response = mapError(appError('CONFLICT', message, true));
+          await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+          return response;
+        }
+      }
       if (
         tool.name === 'task_create'
         && goalLease !== undefined
@@ -1102,6 +1124,7 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
   'task_create',
+  ...AUTOMATION_TOOL_NAMES.filter((name) => AUTOMATION_MUTATION_TOOL_NAMES.has(name)),
 ]);
 const goalLeaseProofSchema = z.object({
   goalId: z.string().min(1).max(128),

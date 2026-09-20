@@ -7,6 +7,7 @@ import {
   PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES,
   PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES,
   PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES,
+  NATIVE_AUTOMATION_TOOL_RUNTIME_FIXTURES,
   TOOL_RUNTIME_FIXTURES,
   type ToolRuntimeFixture,
 } from './tool-runtime-fixtures.js';
@@ -27,6 +28,11 @@ const PHASE_19_TO_33_TOOL_NAMES = UPGRADE_TOOL_CATALOG
 
 const PHASE_34_TO_46_TOOL_NAMES = UPGRADE_TOOL_CATALOG
   .filter((entry) => entry.phase >= 34 && entry.phase <= 46)
+  .map((entry) => entry.name)
+  .sort();
+
+const NATIVE_AUTOMATION_TOOL_NAMES = UPGRADE_TOOL_CATALOG
+  .filter((entry) => entry.phase === 49)
   .map((entry) => entry.name)
   .sort();
 
@@ -119,9 +125,11 @@ describe('tool runtime delivery contract', () => {
     expect(PHASE_5_TO_18_TOOL_NAMES).toHaveLength(53);
     expect(PHASE_19_TO_33_TOOL_NAMES).toHaveLength(46);
     expect(PHASE_34_TO_46_TOOL_NAMES).toHaveLength(39);
+    expect(NATIVE_AUTOMATION_TOOL_NAMES).toHaveLength(6);
     expect(Object.keys(PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES).sort()).toEqual(PHASE_5_TO_18_TOOL_NAMES);
     expect(Object.keys(PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES).sort()).toEqual(PHASE_19_TO_33_TOOL_NAMES);
     expect(Object.keys(PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES).sort()).toEqual(PHASE_34_TO_46_TOOL_NAMES);
+    expect(Object.keys(NATIVE_AUTOMATION_TOOL_RUNTIME_FIXTURES).sort()).toEqual(NATIVE_AUTOMATION_TOOL_NAMES);
     expect(Object.keys(TOOL_RUNTIME_FIXTURES).sort()).toEqual(registry.listAll().map((definition) => definition.name).sort());
     expect(Object.keys(TOOL_RUNTIME_FIXTURES)).toHaveLength(registry.listAll().length);
   });

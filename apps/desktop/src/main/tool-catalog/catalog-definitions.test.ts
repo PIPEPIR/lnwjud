@@ -29,6 +29,16 @@ describe('canonical bilingual tool catalog', () => {
     }
   });
 
+  it('classifies the six native automation tools under one runtime-gated catalog surface', () => {
+    const names = ['automation_create', 'automation_status', 'automation_events', 'automation_run', 'automation_control', 'automation_finalize'];
+    for (const name of names) {
+      expect(catalogDefinitions[name]).toMatchObject({
+        category: 'automation',
+        requirementIds: expect.arrayContaining(['registered_workspace', 'automation_runtime']),
+      });
+    }
+  });
+
   it('resolves non-empty Thai and English title/short/long copy for every definition', () => {
     for (const definition of Object.values(catalogDefinitions)) {
       for (const locale of ['th', 'en'] as const) {

@@ -9,12 +9,12 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
     'platform_windows', 'platform_supported', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
     'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr', 'native_accessibility', 'native_input', 'native_window', 'native_capture', 'native_office', 'office_desktop',
     'network_access', 'scheduler_runtime', 'tunnel_runtime', 'external_mcp_connection', 'local_pdf_provider', 'configured_lsp',
-    'database_target', 'windows_sandbox', 'browser_event_stream', 'feature_delivery',
+    'database_target', 'windows_sandbox', 'browser_event_stream', 'automation_runtime', 'feature_delivery',
   ];
   const probes = Object.fromEntries(ids.map((id) => [id, vi.fn(async () => ({ status: statuses[id] ?? 'pass' as const }))]));
   const registry = new RequirementRegistry(ids.map((id) => ({
     id,
-    required: id !== 'codex_runtime' && id !== 'external_mcp_connection' && id !== 'feature_delivery',
+    required: id !== 'codex_runtime' && id !== 'external_mcp_connection' && id !== 'automation_runtime' && id !== 'feature_delivery',
     summaryKey: `requirement.${id}`,
     ...(id === 'executable_git'
       ? { remediationId: 'install_git' }
@@ -209,10 +209,10 @@ describe('tool catalog readiness aggregation', () => {
   });
 
   it('rechecks selected requirements and updates Doctor and Catalog from one cache', async () => {
-    const { catalog, probes } = service({ executable_git: 'pass' });
+    const { registry, catalog, probes } = service({ executable_git: 'pass' });
     const result = await catalog.recheck(['executable_git'], 'th');
     expect(probes.executable_git).toHaveBeenCalled();
-    expect(result.doctor.checks).toHaveLength(30);
+    expect(result.doctor.checks).toHaveLength(registry.ids().length);
     expect(result.catalog.locale).toBe('th');
   });
 

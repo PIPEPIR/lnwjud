@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AgentSwarmService,
+  AutomationService,
+  AutomationVerifier,
   CheckpointService,
   CodexService,
   FileService,
@@ -43,6 +45,7 @@ import { permissionProfiles, type PermissionProfile, type PermissionProfileName 
 import {
   AesGcmCheckpointCipher,
   SqliteAgentSwarmRepository,
+  SqliteAutomationRepository,
   SqliteAuditRepository,
   SqliteCheckpointRepository,
   SqliteDatabase,
@@ -102,6 +105,7 @@ export function createStdioMcpRuntime(
     ? rawWorkspaceRepository
     : new StrictWorkspaceRepository(rawWorkspaceRepository, options.strictAllowedRoots);
   const goalRepository = new SqliteGoalRepository(database);
+  const automationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
@@ -199,7 +203,10 @@ export function createStdioMcpRuntime(
     taskCancellation,
     requestCancellation,
   });
-  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
+  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, {
+    workerLiveness: goalMutationFence,
+    automationResumes: automationRepository,
+  });
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
   const activityReady = sharedActivityLease.then(async (lease) => lease?.initialize());
@@ -273,6 +280,16 @@ export function createStdioMcpRuntime(
     process: processService,
     codex: codexService,
     agentSwarm: agentSwarmService,
+    automationFactory: {
+      create(runtime) {
+        return new AutomationService(
+          automationRepository,
+          goalService,
+          runtime,
+          new AutomationVerifier(workspaceRepository, runtime, pathGuard),
+        );
+      },
+    },
   };
 
   return {

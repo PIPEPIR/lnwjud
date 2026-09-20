@@ -97,6 +97,17 @@ export function inspectMutationOperation(
       return read('structured read-only operation');
     case 'tool_batch':
       return read('batch dispatcher applies mutation policy independently to every child call');
+    case 'automation_status':
+    case 'automation_events':
+      return read('owner- and workspace-scoped durable automation read');
+    case 'automation_create':
+      return boundedWrite('automation_create persists a bounded plan beneath an already leased Goal');
+    case 'automation_run':
+      return opaque('automation_run may launch the next stored shell milestone under the current Goal lease');
+    case 'automation_control':
+      return opaque('automation_control changes execution state and cancellation can terminate the root Goal');
+    case 'automation_finalize':
+      return boundedWrite('automation_finalize records verified terminal state beneath the current Goal lease');
     case 'workspace_register':
       return boundedWrite('workspace_register adds a validated project registration without changing project files');
     case 'write_file':
