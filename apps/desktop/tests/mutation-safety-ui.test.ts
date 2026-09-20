@@ -52,7 +52,7 @@ const dashboard: DashboardSnapshot = {
   appVersion: APP_VERSION,
 };
 
-function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'security' | 'mcp' = 'security'): string {
+function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' = 'security'): string {
   return renderToStaticMarkup(createElement(SettingsPage, {
     locale,
     initialSection: section,
@@ -119,6 +119,11 @@ describe('mutation safety UI contract', () => {
     }));
     expect(markup).toContain('v5.4.0');
     expect(markup).toContain('data-host-platform="win32"');
+  });
+
+  it('keeps the factory reset action separated from its warning', () => {
+    const markup = settingsMarkup('en', {}, 'general');
+    expect(markup).toContain('class="inline-actions factory-reset-actions"');
   });
 
   it('labels the sidebar runtime as Desktop Agent and keeps the OS suffix cross-platform', () => {
