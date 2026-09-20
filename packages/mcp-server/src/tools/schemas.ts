@@ -228,6 +228,8 @@ export const shellCapabilitySchema = z.object({
   timeout_seconds: z.number().min(0.1).max(604_800).optional(),
   max_output_bytes: z.number().int().min(1).max(8 * 1024 * 1024).optional(),
   tail_lines: z.number().int().min(0).max(10_000).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(4_096).optional(),
   include_stdout: z.boolean().default(true),
   include_stderr: z.boolean().default(true),
   approval: capabilityApprovalSchema,

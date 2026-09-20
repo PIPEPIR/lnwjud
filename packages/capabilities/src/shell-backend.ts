@@ -35,6 +35,8 @@ interface ShellRequest {
   readonly timeoutSeconds: number;
   readonly maxOutputBytes: number;
   readonly tailLines?: number;
+  readonly limit?: number;
+  readonly cursor?: string;
   readonly includeStdout: boolean;
   readonly includeStderr: boolean;
   readonly dryRun: boolean;
@@ -133,7 +135,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
 
     switch (parsed.value.operation) {
       case 'run': return this.run(parsed.value, signal, authorization);
-      case 'list': return this.listTasks(parsed.value.owner);
+      case 'list': return this.listTasks(parsed.value.owner, parsed.value.limit, parsed.value.cursor);
       case 'status': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);
       case 'wait': return this.wait(parsed.value);
       case 'logs': return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines, parsed.value.owner);
@@ -433,10 +435,35 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     return this.durableStore.wait(taskId, Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds()), undefined, request.owner, false);
   }
 
-  private async listTasks(owner: CapabilityTaskOwner): Promise<Result<unknown>> {
+  private async listTasks(owner: CapabilityTaskOwner, limit?: number, cursor?: string): Promise<Result<unknown>> {
     const inMemory = [...this.tasks.values()]
       .filter((record) => capabilityTaskOwnerMatches(record.owner, owner))
       .map((record) => this.snapshot(record));
+    if (limit !== undefined) {
+      const memoryOffset: Result<number | undefined> = cursor === undefined ? ok(undefined) : decodeMemoryCursor(cursor);
+      if (memoryOffset.ok && memoryOffset.value !== undefined) {
+        return ok(memoryTaskPage(inMemory, limit, memoryOffset.value));
+      }
+      if (this.durableStore === undefined) {
+        if (!memoryOffset.ok) return memoryOffset;
+        if (cursor !== undefined && memoryOffset.value === undefined) return err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
+        return ok(memoryTaskPage(inMemory, limit, 0));
+      }
+      const durable = await this.durableStore.listPage(owner, limit, cursor);
+      if (!durable.ok) return durable;
+      const durableIds = new Set(durable.value.tasks.map((task) => task.task_id).filter((value): value is string => typeof value === 'string'));
+      const remainingMemory = inMemory.filter((task) => !durableIds.has(String(task.task_id ?? '')));
+      if (durable.value.nextCursor !== undefined) {
+        return ok({ tasks: durable.value.tasks, next_cursor: durable.value.nextCursor });
+      }
+      const room = Math.max(0, limit - durable.value.tasks.length);
+      const memoryTasks = remainingMemory.slice(0, room);
+      const tasks = [...durable.value.tasks, ...memoryTasks];
+      return ok({
+        tasks,
+        ...(memoryTasks.length < remainingMemory.length ? { next_cursor: encodeMemoryCursor(memoryTasks.length) } : {}),
+      });
+    }
     if (this.durableStore === undefined) return ok({ tasks: inMemory });
     const durable = await this.durableStore.list(owner);
     const durableIds = new Set(durable.map((task) => task.task_id).filter((value): value is string => typeof value === 'string'));
@@ -594,6 +621,10 @@ function parseShellRequest(value: unknown, defaultTimeoutSeconds: number, defaul
   if (typeof requestedMaxBytes !== 'number' || !Number.isInteger(requestedMaxBytes) || requestedMaxBytes < 1 || requestedMaxBytes > MAX_OUTPUT_BYTES) return err(appError('INVALID_INPUT', 'Output limit is invalid'));
   const tailLines = value.tail_lines === undefined ? undefined : value.tail_lines;
   if (tailLines !== undefined && (typeof tailLines !== 'number' || !Number.isInteger(tailLines) || tailLines < 0 || tailLines > 10_000)) return err(appError('INVALID_INPUT', 'Tail limit is invalid'));
+  const limit = value.limit === undefined ? undefined : value.limit;
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 200)) return err(appError('INVALID_INPUT', 'Task list limit is invalid'));
+  const cursor = value.cursor === undefined ? undefined : value.cursor;
+  if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 4_096)) return err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
   const includeStdout = value.include_stdout === undefined ? true : value.include_stdout;
   const includeStderr = value.include_stderr === undefined ? true : value.include_stderr;
   const dryRun = value.dry_run === undefined ? false : value.dry_run;
@@ -601,11 +632,39 @@ function parseShellRequest(value: unknown, defaultTimeoutSeconds: number, defaul
   const owner = readCapabilityTaskOwner(value);
   const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(value);
   if (typeof includeStdout !== 'boolean' || typeof includeStderr !== 'boolean' || typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'Shell flags are invalid'));
-  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), includeStdout, includeStderr, dryRun, userConfirmed, owner });
+  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), ...(limit === undefined ? {} : { limit }), ...(cursor === undefined ? {} : { cursor }), includeStdout, includeStderr, dryRun, userConfirmed, owner });
 }
 
 function isShellOperation(value: unknown): value is ShellOperation {
   return typeof value === 'string' && SHELL_OPERATIONS.some((operation) => operation === value);
+}
+
+const MEMORY_CURSOR_PREFIX = 'lnwjud-shell-memory-v1:';
+
+function memoryTaskPage(tasks: readonly Record<string, unknown>[], limit: number, offset: number): Record<string, unknown> {
+  const page = tasks.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  return {
+    tasks: page,
+    ...(nextOffset < tasks.length ? { next_cursor: encodeMemoryCursor(nextOffset) } : {}),
+  };
+}
+
+function encodeMemoryCursor(offset: number): string {
+  return Buffer.from(`${MEMORY_CURSOR_PREFIX}${offset}`, 'utf8').toString('base64url');
+}
+
+function decodeMemoryCursor(cursor: string): Result<number | undefined> {
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    if (!decoded.startsWith(MEMORY_CURSOR_PREFIX)) return ok(undefined);
+    const rawOffset = decoded.slice(MEMORY_CURSOR_PREFIX.length);
+    if (!/^\d+$/.test(rawOffset)) return err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
+    const offset = Number(rawOffset);
+    return Number.isSafeInteger(offset) ? ok(offset) : err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
+  } catch {
+    return err(appError('INVALID_INPUT', 'Task list cursor is invalid'));
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

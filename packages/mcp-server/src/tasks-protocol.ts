@@ -46,7 +46,6 @@ const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_MAX_RESULT_WAIT_MS = DEFAULT_MCP_POLL_WAIT_SECONDS * 1_000;
 const DEFAULT_POLL_INTERVAL_MS = DEFAULT_MCP_POLL_WAIT_SECONDS * 1_000;
 const DEFAULT_POLL_TICK_MS = 200;
-const CURSOR_PREFIX = 'lnwjud-tasks:';
 const TERMINAL_STATUSES: ReadonlySet<ProtocolTask['status']> = new Set(['completed', 'failed', 'cancelled']);
 
 /** Local task states come from shell-backend / durable-shell-task-store. */
@@ -99,18 +98,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
-function encodeCursor(offset: number): string {
-  return Buffer.from(`${CURSOR_PREFIX}${offset}`, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): number {
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
-  if (!decoded.startsWith(CURSOR_PREFIX)) throw invalidParams('Invalid tasks/list cursor');
-  const offset = Number.parseInt(decoded.slice(CURSOR_PREFIX.length), 10);
-  if (!Number.isInteger(offset) || offset < 0) throw invalidParams('Invalid tasks/list cursor');
-  return offset;
-}
-
 export class TasksProtocol {
   private readonly pageSize: number;
   private readonly maxResultWaitMs: number;
@@ -131,15 +118,12 @@ export class TasksProtocol {
   }
 
   public async listTasks(params: ListParams): Promise<{ tasks: ProtocolTask[]; nextCursor?: string }> {
-    const offset = params.cursor === undefined ? 0 : decodeCursor(params.cursor);
-    const snapshots = await this.listSnapshots();
+    const page = await this.listSnapshots(params.cursor);
     const pollIntervalMs = this.currentPollIntervalMs();
-    const mapped = snapshots
+    const tasks = page.snapshots
       .map((snapshot) => toProtocolTask(snapshot, pollIntervalMs))
       .filter((task): task is ProtocolTask => task !== undefined);
-    const tasks = mapped.slice(offset, offset + this.pageSize);
-    const nextOffset = offset + tasks.length;
-    return { tasks, ...(nextOffset < mapped.length ? { nextCursor: encodeCursor(nextOffset) } : {}) };
+    return { tasks, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
   }
 
   public async cancelTask(params: TaskIdParams): Promise<ProtocolTask> {
@@ -208,22 +192,27 @@ export class TasksProtocol {
     return this.currentConfiguredPollWaitMs() ?? this.pollIntervalMs;
   }
 
-  private async listSnapshots(): Promise<ShellSnapshot[]> {
-    const result = await this.executeShell('list');
+  private async listSnapshots(cursor?: string): Promise<{ snapshots: ShellSnapshot[]; nextCursor?: string }> {
+    const result = await this.executeShell('list', cursor);
     if (!result.ok) throw this.shellError(result.error);
     const value = this.snapshot(result.value);
-    if (!Array.isArray(value.tasks)) return [];
-    return value.tasks.filter((task): task is ShellSnapshot => typeof task === 'object' && task !== null);
+    const snapshots = Array.isArray(value.tasks)
+      ? value.tasks.filter((task): task is ShellSnapshot => typeof task === 'object' && task !== null)
+      : [];
+    const nextCursor = typeof value.next_cursor === 'string' ? value.next_cursor : undefined;
+    return { snapshots, ...(nextCursor === undefined ? {} : { nextCursor }) };
   }
 
-  private async executeShell(operation: 'list'): Promise<Result<unknown>>;
+  private async executeShell(operation: 'list', cursor?: string): Promise<Result<unknown>>;
   private async executeShell(operation: 'status' | 'cancel', taskId: string): Promise<Result<unknown>>;
-  private async executeShell(operation: 'list' | 'status' | 'cancel', taskId?: string): Promise<Result<unknown>> {
+  private async executeShell(operation: 'list' | 'status' | 'cancel', taskIdOrCursor?: string): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) throw internalError('Capability service is unavailable');
     return capabilities.execute('shell', withCapabilityOwnerMetadata({
       operation,
-      ...(taskId === undefined ? {} : { task_id: taskId }),
+      ...(operation === 'list'
+        ? { limit: this.pageSize, ...(taskIdOrCursor === undefined ? {} : { cursor: taskIdOrCursor }) }
+        : { task_id: taskIdOrCursor }),
       ...(operation === 'cancel' ? { userConfirmed: true } : {}),
       include_stdout: true,
       include_stderr: true,
@@ -232,6 +221,7 @@ export class TasksProtocol {
 
   private shellError(error: AppError): ProtocolError {
     if (error.code === 'PROCESS_NOT_FOUND') return invalidParams(`Task not found: ${error.message}`);
+    if (error.code === 'INVALID_INPUT') return invalidParams(error.message);
     return internalError(error.message);
   }
 

@@ -672,4 +672,57 @@ describe('ShellCapabilityBackend unrestricted', () => {
     await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
       .resolves.toMatchObject({ ok: true, value: { matched: true } });
   }, 15_000);
+
+  it('paginates durable history before in-memory tasks and rejects malformed cursors', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-pages-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const durable = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('durable')"],
+      cwd: root,
+      execution: 'background',
+      timeout_seconds: 30,
+      userConfirmed: true,
+    });
+    expect(durable).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
+    if (!durable.ok) return;
+    const durableTaskId = String(durable.value.task_id);
+    await expect(backend.execute({ operation: 'wait', task_id: durableTaskId, timeout_seconds: 5 }))
+      .resolves.toMatchObject({ ok: true, value: { state: 'completed' } });
+
+    const memory = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('memory')"],
+      cwd: root,
+      execution: 'foreground',
+      timeout_seconds: 30,
+      userConfirmed: true,
+    });
+    expect(memory).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'completed' } });
+    if (!memory.ok) return;
+    const memoryTaskId = String(memory.value.task_id);
+
+    const first = await backend.execute({ operation: 'list', limit: 1 });
+    expect(first).toMatchObject({
+      ok: true,
+      value: { tasks: [{ task_id: durableTaskId }], next_cursor: expect.any(String) },
+    });
+    if (!first.ok) return;
+    const second = await backend.execute({ operation: 'list', limit: 1, cursor: String(first.value.next_cursor) });
+    expect(second).toMatchObject({ ok: true, value: { tasks: [{ task_id: memoryTaskId }] } });
+    await expect(backend.execute({ operation: 'list', limit: 1, cursor: 'malformed' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT' },
+    });
+    await expect(backend.execute({ operation: 'list' })).resolves.toMatchObject({
+      ok: true,
+      value: { tasks: expect.arrayContaining([
+        expect.objectContaining({ task_id: durableTaskId }),
+        expect.objectContaining({ task_id: memoryTaskId }),
+      ]) },
+    });
+  }, 20_000);
 });
