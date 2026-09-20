@@ -123,6 +123,68 @@ export interface AutomationEventRecord {
   readonly createdAt: string;
 }
 
+export interface StoredAutomationRun {
+  readonly run: AutomationRunRecord;
+  readonly milestones: readonly AutomationMilestoneRecord[];
+  readonly attempts: readonly AutomationAttemptRecord[];
+}
+
+export interface CreateAutomationRunRequest {
+  readonly id: string;
+  readonly goalId: string;
+  readonly workspaceId: string;
+  readonly ownerClientId: string;
+  readonly plan: AutomationPlan;
+  readonly createdAt: string;
+}
+
+export interface AutomationEventInput {
+  readonly kind: string;
+  readonly milestoneId?: string;
+  readonly attemptId?: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+interface AutomationMutationScope {
+  readonly runId: string;
+  readonly ownerClientId: string;
+  readonly workspaceId: string;
+  readonly expectedRevision: number;
+  readonly updatedAt: string;
+  readonly event: AutomationEventInput;
+}
+
+export interface TransitionAutomationRunRequest extends AutomationMutationScope {
+  readonly status: AutomationRunStatus;
+}
+
+export interface TransitionAutomationMilestoneRequest extends AutomationMutationScope {
+  readonly milestoneId: string;
+  readonly status: AutomationMilestoneStatus;
+}
+
+export interface ReserveAutomationAttemptRequest extends AutomationMutationScope {
+  readonly milestoneId: string;
+  readonly attemptId: string;
+  readonly ordinal: number;
+  readonly taskId: string;
+  readonly requestDigest: string;
+}
+
+export interface UpdateAutomationAttemptRequest extends AutomationMutationScope {
+  readonly attemptId: string;
+  readonly dispatchStatus: AutomationDispatchStatus;
+  readonly milestoneStatus?: AutomationMilestoneStatus;
+  readonly evidence?: readonly AutomationVerificationEvidence[];
+  readonly terminalState?: string | null;
+}
+
+export interface RecordAutomationVerificationRequest extends AutomationMutationScope {
+  readonly attemptId: string;
+  readonly evidence: readonly AutomationVerificationEvidence[];
+  readonly milestoneStatus?: Extract<AutomationMilestoneStatus, 'completed' | 'blocked' | 'failed'>;
+}
+
 const RUN_TRANSITIONS: Readonly<Record<AutomationRunStatus, readonly AutomationRunStatus[]>> = {
   active: ['paused', 'blocked', 'completing', 'failed', 'cancelled'],
   paused: ['active', 'cancelled'],

@@ -3,8 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
-import { ok, type AutomationVerificationRequirement } from '@lnwjud/domain';
-import type { StoredAutomationRun } from '@lnwjud/storage';
+import { ok, type AutomationVerificationRequirement, type StoredAutomationRun } from '@lnwjud/domain';
 import type { Workspace } from '@lnwjud/workspace';
 import { AutomationVerifier, type AutomationTaskEvidenceSnapshot, type AutomationVerificationRuntimePort } from './automation-verifier.js';
 import type { FileActor } from './file-service.js';

@@ -18,17 +18,15 @@ import {
   type GoalStepUpdate,
   type GoalTrackedTask,
   type Result,
+  type AutomationEventInput,
+  type CreateAutomationRunRequest as RepositoryCreateAutomationRunRequest,
+  type ReserveAutomationAttemptRequest,
+  type RecordAutomationVerificationRequest,
+  type StoredAutomationRun,
+  type TransitionAutomationMilestoneRequest,
+  type TransitionAutomationRunRequest,
+  type UpdateAutomationAttemptRequest,
 } from '@lnwjud/domain';
-import type {
-  AutomationEventInput,
-  CreateAutomationRunRequest as RepositoryCreateAutomationRunRequest,
-  ReserveAutomationAttemptRequest,
-  RecordAutomationVerificationRequest,
-  StoredAutomationRun,
-  TransitionAutomationMilestoneRequest,
-  TransitionAutomationRunRequest,
-  UpdateAutomationAttemptRequest,
-} from '@lnwjud/storage';
 import type { FileActor } from './file-service.js';
 import type {
   CancelGoalRequest,

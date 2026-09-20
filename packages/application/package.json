@@ -23,7 +23,6 @@
     "@lnwjud/project": "workspace:*",
     "@lnwjud/search": "workspace:*",
     "@lnwjud/shared": "workspace:*",
-    "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {
