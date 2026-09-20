@@ -88,6 +88,8 @@ export interface AutomationAttemptRecord extends AutomationAttemptIdentity {
   readonly dispatchStatus: AutomationDispatchStatus;
   readonly taskId: string;
   readonly requestDigest: string;
+  readonly evidence: readonly AutomationVerificationEvidence[];
+  readonly terminalState?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
