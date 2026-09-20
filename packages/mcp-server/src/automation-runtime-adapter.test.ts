@@ -71,6 +71,53 @@ describe('AutomationRuntimeAdapter', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
   });
 
+  it('returns bounded task evidence from the exact trusted lookup and never infers success from missing state', async () => {
+    const request = dispatchRequest('C:\\workspace-a');
+    const observeAutomationShell = vi.fn<AutomationToolRegistryPort['observeAutomationShell']>()
+      .mockResolvedValueOnce(ok({
+        task_id: request.context.taskId,
+        state: 'completed',
+        exit_code: 0,
+        finished_at: '2026-09-20T00:00:03.000Z',
+        stdout: 'not returned as evidence',
+      }))
+      .mockResolvedValueOnce(ok({ task_id: request.context.taskId, pass: true, text: 'trust me' }));
+    const registry: AutomationToolRegistryPort = {
+      invokeAutomationShell: vi.fn(async () => ({
+        content: [],
+        structuredContent: {
+          task_id: request.context.taskId,
+          state: 'timed_out',
+          exit_code: 124,
+          finished_at: '2026-09-20T00:00:04.000Z',
+        },
+      })),
+      observeAutomationShell,
+    };
+    const adapter = new AutomationRuntimeAdapter(registry, actor, () => new Date('2026-09-20T00:01:00.000Z'));
+
+    await expect(adapter.readTask(actor, request)).resolves.toEqual({
+      ok: true,
+      value: {
+        taskId: request.context.taskId,
+        ownerClientId: actor.clientId,
+        workspaceId: request.context.workspaceId,
+        requestDigest: request.context.requestDigest,
+        state: 'completed',
+        exitCode: 0,
+        observedAt: '2026-09-20T00:00:03.000Z',
+      },
+    });
+    await expect(adapter.readTask(actor, request)).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'unknown' },
+    });
+    await expect(adapter.ensureTask(actor, request)).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'timed_out', exitCode: 124 },
+    });
+  });
+
   it('dispatches deterministically through ToolRegistry while keeping the reserved context out of the public schema', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-automation-adapter-'));
     roots.push(root);

@@ -9,6 +9,8 @@ import type {
   AutomationDispatchObservation,
   AutomationDispatchPort,
   AutomationDispatchRequest,
+  AutomationTaskEvidenceSnapshot,
+  AutomationVerificationRuntimePort,
   FileActor,
 } from '@lnwjud/application';
 import type { McpToolResponse } from './result-mapper.js';
@@ -18,7 +20,7 @@ export interface AutomationToolRegistryPort {
   observeAutomationShell(context: AutomationDispatchRequest['context']): Promise<Result<unknown>>;
 }
 
-export class AutomationRuntimeAdapter implements AutomationDispatchPort {
+export class AutomationRuntimeAdapter implements AutomationDispatchPort, AutomationVerificationRuntimePort {
   public constructor(
     private readonly registry: AutomationToolRegistryPort,
     private readonly owner: FileActor,
@@ -46,12 +48,81 @@ export class AutomationRuntimeAdapter implements AutomationDispatchPort {
     return observationFromSnapshot(observed.value, request, this.now);
   }
 
+  public async readTask(actor: FileActor, request: AutomationDispatchRequest): Promise<Result<AutomationTaskEvidenceSnapshot>> {
+    const ownership = this.assertActor(actor);
+    if (!ownership.ok) return ownership;
+    const observed = await this.registry.observeAutomationShell(request.context);
+    if (!observed.ok) {
+      if (observed.error.code === 'PROCESS_NOT_FOUND') {
+        return ok(expectedUnknownEvidence(request, this.owner.clientId, this.now));
+      }
+      return observed;
+    }
+    return taskEvidenceFromSnapshot(observed.value, request, this.owner.clientId, this.now);
+  }
+
+  public async ensureTask(actor: FileActor, request: AutomationDispatchRequest): Promise<Result<AutomationTaskEvidenceSnapshot>> {
+    const ownership = this.assertActor(actor);
+    if (!ownership.ok) return ownership;
+    const response = await this.registry.invokeAutomationShell(request);
+    if (response.isError === true) return err(responseError(response));
+    return taskEvidenceFromSnapshot(response.structuredContent, request, this.owner.clientId, this.now);
+  }
+
   private assertActor(actor: FileActor): Result<void> {
     if (actor.clientId !== this.owner.clientId || stableSession(actor) !== stableSession(this.owner)) {
       return err(appError('PERMISSION_DENIED', 'Automation runtime actor does not own this ToolRegistry'));
     }
     return ok(undefined);
   }
+}
+
+function taskEvidenceFromSnapshot(
+  value: unknown,
+  request: AutomationDispatchRequest,
+  ownerClientId: string,
+  now: () => Date,
+): Result<AutomationTaskEvidenceSnapshot> {
+  if (!isRecord(value)) return err(appError('INTERNAL_ERROR', 'Automation shell returned an invalid evidence snapshot', true));
+  if (value.task_id !== request.context.taskId) {
+    return err(appError('CONFLICT', 'Automation shell returned a different durable task identity', true));
+  }
+  const rawState = typeof value.state === 'string' ? value.state : 'unknown';
+  const state = rawState === 'running'
+    || rawState === 'completed'
+    || rawState === 'failed'
+    || rawState === 'cancelled'
+    || rawState === 'timed_out'
+    || rawState === 'termination_unverified'
+      ? rawState
+      : 'unknown';
+  const exitCode = typeof value.exit_code === 'number' && Number.isInteger(value.exit_code)
+    ? value.exit_code
+    : undefined;
+  return ok({
+    taskId: request.context.taskId,
+    ownerClientId,
+    workspaceId: request.context.workspaceId,
+    requestDigest: request.context.requestDigest,
+    state,
+    observedAt: timestamp(value.finished_at) ?? timestamp(value.started_at) ?? now().toISOString(),
+    ...(exitCode === undefined ? {} : { exitCode }),
+  });
+}
+
+function expectedUnknownEvidence(
+  request: AutomationDispatchRequest,
+  ownerClientId: string,
+  now: () => Date,
+): AutomationTaskEvidenceSnapshot {
+  return {
+    taskId: request.context.taskId,
+    ownerClientId,
+    workspaceId: request.context.workspaceId,
+    requestDigest: request.context.requestDigest,
+    state: 'unknown',
+    observedAt: now().toISOString(),
+  };
 }
 
 function observationFromSnapshot(

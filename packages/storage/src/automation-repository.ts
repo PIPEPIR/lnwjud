@@ -78,6 +78,12 @@ export interface UpdateAutomationAttemptRequest extends MutationScope {
   readonly terminalState?: string | null;
 }
 
+export interface RecordAutomationVerificationRequest extends MutationScope {
+  readonly attemptId: string;
+  readonly evidence: readonly AutomationVerificationEvidence[];
+  readonly milestoneStatus?: Extract<AutomationMilestoneStatus, 'completed' | 'blocked' | 'failed'>;
+}
+
 interface RunRow {
   readonly id: string;
   readonly goal_id: string;
@@ -301,6 +307,37 @@ export class SqliteAutomationRepository {
           input.attemptId,
           input.runId,
         );
+      return asRunStatus(run.status);
+    });
+  }
+
+  public recordVerification(input: RecordAutomationVerificationRequest): Result<StoredAutomationRun> {
+    if (!Array.isArray(input.evidence) || input.evidence.length < 1 || input.evidence.length > 16) {
+      return err(appError('INVALID_INPUT', 'Automation verification evidence is invalid'));
+    }
+    return this.mutate(input, (run) => {
+      const attempt = this.database.connection.prepare('SELECT * FROM automation_attempts WHERE id = ? AND run_id = ?')
+        .get(input.attemptId, input.runId) as AttemptRow | undefined;
+      if (attempt === undefined) throw new RepositoryNotFoundError('Automation attempt was not found');
+      if (asDispatchStatus(attempt.dispatch_status) !== 'terminal') {
+        throw new RepositoryConflictError('Automation verification requires a terminal dispatch');
+      }
+      if (input.milestoneStatus !== undefined) {
+        const milestone = this.requireMilestone(input.runId, attempt.milestone_id);
+        const transition = transitionAutomationMilestone(asMilestoneStatus(milestone.status), input.milestoneStatus);
+        if (!transition.ok) throw new RepositoryConflictError(transition.error.message);
+        this.database.connection.prepare(`UPDATE automation_milestones SET status = ?, updated_at = ?
+          WHERE run_id = ? AND milestone_id = ?`)
+          .run(input.milestoneStatus, input.updatedAt, input.runId, attempt.milestone_id);
+      } else {
+        const milestone = this.requireMilestone(input.runId, attempt.milestone_id);
+        if (asMilestoneStatus(milestone.status) !== 'verifying') {
+          throw new RepositoryConflictError('Pending automation evidence requires a verifying milestone');
+        }
+      }
+      this.database.connection.prepare(`UPDATE automation_attempts SET evidence_json = ?, updated_at = ?
+        WHERE id = ? AND run_id = ?`)
+        .run(JSON.stringify(input.evidence.map(sanitizeEvidence)), input.updatedAt, input.attemptId, input.runId);
       return asRunStatus(run.status);
     });
   }

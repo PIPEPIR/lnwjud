@@ -20,6 +20,7 @@ import type {
   AutomationEventInput,
   CreateAutomationRunRequest as RepositoryCreateAutomationRunRequest,
   ReserveAutomationAttemptRequest,
+  RecordAutomationVerificationRequest,
   StoredAutomationRun,
   TransitionAutomationMilestoneRequest,
   TransitionAutomationRunRequest,
@@ -33,6 +34,7 @@ import type {
   GetGoalRequest,
   ValidateGoalLeaseRequest,
 } from './goal-continuation-service.js';
+import type { AutomationVerificationPort } from './automation-verifier.js';
 
 const MAX_ID_LENGTH = 128;
 const MAX_CANCEL_SUMMARY = 2_048;
@@ -45,6 +47,7 @@ export interface AutomationRepositoryPort {
   transitionMilestone(input: TransitionAutomationMilestoneRequest): Result<StoredAutomationRun>;
   reserveAttempt(input: ReserveAutomationAttemptRequest): Result<StoredAutomationRun>;
   updateAttempt(input: UpdateAutomationAttemptRequest): Result<StoredAutomationRun>;
+  recordVerification(input: RecordAutomationVerificationRequest): Result<StoredAutomationRun>;
   listEvents(
     runId: string,
     ownerClientId: string,
@@ -125,7 +128,7 @@ export interface AutomationEventsRequest extends AutomationRunLocator {
   readonly limit?: number;
 }
 
-export type AutomationAdvanceBoundary = 'dispatched' | 'running' | 'verification_pending' | 'blocked' | 'idle';
+export type AutomationAdvanceBoundary = 'dispatched' | 'running' | 'verification_pending' | 'verified' | 'failed' | 'blocked' | 'idle';
 
 export interface AutomationAdvanceResult {
   readonly run: StoredAutomationRun;
@@ -153,6 +156,7 @@ export class AutomationService {
     private readonly repository: AutomationRepositoryPort,
     private readonly goals: AutomationGoalPort,
     private readonly dispatch: AutomationDispatchPort,
+    private readonly verifier: AutomationVerificationPort,
     options: AutomationServiceOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
@@ -268,12 +272,8 @@ export class AutomationService {
     const verifying = stored.milestones.find((milestone) => milestone.status === 'verifying');
     if (verifying !== undefined) {
       const attempt = latestAttempt(stored, verifying.id);
-      return ok({
-        run: stored,
-        boundary: 'verification_pending',
-        milestoneId: verifying.id,
-        ...(attempt === undefined ? {} : { attemptId: attempt.id, taskId: attempt.taskId }),
-      });
+      if (attempt === undefined) return err(appError('INTERNAL_ERROR', 'Verifying automation milestone has no attempt', true));
+      return this.verifyMilestone(actor, stored, verifying, attempt, goalLease, request.userConfirmed);
     }
 
     const statusByMilestone = Object.fromEntries(stored.milestones.map((milestone) => [milestone.id, milestone.status]));
@@ -441,6 +441,81 @@ export class AutomationService {
       });
     }
     return this.persistDispatchObservation(actor, stored, milestone, attempt, observation, 'observe');
+  }
+
+  private async verifyMilestone(
+    actor: FileActor,
+    stored: StoredAutomationRun,
+    milestone: AutomationMilestoneRecord,
+    attempt: AutomationAttemptRecord,
+    goalLease: GoalLeaseProof,
+    userConfirmed?: boolean,
+  ): Promise<Result<AutomationAdvanceResult>> {
+    let verified: Awaited<ReturnType<AutomationVerificationPort['verify']>>;
+    try {
+      verified = await this.verifier.verify(actor, {
+        stored,
+        milestone,
+        attempt,
+        goalLease,
+        ...(userConfirmed === undefined ? {} : { userConfirmed }),
+      });
+    } catch {
+      return err(appError('INTERNAL_ERROR', 'Automation verification failed unexpectedly', true));
+    }
+    if (!verified.ok) return verified;
+    const milestoneStatus = verified.value.status === 'verified'
+      ? 'completed' as const
+      : verified.value.status === 'failed'
+        ? 'failed' as const
+        : undefined;
+    const recorded = this.repository.recordVerification(this.mutationScope(actor, stored, stored.run.revision, {
+      kind: 'verification_recorded',
+      milestoneId: milestone.id,
+      attemptId: attempt.id,
+      payload: { status: verified.value.status, evidenceCount: verified.value.evidence.length, taskId: attempt.taskId },
+    }, {
+      attemptId: attempt.id,
+      evidence: verified.value.evidence,
+      ...(milestoneStatus === undefined ? {} : { milestoneStatus }),
+    }));
+    if (!recorded.ok) return recorded;
+    if (verified.value.status === 'verified') {
+      return ok({
+        run: recorded.value,
+        boundary: 'verified',
+        milestoneId: milestone.id,
+        attemptId: attempt.id,
+        taskId: attempt.taskId,
+      });
+    }
+    if (verified.value.status === 'pending') {
+      return ok({
+        run: recorded.value,
+        boundary: 'verification_pending',
+        milestoneId: milestone.id,
+        attemptId: attempt.id,
+        taskId: attempt.taskId,
+      });
+    }
+    const runStatus = verified.value.status === 'failed' ? 'failed' : 'blocked';
+    const transitioned = recorded.value.run.status === runStatus
+      ? ok(recorded.value)
+      : this.transitionRun(
+          actor,
+          recorded.value,
+          recorded.value.run.revision,
+          runStatus,
+          verified.value.status === 'failed' ? 'run_verification_failed' : 'run_verification_unknown',
+        );
+    if (!transitioned.ok) return transitioned;
+    return ok({
+      run: transitioned.value,
+      boundary: verified.value.status === 'failed' ? 'failed' : 'blocked',
+      milestoneId: milestone.id,
+      attemptId: attempt.id,
+      taskId: attempt.taskId,
+    });
   }
 
   private async observeUnresolved(

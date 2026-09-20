@@ -12,6 +12,7 @@ import {
 } from './automation-service.js';
 import type { FileActor } from './file-service.js';
 import { GoalContinuationService, type RunGoalResult } from './goal-continuation-service.js';
+import type { AutomationVerificationPort } from './automation-verifier.js';
 
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
 const otherClient: FileActor = { clientId: 'client-b', clientName: 'Client B', sessionId: 'session-b' };
@@ -24,10 +25,14 @@ interface Fixture {
   readonly service: AutomationService;
   readonly started: RunGoalResult;
   readonly dispatch: AutomationDispatchPort;
+  readonly verifier: AutomationVerificationPort;
   readonly setNow: (value: string) => void;
 }
 
-async function fixture(overrides: Partial<AutomationDispatchPort> = {}): Promise<Fixture> {
+async function fixture(
+  overrides: Partial<AutomationDispatchPort> = {},
+  verification?: AutomationVerificationPort['verify'],
+): Promise<Fixture> {
   const database = new SqliteDatabase(':memory:');
   const workspaces = new SqliteWorkspaceRepository(database);
   await workspaces.insert({
@@ -76,7 +81,19 @@ async function fixture(overrides: Partial<AutomationDispatchPort> = {}): Promise
     ...overrides,
   };
   const repository = new SqliteAutomationRepository(database);
-  const service = new AutomationService(repository, goals, dispatch, {
+  const verifier: AutomationVerificationPort = {
+    verify: vi.fn<AutomationVerificationPort['verify']>(verification ?? (async (_actor, request) => ok({
+      status: 'pending',
+      evidence: request.milestone.verification.map((requirement) => ({
+        requirementId: requirement.id,
+        kind: requirement.kind,
+        status: 'pending',
+        observedAt: nowProvider().toISOString(),
+        detail: 'running',
+      })),
+    }))),
+  };
+  const service = new AutomationService(repository, goals, dispatch, verifier, {
     now: nowProvider,
     idFactory: () => 'run-a',
   });
@@ -87,6 +104,7 @@ async function fixture(overrides: Partial<AutomationDispatchPort> = {}): Promise
     service,
     started: startedResult.value,
     dispatch,
+    verifier,
     setNow: (value: string): void => { now = new Date(value); },
   };
 }
@@ -431,6 +449,105 @@ describe('AutomationService', () => {
       expect(terminal.value.run.milestones[0]).toMatchObject({ id: 'first', status: 'verifying' });
       expect(f.dispatch.launch).toHaveBeenCalledTimes(1);
       expect(observe).toHaveBeenCalledTimes(1);
+    } finally {
+      f.database.close();
+    }
+  });
+
+  it('persists verifier-produced evidence and completes the milestone atomically', async () => {
+    const observe = vi.fn<AutomationDispatchPort['observe']>(async () => ok({
+      presence: 'found', state: 'completed', terminalState: 'completed:0', observedAt: '2026-09-20T10:00:02.000Z',
+    }));
+    const verify = vi.fn<AutomationVerificationPort['verify']>(async (_actor, request) => ok({
+      status: 'verified',
+      evidence: [{
+        requirementId: 'first-exit', kind: 'command_exit', status: 'verified',
+        observedAt: '2026-09-20T10:00:03.000Z', observedDigest: request.attempt.requestDigest,
+        observedTaskId: request.attempt.taskId, observedExitCode: 0, detail: 'completed',
+      }],
+    }));
+    const f = await fixture({ observe }, verify);
+    try {
+      const created = await createRun(f);
+      const launched = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 0, leaseToken: f.started.leaseToken!,
+      });
+      expect(launched).toMatchObject({ ok: true, value: { boundary: 'dispatched', run: { run: { revision: 3 } } } });
+
+      const terminal = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 3, leaseToken: f.started.leaseToken!,
+      });
+      expect(terminal).toMatchObject({ ok: true, value: { boundary: 'verification_pending', run: { run: { revision: 4 } } } });
+
+      const verified = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 4, leaseToken: f.started.leaseToken!,
+      });
+      expect(verified).toMatchObject({
+        ok: true,
+        value: {
+          boundary: 'verified',
+          run: {
+            run: { status: 'active', revision: 5 },
+            attempts: [{ evidence: [{ requirementId: 'first-exit', status: 'verified' }] }],
+          },
+        },
+      });
+      if (!verified.ok) throw new Error(verified.error.message);
+      expect(verified.value.run.milestones.find((milestone) => milestone.id === 'first'))
+        .toMatchObject({ status: 'completed' });
+      expect(verify).toHaveBeenCalledTimes(1);
+      expect(verify.mock.calls[0]?.[1]).toMatchObject({
+        stored: { run: { id: 'run-a', ownerClientId: actor.clientId } },
+        milestone: { id: 'first', status: 'verifying' },
+        attempt: { dispatchStatus: 'terminal' },
+        goalLease: { goalId: f.started.goalId, leaseGeneration: 1 },
+      });
+      expect(f.repository.listEvents('run-a', actor.clientId, 'workspace-a', { limit: 10 })).toMatchObject({
+        ok: true,
+        value: { events: [{ sequence: 0 }, { sequence: 1 }, { sequence: 2 }, { sequence: 3 }, { sequence: 4 }, { sequence: 5, kind: 'verification_recorded' }] },
+      });
+    } finally {
+      f.database.close();
+    }
+  });
+
+  it('stores unknown evidence without completing or dispatching another milestone', async () => {
+    const observe = vi.fn<AutomationDispatchPort['observe']>(async () => ok({
+      presence: 'found', state: 'completed', terminalState: 'completed:0', observedAt: '2026-09-20T10:00:02.000Z',
+    }));
+    const verify = vi.fn<AutomationVerificationPort['verify']>(async (_actor, request) => ok({
+      status: 'unknown',
+      evidence: [{
+        requirementId: 'first-exit', kind: 'command_exit', status: 'unknown',
+        observedAt: '2026-09-20T10:00:03.000Z', observedDigest: request.attempt.requestDigest,
+        observedTaskId: request.attempt.taskId, detail: 'termination_unverified',
+      }],
+    }));
+    const f = await fixture({ observe }, verify);
+    try {
+      const created = await createRun(f);
+      await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 0, leaseToken: f.started.leaseToken!,
+      });
+      await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 3, leaseToken: f.started.leaseToken!,
+      });
+      const blocked = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 4, leaseToken: f.started.leaseToken!,
+      });
+      expect(blocked).toMatchObject({
+        ok: true,
+        value: {
+          boundary: 'blocked',
+          run: {
+            run: { status: 'blocked', revision: 6 },
+            attempts: [{ evidence: [{ status: 'unknown' }] }],
+          },
+        },
+      });
+      if (!blocked.ok) throw new Error(blocked.error.message);
+      expect(blocked.value.run.milestones.find((milestone) => milestone.id === 'first'))
+        .toMatchObject({ status: 'verifying' });
     } finally {
       f.database.close();
     }

@@ -103,6 +103,76 @@ describe('SqliteAutomationRepository', () => {
     }
   });
 
+  it('records verification evidence and the milestone result in one CAS mutation', async () => {
+    const fixture = await createFixture();
+    try {
+      expect(fixture.repository.create(runInput('run-a')).ok).toBe(true);
+      expect(fixture.repository.transitionMilestone({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 0,
+        milestoneId: 'build', status: 'ready', updatedAt: '2026-09-20T10:01:00.000Z',
+        event: { kind: 'milestone_ready', milestoneId: 'build', payload: {} },
+      }).ok).toBe(true);
+      expect(fixture.repository.reserveAttempt({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 1,
+        milestoneId: 'build', attemptId: 'attempt-a', ordinal: 1,
+        taskId: 'automation-run-a-build-1', requestDigest: 'a'.repeat(64),
+        updatedAt: '2026-09-20T10:02:00.000Z',
+        event: { kind: 'attempt_reserved', milestoneId: 'build', attemptId: 'attempt-a', payload: {} },
+      }).ok).toBe(true);
+      expect(fixture.repository.updateAttempt({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 2,
+        attemptId: 'attempt-a', dispatchStatus: 'launched', milestoneStatus: 'running',
+        updatedAt: '2026-09-20T10:03:00.000Z',
+        event: { kind: 'dispatch_observed', milestoneId: 'build', attemptId: 'attempt-a', payload: {} },
+      }).ok).toBe(true);
+      expect(fixture.repository.updateAttempt({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 3,
+        attemptId: 'attempt-a', dispatchStatus: 'terminal', milestoneStatus: 'verifying', terminalState: 'completed:0',
+        updatedAt: '2026-09-20T10:04:00.000Z',
+        event: { kind: 'dispatch_terminal', milestoneId: 'build', attemptId: 'attempt-a', payload: {} },
+      }).ok).toBe(true);
+
+      const verified = fixture.repository.recordVerification({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 4,
+        attemptId: 'attempt-a', milestoneStatus: 'completed',
+        evidence: [{
+          requirementId: 'build-exit', kind: 'command_exit', status: 'verified',
+          observedAt: '2026-09-20T10:05:00.000Z', observedDigest: 'a'.repeat(64),
+          observedTaskId: 'automation-run-a-build-1', observedExitCode: 0, detail: 'completed',
+        }],
+        updatedAt: '2026-09-20T10:05:00.000Z',
+        event: { kind: 'verification_recorded', milestoneId: 'build', attemptId: 'attempt-a', payload: { status: 'verified' } },
+      });
+      expect(verified).toMatchObject({
+        ok: true,
+        value: {
+          run: { revision: 5 },
+          milestones: [{ id: 'build', status: 'completed' }],
+          attempts: [{ id: 'attempt-a', evidence: [{ requirementId: 'build-exit', status: 'verified' }] }],
+        },
+      });
+      expect(fixture.repository.listEvents('run-a', 'client-a', 'workspace-a', { limit: 10 })).toMatchObject({
+        ok: true,
+        value: { events: [{ sequence: 0 }, { sequence: 1 }, { sequence: 2 }, { sequence: 3 }, { sequence: 4 }, { sequence: 5, kind: 'verification_recorded' }] },
+      });
+
+      const stale = fixture.repository.recordVerification({
+        runId: 'run-a', ownerClientId: 'client-a', workspaceId: 'workspace-a', expectedRevision: 4,
+        attemptId: 'attempt-a', milestoneStatus: 'failed',
+        evidence: [{ requirementId: 'build-exit', kind: 'command_exit', status: 'failed', observedAt: '2026-09-20T10:06:00.000Z' }],
+        updatedAt: '2026-09-20T10:06:00.000Z',
+        event: { kind: 'stale_verification', milestoneId: 'build', attemptId: 'attempt-a', payload: {} },
+      });
+      expect(stale).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      expect(fixture.repository.getOwned('run-a', 'client-a', 'workspace-a')).toMatchObject({
+        ok: true,
+        value: { run: { revision: 5 }, milestones: [{ status: 'completed' }], attempts: [{ evidence: [{ status: 'verified' }] }] },
+      });
+    } finally {
+      fixture.database.close();
+    }
+  });
+
   it('bounds and redacts event payloads and fails closed on corrupt stored definitions', async () => {
     const fixture = await createFixture();
     try {
