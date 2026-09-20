@@ -13,7 +13,10 @@ import {
   type AutomationPlan,
   type AutomationRunStatus,
   type AutomationShellDispatch,
+  type GoalEvidence,
   type GoalLeaseProof,
+  type GoalStepUpdate,
+  type GoalTrackedTask,
   type Result,
 } from '@lnwjud/domain';
 import type {
@@ -30,6 +33,9 @@ import type { FileActor } from './file-service.js';
 import type {
   CancelGoalRequest,
   CancelGoalResult,
+  CheckpointGoalRequest,
+  FinishGoalRequest,
+  FinishGoalResult,
   GoalSnapshot,
   GetGoalRequest,
   ValidateGoalLeaseRequest,
@@ -59,6 +65,8 @@ export interface AutomationRepositoryPort {
 export interface AutomationGoalPort {
   getGoal(actor: FileActor, request: GetGoalRequest): Promise<Result<GoalSnapshot>>;
   validateGoalLease(actor: FileActor, request: ValidateGoalLeaseRequest): Promise<Result<GoalSnapshot>>;
+  checkpointGoal(actor: FileActor, request: CheckpointGoalRequest): Promise<Result<GoalSnapshot>>;
+  finishGoal(actor: FileActor, request: FinishGoalRequest): Promise<Result<FinishGoalResult>>;
   cancelGoal(actor: FileActor, request: CancelGoalRequest): Promise<Result<CancelGoalResult>>;
 }
 
@@ -136,6 +144,11 @@ export interface AutomationAdvanceResult {
   readonly milestoneId?: string;
   readonly attemptId?: string;
   readonly taskId?: string;
+}
+
+export interface AutomationFinalizeResult {
+  readonly run: StoredAutomationRun;
+  readonly goal: GoalSnapshot;
 }
 
 export interface AutomationServiceOptions {
@@ -221,7 +234,10 @@ export class AutomationService {
     if (authorized.value.run.run.status !== 'active') {
       return err(appError('CONFLICT', 'Only an active automation run can be paused', true));
     }
-    return this.transitionRun(actor, authorized.value.run, request.expectedRevision, 'paused', 'run_paused');
+    const paused = this.transitionRun(actor, authorized.value.run, request.expectedRevision, 'paused', 'run_paused');
+    if (!paused.ok) return paused;
+    const checkpoint = await this.syncGoalState(actor, authorized.value.goal, paused.value, request.leaseToken, 'control:pause');
+    return checkpoint.ok ? paused : err(checkpoint.error);
   }
 
   public async resume(actor: FileActor, request: MutateAutomationRunRequest): Promise<Result<StoredAutomationRun>> {
@@ -230,7 +246,10 @@ export class AutomationService {
     if (authorized.value.run.run.status !== 'paused' && authorized.value.run.run.status !== 'blocked') {
       return err(appError('CONFLICT', 'Only a paused or blocked automation run can be resumed', true));
     }
-    return this.transitionRun(actor, authorized.value.run, request.expectedRevision, 'active', 'run_resumed');
+    const resumed = this.transitionRun(actor, authorized.value.run, request.expectedRevision, 'active', 'run_resumed');
+    if (!resumed.ok) return resumed;
+    const checkpoint = await this.syncGoalState(actor, authorized.value.goal, resumed.value, request.leaseToken, 'control:resume');
+    return checkpoint.ok ? resumed : err(checkpoint.error);
   }
 
   public async cancel(actor: FileActor, request: CancelAutomationRunRequest): Promise<Result<StoredAutomationRun>> {
@@ -250,6 +269,70 @@ export class AutomationService {
     return cancelled;
   }
 
+  public async finalize(actor: FileActor, request: MutateAutomationRunRequest): Promise<Result<AutomationFinalizeResult>> {
+    const authorized = await this.loadAuthorizedRun(actor, request, true);
+    if (!authorized.ok) return authorized;
+    let stored = authorized.value.run;
+    if (stored.run.status !== 'active' && stored.run.status !== 'completing') {
+      return err(appError('CONFLICT', 'Automation run is not ready to finalize', true));
+    }
+    const incomplete = stored.milestones.find((milestone) => milestone.status !== 'completed');
+    if (incomplete !== undefined) {
+      return err(appError('CONFLICT', `Automation milestone ${incomplete.id} is not verified`, true));
+    }
+    const unresolved = stored.attempts.find((attempt) => attempt.dispatchStatus !== 'terminal');
+    if (unresolved !== undefined) {
+      return err(appError('CONFLICT', `Automation attempt ${unresolved.id} is not terminal`, true));
+    }
+    const missingEvidence = stored.milestones.find((milestone) => {
+      const attempt = latestAttempt(stored, milestone.id);
+      if (attempt === undefined) return true;
+      const verifiedIds = new Set(attempt.evidence
+        .filter((entry) => entry.status === 'verified')
+        .map((entry) => `${entry.kind}\0${entry.requirementId}`));
+      return milestone.verification.some((requirement) => !verifiedIds.has(`${requirement.kind}\0${requirement.id}`));
+    });
+    if (missingEvidence !== undefined) {
+      return err(appError('CONFLICT', `Automation milestone ${missingEvidence.id} has incomplete verification evidence`, true));
+    }
+
+    if (stored.run.status === 'active') {
+      const completing = this.transitionRun(actor, stored, stored.run.revision, 'completing', 'run_completing');
+      if (!completing.ok) return completing;
+      stored = completing.value;
+    }
+    const checkpoint = await this.syncGoalState(
+      actor,
+      authorized.value.goal,
+      stored,
+      request.leaseToken,
+      'finalize',
+      true,
+    );
+    if (!checkpoint.ok) return checkpoint;
+    const terminalEvidence = automationGoalEvidence(stored);
+    const finished = await this.goals.finishGoal(actor, {
+      goalId: stored.run.goalId,
+      leaseToken: request.leaseToken,
+      expectedRevision: checkpoint.value.revision,
+      status: 'completed',
+      summary: `Automation run ${stored.run.id} completed with verified evidence.`,
+      evidence: terminalEvidence,
+    });
+    if (!finished.ok) return finished;
+    if (finished.value.completionState !== 'completed') {
+      return err(appError('CONFLICT', 'Root goal completion is waiting for native scheduled-task cleanup', true));
+    }
+    const goalReadback = await this.goals.getGoal(actor, { goalId: stored.run.goalId });
+    if (!goalReadback.ok) return goalReadback;
+    if (goalReadback.value.status !== 'completed') {
+      return err(appError('CONFLICT', 'Root goal terminal completion was not confirmed', true));
+    }
+    const completed = this.transitionRun(actor, stored, stored.run.revision, 'completed', 'run_completed');
+    if (!completed.ok) return completed;
+    return ok({ run: completed.value, goal: goalReadback.value });
+  }
+
   public async advance(actor: FileActor, request: MutateAutomationRunRequest): Promise<Result<AutomationAdvanceResult>> {
     const authorized = await this.loadAuthorizedRun(actor, request, true);
     if (!authorized.ok) return authorized;
@@ -264,23 +347,53 @@ export class AutomationService {
       leaseToken: request.leaseToken,
       leaseGeneration: authorized.value.goal.leaseGeneration,
     };
+    let goal = authorized.value.goal;
+    if (requiresPreflightGoalSync(stored)) {
+      const synchronized = await this.syncGoalState(actor, goal, stored, request.leaseToken, 'recovery:preflight');
+      if (!synchronized.ok) return synchronized;
+      goal = synchronized.value;
+    }
     const unresolved = stored.attempts.find((attempt) => attempt.dispatchStatus === 'dispatched_unresolved');
-    if (unresolved !== undefined) return this.observeUnresolved(actor, stored, unresolved, goalLease, request.userConfirmed);
+    if (unresolved !== undefined) {
+      return this.withGoalCheckpoint(
+        actor,
+        goal,
+        request.leaseToken,
+        this.observeUnresolved(actor, stored, unresolved, goalLease, request.userConfirmed),
+      );
+    }
 
     const inFlight = stored.milestones.find((milestone) => milestone.status === 'dispatching' || milestone.status === 'running');
-    if (inFlight !== undefined) return this.observeInFlight(actor, stored, inFlight, goalLease, request.userConfirmed);
+    if (inFlight !== undefined) {
+      return this.withGoalCheckpoint(
+        actor,
+        goal,
+        request.leaseToken,
+        this.observeInFlight(actor, stored, inFlight, goalLease, request.userConfirmed),
+      );
+    }
     const verifying = stored.milestones.find((milestone) => milestone.status === 'verifying');
     if (verifying !== undefined) {
       const attempt = latestAttempt(stored, verifying.id);
       if (attempt === undefined) return err(appError('INTERNAL_ERROR', 'Verifying automation milestone has no attempt', true));
-      return this.verifyMilestone(actor, stored, verifying, attempt, goalLease, request.userConfirmed);
+      return this.withGoalCheckpoint(
+        actor,
+        goal,
+        request.leaseToken,
+        this.verifyMilestone(actor, stored, verifying, attempt, goalLease, request.userConfirmed),
+      );
     }
 
     const statusByMilestone = Object.fromEntries(stored.milestones.map((milestone) => [milestone.id, milestone.status]));
     const plan: AutomationPlan = { milestones: stored.milestones };
     const next = readyAutomationMilestones(plan, statusByMilestone)[0];
     if (next === undefined) {
-      return ok({ run: stored, boundary: 'idle' });
+      return this.withGoalCheckpoint(
+        actor,
+        goal,
+        request.leaseToken,
+        ok({ run: stored, boundary: 'idle' }),
+      );
     }
     const ready = this.repository.transitionMilestone(this.mutationScope(actor, stored, stored.run.revision, {
       kind: 'milestone_ready',
@@ -321,7 +434,72 @@ export class AutomationService {
     } catch {
       observation = err(appError('INTERNAL_ERROR', 'Automation dispatch outcome is unknown', true));
     }
-    return this.persistDispatchObservation(actor, stored, milestone, attempt, observation, 'launch');
+    return this.withGoalCheckpoint(
+      actor,
+      goal,
+      request.leaseToken,
+      this.persistDispatchObservation(actor, stored, milestone, attempt, observation, 'launch'),
+    );
+  }
+
+  private async withGoalCheckpoint(
+    actor: FileActor,
+    goal: GoalSnapshot,
+    leaseToken: string,
+    result: Result<AutomationAdvanceResult> | Promise<Result<AutomationAdvanceResult>>,
+  ): Promise<Result<AutomationAdvanceResult>> {
+    const advanced = await result;
+    if (!advanced.ok) return advanced;
+    const checkpoint = await this.syncGoalState(
+      actor,
+      goal,
+      advanced.value.run,
+      leaseToken,
+      `advance:${advanced.value.boundary}`,
+    );
+    return checkpoint.ok ? advanced : err(checkpoint.error);
+  }
+
+  private async syncGoalState(
+    actor: FileActor,
+    goal: GoalSnapshot,
+    stored: StoredAutomationRun,
+    leaseToken: string,
+    reason: string,
+    force = false,
+  ): Promise<Result<GoalSnapshot>> {
+    const trackedTasks = automationGoalTrackedTasks(goal, stored);
+    const stepUpdates = automationGoalStepUpdates(goal, stored);
+    const blockerPrefix = `[automation:${stored.run.id}]`;
+    const blockers = goal.blockers.filter((entry) => !entry.startsWith(blockerPrefix));
+    if (stored.run.status === 'blocked' || stored.run.status === 'failed' || stored.run.status === 'paused') {
+      blockers.push(`${blockerPrefix} ${stored.run.status === 'paused' ? 'paused' : 'requires operator attention'}`);
+    }
+    const currentPhase = `automation:${stored.run.id}:${stored.run.status}`;
+    const nextAction = automationGoalNextAction(stored);
+    const changed = force
+      || goal.currentPhase !== currentPhase
+      || goal.nextAction !== nextAction
+      || !sameTrackedTasks(goal.trackedTasks, trackedTasks)
+      || !sameStrings(goal.blockers, blockers)
+      || stepUpdates.some((update) => {
+        const current = goal.plan.steps.find((step) => step.id === update.stepId);
+        return current?.status !== update.status || current.summary !== update.summary;
+      });
+    if (!changed) return ok(goal);
+    return this.goals.checkpointGoal(actor, {
+      goalId: stored.run.goalId,
+      leaseToken,
+      expectedRevision: goal.revision,
+      currentPhase,
+      summary: `Automation run ${stored.run.id} checkpointed (${reason}).`,
+      stepUpdates,
+      nextAction,
+      blockers,
+      evidence: automationGoalEvidence(stored),
+      trackedTasks,
+      releaseLease: false,
+    });
   }
 
   private async loadAuthorizedRun(
@@ -772,6 +950,123 @@ function requireAttempt(stored: StoredAutomationRun, attemptId: string): Automat
 
 function isTerminalRun(status: AutomationRunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function automationGoalTrackedTasks(goal: GoalSnapshot, stored: StoredAutomationRun): readonly GoalTrackedTask[] {
+  const ownedTaskIds = new Set<string>();
+  for (const attempt of stored.attempts) {
+    ownedTaskIds.add(attempt.taskId);
+    for (const evidence of attempt.evidence) {
+      if (evidence.observedTaskId !== undefined) ownedTaskIds.add(evidence.observedTaskId);
+    }
+  }
+  const retained = goal.trackedTasks.filter((task) => !ownedTaskIds.has(task.taskId));
+  const active = new Map<string, GoalTrackedTask>();
+  for (const attempt of stored.attempts) {
+    if (attempt.dispatchStatus !== 'launched' && attempt.dispatchStatus !== 'dispatched_unresolved') continue;
+    const milestone = stored.milestones.find((entry) => entry.id === attempt.milestoneId);
+    if (milestone === undefined) continue;
+    active.set(attempt.taskId, {
+      taskId: attempt.taskId,
+      provider: 'shell',
+      role: milestone.role,
+      cancelWithGoal: milestone.cancelWithGoal,
+    });
+  }
+  for (const attempt of stored.attempts) {
+    const milestone = stored.milestones.find((entry) => entry.id === attempt.milestoneId);
+    if (milestone === undefined) continue;
+    for (const evidence of attempt.evidence) {
+      if (evidence.kind !== 'git_diff_check'
+        || evidence.observedTaskId === undefined
+        || (evidence.status !== 'pending' && evidence.status !== 'unknown')) continue;
+      active.set(evidence.observedTaskId, {
+        taskId: evidence.observedTaskId,
+        provider: 'shell',
+        role: milestone.role,
+        cancelWithGoal: milestone.cancelWithGoal,
+      });
+    }
+  }
+  return [...retained, ...active.values()];
+}
+
+function requiresPreflightGoalSync(stored: StoredAutomationRun): boolean {
+  return stored.run.status === 'blocked'
+    || stored.run.status === 'paused'
+    || stored.milestones.some((milestone) => milestone.status === 'running' || milestone.status === 'verifying')
+    || stored.attempts.some((attempt) => attempt.dispatchStatus === 'launched' || attempt.dispatchStatus === 'dispatched_unresolved');
+}
+
+function automationGoalStepUpdates(goal: GoalSnapshot, stored: StoredAutomationRun): readonly GoalStepUpdate[] {
+  const byStep = new Map<string, AutomationMilestoneRecord[]>();
+  for (const milestone of stored.milestones) {
+    const entries = byStep.get(milestone.goalStepId) ?? [];
+    entries.push(milestone);
+    byStep.set(milestone.goalStepId, entries);
+  }
+  return goal.plan.steps.flatMap((step): GoalStepUpdate[] => {
+    const milestones = byStep.get(step.id);
+    if (milestones === undefined || milestones.length === 0) return [];
+    const status = milestones.every((milestone) => milestone.status === 'completed')
+      ? 'completed' as const
+      : stored.run.status === 'blocked'
+        || stored.run.status === 'failed'
+        || milestones.some((milestone) => milestone.status === 'blocked' || milestone.status === 'failed')
+        ? 'blocked' as const
+        : milestones.every((milestone) => milestone.status === 'pending')
+          ? 'pending' as const
+          : 'in_progress' as const;
+    const summary = `Automation milestones: ${milestones.map((milestone) => `${milestone.id}=${milestone.status}`).join(', ')}`;
+    return [{ stepId: step.id, status, summary }];
+  });
+}
+
+function automationGoalEvidence(stored: StoredAutomationRun): readonly GoalEvidence[] {
+  const entries: GoalEvidence[] = [];
+  for (const attempt of stored.attempts) {
+    entries.push({ kind: 'task', value: attempt.taskId });
+    if (attempt.terminalState !== undefined) {
+      entries.push({
+        kind: 'note',
+        value: `automation:${stored.run.id}/${attempt.milestoneId}/${attempt.id}:terminal=${attempt.terminalState}`,
+      });
+    }
+    for (const evidence of attempt.evidence) {
+      entries.push({
+        kind: evidence.observedDigest === undefined ? 'note' : 'hash',
+        value: evidence.observedDigest === undefined
+          ? `automation:${stored.run.id}/${attempt.milestoneId}/${evidence.requirementId}:${evidence.status}`
+          : evidence.observedDigest,
+      });
+    }
+  }
+  return entries.slice(-20);
+}
+
+function automationGoalNextAction(stored: StoredAutomationRun): string {
+  if (stored.run.status === 'completed') return 'Automation is complete.';
+  if (stored.run.status === 'completing') return 'Confirm root goal completion and finalize the automation run.';
+  if (stored.run.status === 'blocked' || stored.run.status === 'failed') return 'Inspect automation evidence and resolve the blocker.';
+  if (stored.run.status === 'paused') return 'Resume or cancel the paused automation run.';
+  if (stored.milestones.every((milestone) => milestone.status === 'completed')) return 'Finalize the verified automation run.';
+  return 'Advance the automation run to its next durable boundary.';
+}
+
+function sameTrackedTasks(left: readonly GoalTrackedTask[], right: readonly GoalTrackedTask[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const candidate = right[index];
+    return candidate !== undefined
+      && entry.taskId === candidate.taskId
+      && entry.provider === candidate.provider
+      && entry.role === candidate.role
+      && entry.cancelWithGoal === candidate.cancelWithGoal;
+  });
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
 }
 
 function actorClientId(actor: FileActor): string {
