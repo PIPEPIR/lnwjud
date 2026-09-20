@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
@@ -105,6 +105,7 @@ describe('AutomationVerifier', () => {
 
   it('uses a deterministic reserved git diff --check task without capturing command output', async () => {
     const root = await tempRoot('git');
+    const canonicalRoot = await realpath(root);
     const fixture = await createFixture([{ id: 'diff', kind: 'git_diff_check' }], root);
     fixture.runtime.ensureTask.mockImplementation(async (_actor, request) => ok({
       taskId: request.context.taskId,
@@ -131,7 +132,7 @@ describe('AutomationVerifier', () => {
     expect(firstRequest?.dispatch).toEqual({
       executable: 'git',
       arguments: ['diff', '--check'],
-      cwd: root,
+      cwd: canonicalRoot,
       timeoutSeconds: 60,
       maxOutputBytes: 4096,
       includeStdout: false,
