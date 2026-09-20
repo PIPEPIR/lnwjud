@@ -101,14 +101,18 @@ test('desktop serves the real MCP client development workflow', async () => {
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
     ];
     const advertisedTools = tools.tools.map((tool) => tool.name);
+    const advertisedUpgradeTools = UPGRADE_TOOL_CATALOG
+      .filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState) && (!entry.name.startsWith('ecc_') || entry.name === 'ecc_status'))
+      .map((entry) => entry.name);
     expect(advertisedTools).toEqual([
       ...expectedCoreTools,
-      ...UPGRADE_TOOL_CATALOG.filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState) && (!entry.name.startsWith('ecc_') || entry.name === 'ecc_status')).map((entry) => entry.name),
+      ...advertisedUpgradeTools.filter((name) => !name.startsWith('automation_')),
       'tool_batch',
+      ...advertisedUpgradeTools.filter((name) => name.startsWith('automation_')),
     ]);
     expect(advertisedTools).toHaveLength(
       expectedCoreTools.length
-      + UPGRADE_TOOL_CATALOG.filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState) && (!entry.name.startsWith('ecc_') || entry.name === 'ecc_status')).length
+      + advertisedUpgradeTools.length
       + 1,
     );
     expect(advertisedTools.some((name) => name.startsWith('codex_'))).toBe(false);
