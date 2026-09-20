@@ -37,7 +37,7 @@ describe('platform verification orchestrator', () => {
     expect(workflow).toContain('macos-26');
     expect(workflow).toContain('macos-26-intel');
     expect(workflow).toContain('needs: native-package-verification');
-    expect(workflow).toContain('actions/download-artifact@v4');
+    expect(workflow).toContain('actions/download-artifact@v8');
     expect(workflow).toContain('native-darwin-${{ matrix.arch }}-${{ github.sha }}');
     expect(workflow).toContain('Record exact v4.62.1 macOS signing-policy regression');
     expect(workflow).toContain('inspect-macos-signing-policy.mjs');

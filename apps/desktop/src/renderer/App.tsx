@@ -879,6 +879,7 @@ export function App(): ReactElement {
       onNavigate={(nextScreen) => {
         setError(null);
         const target = startupDoctorNavigationTarget(startupDoctorReady, nextScreen);
+        if (target === 'settings') setRequestedSettingsSection(undefined);
         setScreen(target);
         if (target === 'tools') void loadToolCatalog(['external_mcp_connection']);
       }}
