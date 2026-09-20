@@ -91,8 +91,11 @@ PR CI and explicitly dispatched verification runs the full portable/test
 contract while allowing the expensive Windows installer packaging to be
 skipped with `-SkipWindowsPackaging`. Direct pushes to `dev` and other
 non-main branches run the native platform contract without repeating that
-portable gate, so feedback arrives sooner. The native platform contract runs
-on Windows, macOS, and Linux. Its non-desktop workspace tests run in the
+portable gate, so feedback arrives sooner. The separate `Dev Windows Installer`
+workflow is manual-only (`workflow_dispatch`) and must never be triggered by an
+ordinary `dev` push; local installer requests should use `package:windows` on
+the developer machine instead. The native platform contract runs on Windows,
+macOS, and Linux. Its non-desktop workspace tests run in the
 normal bounded pnpm pool, while each desktop shard first builds the workspace
 packages used by acceptance fixtures and then runs an isolated half of the
 desktop suite per operating system so the slowest files run concurrently. A

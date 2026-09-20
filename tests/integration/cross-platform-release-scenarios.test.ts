@@ -462,7 +462,13 @@ const extendedCiScenarios: readonly Scenario[] = [
   ['ci-extra platform verifier runs packaging contracts', () => expectRepositoryFileContains('scripts/verify-platform-release.mjs', "'packaging-contract'")],
   ['ci-extra platform verifier runs Swift tests on macOS', () => expectRepositoryFileContains('scripts/verify-platform-release.mjs', 'macos-native-host-tests')],
   ['ci-extra platform verifier runs Cargo tests on Linux', () => expectRepositoryFileContains('scripts/verify-platform-release.mjs', 'linux-native-host-tests')],
-  ['ci-extra dev workflow builds Windows Setup and Portable', () => expectRepositoryFileContains('.github/workflows/dev-installer.yml', 'Build Windows Setup and Portable')],
+  ['ci-extra dev installer is manual-only and never runs on ordinary dev pushes', async () => {
+    const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'dev-installer.yml'), 'utf8');
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).not.toContain('\n  push:');
+    expect(workflow).not.toContain('[build-installer]');
+  }],
+  ['ci-extra dev workflow builds Windows Setup and Portable when manually dispatched', () => expectRepositoryFileContains('.github/workflows/dev-installer.yml', 'Build Windows Setup and Portable')],
   ['ci-extra dev workflow installs cosign before provenance-bound packaging', () => expectRepositoryFileContains('.github/workflows/dev-installer.yml', 'Install cosign for tunnel provenance verification')],
   ['ci-extra dev workflow pins the required cosign release', () => expectRepositoryFileContains('.github/workflows/dev-installer.yml', "cosign-release: 'v3.1.3'")],
   ['ci-extra dev workflow exposes cosign to the Windows package contract', () => expectRepositoryFileContains('.github/workflows/dev-installer.yml', 'LNWJUD_COSIGN_PATH: cosign')],

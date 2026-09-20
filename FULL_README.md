@@ -57,7 +57,18 @@ and returns the response without opening a public inbound port on the host.
 
 Latest published release: **v5.3.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
 
-### What's new in v5.3.0
+### What's new in v5.3.1
+
+- Browser CDP navigation now has a dedicated `Page.navigate` decoder instead of passing the method through the `Runtime.evaluate` value reader. Successful requests return a structured acknowledgement containing the requested/complete state plus frame/loader/download fields when present; protocol errors, `errorText`, malformed responses, protected-tab authorization, and raw-error sanitization remain guarded. This resolves Issue #98 where navigation could succeed in Chrome but fail MCP output validation because `structuredContent` was missing.
+- Desktop log/session history persists across application restart and is presented with human-readable timestamps. Work Log and Live Log share scope formatting, workspace filters show project name + real path, and clearing a session/workspace/all history also removes any historical entries already loaded in renderer state.
+- Factory Reset is staged across restart, clears lnwjud databases/settings/keys/backups/cache/recovery state, and returns to the first-run setup flow without deleting user project directories. Tunnel cleanup now removes only lnwjud-owned artifacts from the shared tunnel-client directory and preserves unrelated profiles/files.
+- The first-run and Settings connection UX now calls out ChatGPT Plugin Developer mode and provides direct entry points for ChatGPT Plugins, tunnel creation/settings, Runtime API keys, and ngrok setup. OAuth-connected states avoid redundant API-key guidance.
+- Text inputs no longer lose focus after each character during dashboard refresh. Startup LogHub replay drains the bounded historical tail in one synchronization pass rather than advancing only 64 KiB every 500 ms, avoiding multi-second catch-up delays after restart.
+- Activity-session summaries are loaded from persistent audit history once and then updated incrementally as new MCP activity arrives, removing the unbounded `GROUP BY` audit scan from the 2-second dashboard refresh loop.
+- Shared skill routing centralizes intent-based skill selection/preflight so Serena and other skills follow one runtime path. The release also retains the v5.3.0 MCP lifecycle/RAM-leak and crash-diagnostic hardening.
+- GitHub Actions checkout/setup-node runtimes were moved to their Node 24-capable major versions. The optional Dev Windows Installer workflow is now `workflow_dispatch` only; ordinary `dev` pushes never build or upload installer artifacts unless a maintainer manually dispatches that workflow.
+
+### Historical: What's new in v5.3.0
 
 - Issue #94's catastrophic RAM growth is fixed at the causal lifecycle boundary: every successful modern HTTP request now closes its per-request `McpServer`, and `toolAvailabilityService` subscriptions are released from both product-level and underlying protocol close paths so completed requests cannot retain `ToolRegistry`, schemas, and closures.
 - Context/file pagination continuations now have bounded retention and expiry as secondary memory hardening; the direct regression repeatedly serves modern requests and requires tool-availability listener creation/closure to remain balanced.
