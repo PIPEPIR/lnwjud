@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appError, err, ok, type Result } from './errors.js';
 import type { GoalTrackedTaskRole } from './goal-continuation.js';
 
@@ -21,6 +22,13 @@ export interface AutomationShellDispatch {
   readonly maxOutputBytes: number;
   readonly includeStdout: boolean;
   readonly includeStderr: boolean;
+}
+
+export interface AutomationShellRequestDigestInput {
+  readonly taskId: string;
+  readonly ownerClientId: string;
+  readonly workspaceId: string;
+  readonly dispatch: AutomationShellDispatch;
 }
 
 export type AutomationVerificationRequirement =
@@ -201,6 +209,23 @@ export function validAutomationAttemptOrdinal(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= MAX_AUTOMATION_ATTEMPTS_PER_MILESTONE;
 }
 
+export function automationShellRequestDigest(input: AutomationShellRequestDigestInput): string {
+  const canonical = canonicalJson({
+    version: 1,
+    task_id: input.taskId,
+    executable: input.dispatch.executable,
+    arguments: [...input.dispatch.arguments],
+    cwd: input.dispatch.cwd,
+    timeout_seconds: input.dispatch.timeoutSeconds,
+    max_output_bytes: input.dispatch.maxOutputBytes,
+    include_stdout: input.dispatch.includeStdout,
+    include_stderr: input.dispatch.includeStderr,
+    owner_client_id: input.ownerClientId,
+    owner_workspace_id: input.workspaceId,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
 function parseMilestone(value: unknown): Result<AutomationMilestoneDefinition> {
   if (!isRecord(value)) return err(appError('INVALID_INPUT', 'Automation milestone must be an object'));
   const id = boundedIdentifier(value.id);
@@ -337,6 +362,14 @@ function boundedText(value: unknown, maximum: number): string | undefined {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

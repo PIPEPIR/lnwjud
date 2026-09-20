@@ -6,6 +6,7 @@ import { SqliteGoalRepository } from '../../storage/src/goal-repository.js';
 import { SqliteWorkspaceRepository } from '../../storage/src/workspace-repository.js';
 import {
   AutomationService,
+  createAutomationDispatchReservation,
   type AutomationDispatchPort,
   type AutomationDispatchRequest,
 } from './automation-service.js';
@@ -307,6 +308,92 @@ describe('AutomationService', () => {
       expect(second).toMatchObject({ ok: true, value: { boundary: 'blocked' } });
       expect(launch).toHaveBeenCalledTimes(1);
       expect(observe).toHaveBeenCalledTimes(1);
+    } finally {
+      f.database.close();
+    }
+  });
+
+  it('relaunches only after exact recovery lookup proves the unresolved task absent', async () => {
+    const launch = vi.fn<AutomationDispatchPort['launch']>()
+      .mockResolvedValueOnce(ok({
+        presence: 'unknown', observedAt: '2026-09-20T10:00:01.000Z', detail: 'receipt lost',
+      }))
+      .mockResolvedValueOnce(ok({
+        presence: 'found', state: 'running', observedAt: '2026-09-20T10:00:03.000Z',
+      }));
+    const observe = vi.fn<AutomationDispatchPort['observe']>(async () => ok({
+      presence: 'absent', observedAt: '2026-09-20T10:00:02.000Z',
+    }));
+    const f = await fixture({ launch, observe });
+    try {
+      const created = await createRun(f);
+      const unresolved = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 0, leaseToken: f.started.leaseToken!,
+      });
+      expect(unresolved).toMatchObject({ ok: true, value: { boundary: 'blocked', run: { run: { revision: 4 } } } });
+
+      const recovered = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 4, leaseToken: f.started.leaseToken!,
+      });
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: {
+          boundary: 'dispatched',
+          run: {
+            run: { status: 'active', revision: 9 },
+            attempts: [
+              { ordinal: 1, dispatchStatus: 'terminal', terminalState: 'absent' },
+              { ordinal: 2, dispatchStatus: 'launched' },
+            ],
+          },
+        },
+      });
+      expect(observe).toHaveBeenCalledTimes(1);
+      expect(launch).toHaveBeenCalledTimes(2);
+      expect(launch.mock.calls[0]?.[1].context.taskId).not.toBe(launch.mock.calls[1]?.[1].context.taskId);
+    } finally {
+      f.database.close();
+    }
+  });
+
+  it('recovers a crash after reservation but before spawn by exact-looking up the same deterministic task ID', async () => {
+    const launch = vi.fn<AutomationDispatchPort['launch']>(async () => ok({
+      presence: 'found', state: 'running', observedAt: '2026-09-20T10:00:03.000Z',
+    }));
+    const observe = vi.fn<AutomationDispatchPort['observe']>(async () => ok({
+      presence: 'absent', observedAt: '2026-09-20T10:00:02.000Z',
+    }));
+    const f = await fixture({ launch, observe });
+    try {
+      const created = await createRun(f);
+      const ready = f.repository.transitionMilestone({
+        runId: created.run.id, ownerClientId: actor.clientId, workspaceId: 'workspace-a', expectedRevision: 0,
+        milestoneId: 'first', status: 'ready', updatedAt: '2026-09-20T10:00:01.000Z',
+        event: { kind: 'fixture_ready', milestoneId: 'first', payload: {} },
+      });
+      if (!ready.ok) throw new Error(ready.error.message);
+      const identity = createAutomationDispatchReservation(ready.value, ready.value.milestones[0]!, 1);
+      const reserved = f.repository.reserveAttempt({
+        runId: created.run.id, ownerClientId: actor.clientId, workspaceId: 'workspace-a', expectedRevision: 1,
+        milestoneId: 'first', attemptId: identity.attemptId, ordinal: 1, taskId: identity.taskId,
+        requestDigest: identity.requestDigest, updatedAt: '2026-09-20T10:00:01.500Z',
+        event: { kind: 'fixture_reserved_before_crash', milestoneId: 'first', attemptId: identity.attemptId, payload: {} },
+      });
+      if (!reserved.ok) throw new Error(reserved.error.message);
+
+      const recovered = await f.service.advance(actor, {
+        workspaceId: 'workspace-a', runId: created.run.id, expectedRevision: 2, leaseToken: f.started.leaseToken!,
+      });
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: {
+          boundary: 'dispatched',
+          run: { run: { revision: 3 }, attempts: [{ id: identity.attemptId, taskId: identity.taskId, dispatchStatus: 'launched' }] },
+        },
+      });
+      expect(observe).toHaveBeenCalledTimes(1);
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(launch.mock.calls[0]?.[1].context).toMatchObject({ taskId: identity.taskId, requestDigest: identity.requestDigest });
     } finally {
       f.database.close();
     }

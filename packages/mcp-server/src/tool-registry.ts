@@ -8,9 +8,16 @@ import {
   type InvocationAuthorization,
   type InvocationAuthorizationMode,
   type InvocationAuthorizationSource,
+  type Result,
 } from '@lnwjud/domain';
 import { z } from 'zod';
-import { sanitizeException, type DiagnosticLogger, type FileActor } from '@lnwjud/application';
+import {
+  sanitizeException,
+  type AutomationDispatchContext,
+  type AutomationDispatchRequest,
+  type DiagnosticLogger,
+  type FileActor,
+} from '@lnwjud/application';
 import { CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY } from '@lnwjud/capabilities';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import {
@@ -67,7 +74,7 @@ import { searchTools } from './tools/search-tools.js';
 import { scheduledContinuationTools } from './tools/scheduled-continuation-tools.js';
 import { skillTools } from './tools/skill-tools.js';
 import { workspaceTools } from './tools/workspace-tools.js';
-import type { McpApplicationServices, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
+import type { McpApplicationServices, McpInternalInvocationContext, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
 
 export type { McpApplicationServices } from './tools/tool-types.js';
 export type { ActiveProjectScope, WorkspaceScope } from './destructive-scope.js';
@@ -317,7 +324,52 @@ export class ToolRegistry {
     }).effectiveExposed;
   }
 
-  public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
+  public invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
+    return this.invokeInternal(name, input, traceContext, parentSignal);
+  }
+
+  /** Internal-only deterministic shell entrypoint; the reserved context never enters the public schema. */
+  public invokeAutomationShell(
+    request: AutomationDispatchRequest,
+    traceContext?: TraceContext,
+    parentSignal?: AbortSignal,
+  ): Promise<McpToolResponse> {
+    return this.invokeInternal('shell', {
+      workspaceId: request.context.workspaceId,
+      operation: 'run',
+      executable: request.dispatch.executable,
+      arguments: [...request.dispatch.arguments],
+      cwd: request.dispatch.cwd,
+      execution: 'background',
+      timeout_seconds: request.dispatch.timeoutSeconds,
+      max_output_bytes: request.dispatch.maxOutputBytes,
+      include_stdout: request.dispatch.includeStdout,
+      include_stderr: request.dispatch.includeStderr,
+      goalLease: request.goalLease,
+      ...(request.userConfirmed === undefined ? {} : { userConfirmed: request.userConfirmed }),
+    }, traceContext, parentSignal, { automationDispatch: request.context });
+  }
+
+  /** Internal-only exact observation scoped by owner, workspace and request digest. */
+  public observeAutomationShell(context: AutomationDispatchContext): Promise<Result<unknown>> {
+    if (this.services.capabilities?.observeAutomationShell === undefined) {
+      return Promise.resolve(err(appError('INTERNAL_ERROR', 'Automation shell observation is unavailable', true)));
+    }
+    return this.services.capabilities.observeAutomationShell(
+      this.actor.clientId,
+      context.workspaceId,
+      context.taskId,
+      context.requestDigest,
+    );
+  }
+
+  private async invokeInternal(
+    name: string,
+    input: unknown,
+    traceContext?: TraceContext,
+    parentSignal?: AbortSignal,
+    internal?: McpInternalInvocationContext,
+  ): Promise<McpToolResponse> {
     const invocationGuardMessage = this.currentInvocationGuardMessage();
     const profile = invocationGuardMessage === null ? this.profileProvider() : permissionProfiles.safe;
     const fullBypass = invocationGuardMessage === null && profile.name === 'full' && this.authorizationModeProvider() === 'full_bypass';
@@ -569,6 +621,7 @@ export class ToolRegistry {
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
         callId,
+        internal,
       );
       const response = execution.response;
       const rawResultTargetSummary = summarizeStructuredResultTarget(response.structuredContent);
@@ -828,6 +881,7 @@ export class ToolRegistry {
     parentSignal?: AbortSignal,
     goalId?: string,
     callId?: string,
+    internal?: McpInternalInvocationContext,
   ): Promise<BudgetedToolExecution> {
     const controller = new AbortController();
     const registration = goalId === undefined || callId === undefined || this.services.goalRequestCancellation === undefined
@@ -875,7 +929,7 @@ export class ToolRegistry {
           }, responseBudgetMs);
         }
         try {
-          operation = tool.execute(input, controller.signal, authorization).then(mapResult);
+          operation = tool.execute(input, controller.signal, authorization, internal).then(mapResult);
         } catch (error: unknown) {
           releaseRegistration();
           reject(error);

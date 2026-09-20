@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   MAX_AUTOMATION_ATTEMPTS_PER_MILESTONE,
   appError,
+  automationShellRequestDigest,
   err,
   ok,
   readyAutomationMilestones,
@@ -12,6 +13,7 @@ import {
   type AutomationPlan,
   type AutomationRunStatus,
   type AutomationShellDispatch,
+  type GoalLeaseProof,
   type Result,
 } from '@lnwjud/domain';
 import type {
@@ -72,6 +74,8 @@ export interface AutomationDispatchRequest {
   readonly dispatch: AutomationShellDispatch;
   readonly role: AutomationMilestoneRecord['role'];
   readonly cancelWithGoal: boolean;
+  readonly goalLease: GoalLeaseProof;
+  readonly userConfirmed?: boolean;
 }
 
 export type AutomationObservedTaskState = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -109,6 +113,7 @@ export interface AutomationRunLocator {
 export interface MutateAutomationRunRequest extends AutomationRunLocator {
   readonly leaseToken: string;
   readonly expectedRevision: number;
+  readonly userConfirmed?: boolean;
 }
 
 export interface CancelAutomationRunRequest extends MutateAutomationRunRequest {
@@ -250,11 +255,16 @@ export class AutomationService {
       return err(appError('CONFLICT', 'Automation run cannot advance from its current state', true));
     }
 
+    const goalLease: GoalLeaseProof = {
+      goalId: authorized.value.goal.goalId,
+      leaseToken: request.leaseToken,
+      leaseGeneration: authorized.value.goal.leaseGeneration,
+    };
     const unresolved = stored.attempts.find((attempt) => attempt.dispatchStatus === 'dispatched_unresolved');
-    if (unresolved !== undefined) return this.observeUnresolved(actor, stored, unresolved);
+    if (unresolved !== undefined) return this.observeUnresolved(actor, stored, unresolved, goalLease, request.userConfirmed);
 
     const inFlight = stored.milestones.find((milestone) => milestone.status === 'dispatching' || milestone.status === 'running');
-    if (inFlight !== undefined) return this.observeInFlight(actor, stored, inFlight);
+    if (inFlight !== undefined) return this.observeInFlight(actor, stored, inFlight, goalLease, request.userConfirmed);
     const verifying = stored.milestones.find((milestone) => milestone.status === 'verifying');
     if (verifying !== undefined) {
       const attempt = latestAttempt(stored, verifying.id);
@@ -304,7 +314,7 @@ export class AutomationService {
     if (!reserved.ok) return reserved;
     stored = reserved.value;
     const attempt = requireAttempt(stored, identity.attemptId);
-    const dispatchRequest = toDispatchRequest(stored, milestone, attempt);
+    const dispatchRequest = toDispatchRequest(stored, milestone, attempt, goalLease, request.userConfirmed);
     let observation: Result<AutomationDispatchObservation>;
     try {
       observation = await this.dispatch.launch(actor, dispatchRequest);
@@ -372,10 +382,12 @@ export class AutomationService {
     actor: FileActor,
     stored: StoredAutomationRun,
     milestone: AutomationMilestoneRecord,
+    goalLease: GoalLeaseProof,
+    userConfirmed?: boolean,
   ): Promise<Result<AutomationAdvanceResult>> {
     const attempt = latestAttempt(stored, milestone.id);
     if (attempt === undefined) return err(appError('INTERNAL_ERROR', 'In-flight automation milestone has no reserved attempt', true));
-    const request = toDispatchRequest(stored, milestone, attempt);
+    const request = toDispatchRequest(stored, milestone, attempt, goalLease, userConfirmed);
     let observation: Result<AutomationDispatchObservation>;
     try {
       observation = await this.dispatch.observe(actor, request);
@@ -435,20 +447,82 @@ export class AutomationService {
     actor: FileActor,
     stored: StoredAutomationRun,
     attempt: AutomationAttemptRecord,
+    goalLease: GoalLeaseProof,
+    userConfirmed?: boolean,
   ): Promise<Result<AutomationAdvanceResult>> {
     const milestone = requireMilestone(stored, attempt.milestoneId);
     let observation: Result<AutomationDispatchObservation>;
     try {
-      observation = await this.dispatch.observe(actor, toDispatchRequest(stored, milestone, attempt));
+      observation = await this.dispatch.observe(actor, toDispatchRequest(stored, milestone, attempt, goalLease, userConfirmed));
     } catch {
       observation = err(appError('INTERNAL_ERROR', 'Automation observation outcome is unknown', true));
     }
     if (!observation.ok || observation.value.presence === 'unknown') {
       return ok({ run: stored, boundary: 'blocked', milestoneId: milestone.id, attemptId: attempt.id, taskId: attempt.taskId });
     }
-    // An explicit resolver path will reconcile found/absent unresolved tasks in
-    // the runtime adapter. The general advance path never guesses or relaunches.
-    return ok({ run: stored, boundary: 'blocked', milestoneId: milestone.id, attemptId: attempt.id, taskId: attempt.taskId });
+    if (observation.value.presence === 'found') {
+      const active = stored.run.status === 'blocked'
+        ? this.transitionRun(actor, stored, stored.run.revision, 'active', 'run_recovered')
+        : ok(stored);
+      if (!active.ok) return active;
+      const ready = this.repository.transitionMilestone(this.mutationScope(actor, active.value, active.value.run.revision, {
+        kind: 'milestone_recovery_ready', milestoneId: milestone.id, attemptId: attempt.id, payload: { taskId: attempt.taskId },
+      }, { milestoneId: milestone.id, status: 'ready' }));
+      if (!ready.ok) return ready;
+      const dispatching = this.repository.transitionMilestone(this.mutationScope(actor, ready.value, ready.value.run.revision, {
+        kind: 'milestone_recovery_dispatching', milestoneId: milestone.id, attemptId: attempt.id, payload: { taskId: attempt.taskId },
+      }, { milestoneId: milestone.id, status: 'dispatching' }));
+      if (!dispatching.ok) return dispatching;
+      return this.persistDispatchObservation(actor, dispatching.value, milestone, attempt, observation, 'recovery_observe');
+    }
+
+    const closed = this.repository.updateAttempt(this.mutationScope(actor, stored, stored.run.revision, {
+      kind: 'dispatch_absence_proven', milestoneId: milestone.id, attemptId: attempt.id, payload: { taskId: attempt.taskId },
+    }, {
+      attemptId: attempt.id,
+      dispatchStatus: 'terminal',
+      milestoneStatus: 'failed',
+      terminalState: 'absent',
+    }));
+    if (!closed.ok) return closed;
+    if (attempt.ordinal >= MAX_AUTOMATION_ATTEMPTS_PER_MILESTONE) {
+      const failed = this.transitionRun(actor, closed.value, closed.value.run.revision, 'failed', 'run_attempts_exhausted');
+      if (!failed.ok) return failed;
+      return ok({ run: failed.value, boundary: 'blocked', milestoneId: milestone.id, attemptId: attempt.id, taskId: attempt.taskId });
+    }
+    const active = closed.value.run.status === 'blocked'
+      ? this.transitionRun(actor, closed.value, closed.value.run.revision, 'active', 'run_recovered')
+      : ok(closed.value);
+    if (!active.ok) return active;
+    const ready = this.repository.transitionMilestone(this.mutationScope(actor, active.value, active.value.run.revision, {
+      kind: 'milestone_retry_ready', milestoneId: milestone.id, attemptId: attempt.id, payload: { priorOrdinal: attempt.ordinal },
+    }, { milestoneId: milestone.id, status: 'ready' }));
+    if (!ready.ok) return ready;
+    const refreshedMilestone = requireMilestone(ready.value, milestone.id);
+    const ordinal = attempt.ordinal + 1;
+    const identity = createAutomationDispatchReservation(ready.value, refreshedMilestone, ordinal);
+    const reserved = this.repository.reserveAttempt(this.mutationScope(actor, ready.value, ready.value.run.revision, {
+      kind: 'attempt_reserved_after_absence', milestoneId: milestone.id, attemptId: identity.attemptId,
+      payload: { ordinal, taskId: identity.taskId },
+    }, {
+      milestoneId: milestone.id,
+      attemptId: identity.attemptId,
+      ordinal,
+      taskId: identity.taskId,
+      requestDigest: identity.requestDigest,
+    }));
+    if (!reserved.ok) return reserved;
+    const nextAttempt = requireAttempt(reserved.value, identity.attemptId);
+    let relaunched: Result<AutomationDispatchObservation>;
+    try {
+      relaunched = await this.dispatch.launch(
+        actor,
+        toDispatchRequest(reserved.value, refreshedMilestone, nextAttempt, goalLease, userConfirmed),
+      );
+    } catch {
+      relaunched = err(appError('INTERNAL_ERROR', 'Automation recovery dispatch outcome is unknown', true));
+    }
+    return this.persistDispatchObservation(actor, reserved.value, refreshedMilestone, nextAttempt, relaunched, 'recovery_launch');
   }
 
   private persistDispatchObservation(
@@ -564,23 +638,16 @@ export function createAutomationDispatchReservation(
     milestoneId: milestone.id,
     ordinal,
   }));
-  const requestDigest = sha256(canonicalJson({
-    version: 1,
+  const taskId = `automation-${identityDigest.slice(0, 48)}`;
+  const requestDigest = automationShellRequestDigest({
+    taskId,
     ownerClientId: stored.run.ownerClientId,
     workspaceId: stored.run.workspaceId,
-    goalId: stored.run.goalId,
-    executable: milestone.dispatch.executable,
-    arguments: milestone.dispatch.arguments,
-    cwd: milestone.dispatch.cwd,
-    windowsVerbatimArguments: milestone.dispatch.windowsVerbatimArguments ?? false,
-    timeoutSeconds: milestone.dispatch.timeoutSeconds,
-    maxOutputBytes: milestone.dispatch.maxOutputBytes,
-    includeStdout: milestone.dispatch.includeStdout,
-    includeStderr: milestone.dispatch.includeStderr,
-  }));
+    dispatch: milestone.dispatch,
+  });
   return {
     attemptId: `attempt-${identityDigest.slice(0, 48)}`,
-    taskId: `automation-${identityDigest.slice(0, 48)}`,
+    taskId,
     requestDigest,
   };
 }
@@ -589,6 +656,8 @@ function toDispatchRequest(
   stored: StoredAutomationRun,
   milestone: AutomationMilestoneRecord,
   attempt: AutomationAttemptRecord,
+  goalLease: GoalLeaseProof,
+  userConfirmed?: boolean,
 ): AutomationDispatchRequest {
   return {
     context: {
@@ -603,6 +672,8 @@ function toDispatchRequest(
     dispatch: milestone.dispatch,
     role: milestone.role,
     cancelWithGoal: milestone.cancelWithGoal,
+    goalLease,
+    ...(userConfirmed === undefined ? {} : { userConfirmed }),
   };
 }
 

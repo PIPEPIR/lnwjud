@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ok, type Result } from '@lnwjud/domain';
-import { ShellCapabilityBackend } from './shell-backend.js';
+import { automationShellRequestDigest, ok, type Result } from '@lnwjud/domain';
+import { ShellCapabilityBackend, withAutomationShellDispatchContext } from './shell-backend.js';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from './task-ownership.js';
 
 const temporaryRoots: string[] = [];
@@ -18,6 +18,100 @@ afterEach(async () => {
 });
 
 describe('ShellCapabilityBackend', () => {
+  it('rejects a public run request that tries to select a reserved task ID', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-public-id-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    await expect(backend.execute({
+      operation: 'run',
+      task_id: 'automation-forged',
+      executable: process.execPath,
+      arguments: ['--version'],
+      cwd: root,
+      execution: 'background',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
+  it('launches a reserved automation task exactly once and fails closed on digest, owner, and legacy collisions', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-automation-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const ownerMetadata = {
+      [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'client-a', sessionId: 'session-a', workspaceId: 'workspace-a' },
+    };
+    const dispatch = {
+      executable: process.execPath,
+      arguments: ['-e', "setTimeout(() => process.stdout.write('once'), 50)"],
+      cwd: root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+    };
+    const taskId = 'automation-reserved-task';
+    const requestDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch });
+    const context = {
+      runId: 'run-a', milestoneId: 'build', attemptId: 'attempt-a', taskId, requestDigest,
+      goalId: 'goal-a', workspaceId: 'workspace-a',
+    };
+    const input = withAutomationShellDispatchContext({
+      operation: 'run', executable: dispatch.executable, arguments: dispatch.arguments, cwd: dispatch.cwd,
+      execution: 'background', timeout_seconds: dispatch.timeoutSeconds, max_output_bytes: dispatch.maxOutputBytes,
+      include_stdout: dispatch.includeStdout, include_stderr: dispatch.includeStderr, userConfirmed: true, metadata: ownerMetadata,
+    }, context);
+
+    const first = await backend.execute(input);
+    expect(first).toMatchObject({ ok: true, value: { task_id: taskId, durable: true } });
+    if (!first.ok) return;
+    const repeated = await backend.execute(input);
+    expect(repeated).toMatchObject({ ok: true, value: { task_id: taskId, started_at: first.value.started_at } });
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', taskId, requestDigest))
+      .resolves.toMatchObject({ ok: true, value: { task_id: taskId } });
+    await expect(backend.statusForAutomation('client-b', 'workspace-a', taskId, requestDigest))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', taskId, 'f'.repeat(64)))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    const changedDispatch = { ...dispatch, arguments: ['--version'] };
+    const changedDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch: changedDispatch });
+    const forgedSameDigest = withAutomationShellDispatchContext({
+      operation: 'run', executable: changedDispatch.executable, arguments: changedDispatch.arguments, cwd: changedDispatch.cwd,
+      execution: 'background', timeout_seconds: changedDispatch.timeoutSeconds, max_output_bytes: changedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, context);
+    await expect(backend.execute(forgedSameDigest)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    const collision = withAutomationShellDispatchContext({
+      operation: 'run', executable: changedDispatch.executable, arguments: changedDispatch.arguments, cwd: changedDispatch.cwd,
+      execution: 'background', timeout_seconds: changedDispatch.timeoutSeconds, max_output_bytes: changedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, { ...context, requestDigest: changedDigest });
+    await expect(backend.execute(collision)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    await expect(backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5, metadata: ownerMetadata }))
+      .resolves.toMatchObject({ ok: true, value: { state: 'completed', stdout: 'once' } });
+
+    const legacyTaskId = 'legacy-no-digest';
+    const legacyDirectory = path.join(taskStateDirectory, legacyTaskId);
+    await mkdir(legacyDirectory, { recursive: true });
+    await writeFile(path.join(legacyDirectory, 'task.json'), JSON.stringify({
+      version: 1,
+      task_id: legacyTaskId,
+      state: 'completed',
+      started_at: '2026-09-20T00:00:00.000Z',
+      finished_at: '2026-09-20T00:00:01.000Z',
+      exit_code: 0,
+      include_stdout: false,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: '2026-09-20T00:01:00.000Z',
+      owner_client_id: 'client-a',
+      owner_session_id: 'session-a',
+      owner_workspace_id: 'workspace-a',
+    }), 'utf8');
+    await expect(backend.statusForAutomation('client-a', 'workspace-a', legacyTaskId, requestDigest))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  }, 20_000);
+
   it.each([
     ['ordinary executable', process.execPath, ['--version']],
     ['PowerShell encoded command', 'pwsh.exe', ['-EncodedCommand', 'VwByAGkAdABlAC0ATwB1AHQAcAB1AHQA']],

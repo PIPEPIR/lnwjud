@@ -3,6 +3,7 @@ import type { CapabilityService, EventLogBackendOptions } from '@lnwjud/capabili
 import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
+  AutomationDispatchContext,
   ApplyPatchRequest,
   CheckpointService,
   CodexService,
@@ -128,7 +129,16 @@ export interface McpToolDefinition {
   readonly outputSchema: z.ZodType;
   readonly execution: McpToolExecution;
   parse(input: unknown): Result<unknown>;
-  execute(input: unknown, signal: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
+  execute(
+    input: unknown,
+    signal: AbortSignal,
+    authorization?: InvocationAuthorization,
+    internal?: McpInternalInvocationContext,
+  ): Promise<Result<unknown>>;
+}
+
+export interface McpInternalInvocationContext {
+  readonly automationDispatch?: AutomationDispatchContext;
 }
 
 export interface McpToolContext {
@@ -149,7 +159,12 @@ export interface ToolConfig<T extends z.ZodType> {
   readonly inputSchema: T;
   readonly outputSchema?: z.ZodType;
   readonly execution?: Partial<McpToolExecution>;
-  handler(input: z.infer<T>, signal: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
+  handler(
+    input: z.infer<T>,
+    signal: AbortSignal,
+    authorization?: InvocationAuthorization,
+    internal?: McpInternalInvocationContext,
+  ): Promise<Result<unknown>>;
 }
 
 const defaultStructuredOutputSchema = z.object({}).catchall(z.unknown());
@@ -172,8 +187,13 @@ export function defineTool<T extends z.ZodType>(config: ToolConfig<T>): McpToolD
       const parsed = config.inputSchema.safeParse(input);
       return parsed.success ? ok(parsed.data) : err({ code: 'INVALID_INPUT', message: 'Tool input is invalid', recoverable: false });
     },
-    execute(input: unknown, signal: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
-      return config.handler(input as z.infer<T>, signal, authorization);
+    execute(
+      input: unknown,
+      signal: AbortSignal,
+      authorization?: InvocationAuthorization,
+      internal?: McpInternalInvocationContext,
+    ): Promise<Result<unknown>> {
+      return config.handler(input as z.infer<T>, signal, authorization, internal);
     },
   };
 }

@@ -27,10 +27,21 @@ export { prohibitedAgentCommandReason } from './agent-command-policy.js';
 
 export interface CapabilityService {
   execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
+  observeAutomationShell?(
+    ownerClientId: string,
+    workspaceId: string,
+    taskId: string,
+    requestDigest: string,
+  ): Promise<Result<unknown>>;
 }
 
 export { LocalCapabilityService, type CapabilityBackend, type LocalCapabilityBackends } from './local-capability-service.js';
-export { ShellCapabilityBackend, type ShellCapabilityOptions } from './shell-backend.js';
+export {
+  ShellCapabilityBackend,
+  withAutomationShellDispatchContext,
+  type AutomationShellDispatchContext,
+  type ShellCapabilityOptions,
+} from './shell-backend.js';
 export {
   CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY,
   CAPABILITY_TASK_OWNER_METADATA_KEY,

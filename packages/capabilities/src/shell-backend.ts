@@ -3,6 +3,7 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
+  automationShellRequestDigest,
   appError,
   err,
   isApplicationAuthorized,
@@ -42,6 +43,31 @@ interface ShellRequest {
   readonly dryRun: boolean;
   readonly userConfirmed: boolean;
   readonly owner: CapabilityTaskOwner;
+  readonly automationDispatch?: AutomationShellDispatchContext;
+}
+
+export interface AutomationShellDispatchContext {
+  readonly runId: string;
+  readonly milestoneId: string;
+  readonly attemptId: string;
+  readonly taskId: string;
+  readonly requestDigest: string;
+  readonly goalId: string;
+  readonly workspaceId: string;
+}
+
+const AUTOMATION_SHELL_DISPATCH_CONTEXT: unique symbol = Symbol('lnwjud.automationShellDispatch');
+
+export function withAutomationShellDispatchContext(input: unknown, context: AutomationShellDispatchContext): unknown {
+  if (!isRecord(input)) return input;
+  const copy: Record<PropertyKey, unknown> = { ...input };
+  Object.defineProperty(copy, AUTOMATION_SHELL_DISPATCH_CONTEXT, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: context,
+  });
+  return copy;
 }
 
 
@@ -163,6 +189,21 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
   }
 
+  /** Trusted read-only exact lookup for automation recovery. */
+  public async statusForAutomation(
+    ownerClientId: string,
+    workspaceId: string,
+    taskId: string,
+    requestDigest: string,
+  ): Promise<Result<unknown>> {
+    const record = this.tasks.get(taskId);
+    if (record !== undefined) {
+      return err(appError('CONFLICT', 'Reserved automation task unexpectedly used the non-durable runner', true));
+    }
+    if (this.durableStore === undefined) return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
+    return this.durableStore.snapshotForAutomation(taskId, ownerClientId, workspaceId, requestDigest);
+  }
+
   /** Trusted cancellation path used by durable goals; it deliberately ignores the transient MCP session. */
   public async cancelForGoal(
     ownerClientId: string,
@@ -192,6 +233,31 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (request.privilege === 'admin') return err(appError('PERMISSION_DENIED', 'Administrator access is not available to the local runner'));
 
     const fullBypass = isFullBypassAuthorization(authorization);
+    if (request.automationDispatch !== undefined) {
+      if (request.cwd === undefined || request.owner.workspaceId === undefined) {
+        return err(appError('INVALID_INPUT', 'Reserved automation shell dispatch requires an explicit workspace cwd'));
+      }
+      if (request.owner.workspaceId !== request.automationDispatch.workspaceId) {
+        return err(appError('PERMISSION_DENIED', 'Reserved automation shell dispatch belongs to another workspace'));
+      }
+      const digest = automationShellRequestDigest({
+        taskId: request.automationDispatch.taskId,
+        ownerClientId: request.owner.clientId,
+        workspaceId: request.owner.workspaceId,
+        dispatch: {
+          executable: request.executable,
+          arguments: request.arguments,
+          cwd: request.cwd,
+          timeoutSeconds: request.timeoutSeconds,
+          maxOutputBytes: request.maxOutputBytes,
+          includeStdout: request.includeStdout,
+          includeStderr: request.includeStderr,
+        },
+      });
+      if (digest !== request.automationDispatch.requestDigest) {
+        return err(appError('CONFLICT', 'Reserved automation shell digest does not match the requested command', true));
+      }
+    }
     const cwd = await this.resolveCwd(request.cwd, request.activeWorkspaceRoot, authorization);
     if (!cwd.ok) return cwd;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
@@ -211,6 +277,9 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (!invocation.ok) return invocation;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
 
+    if (request.automationDispatch !== undefined && this.durableStore === undefined) {
+      return err(appError('INTERNAL_ERROR', 'Reserved automation shell dispatch requires the durable task store', true));
+    }
     if (this.durableStore !== undefined && request.execution !== 'foreground') {
       // Durable tasks intentionally outlive the originating MCP request. Goal
       // cancellation reaches them through GoalTaskCancellationService using
@@ -418,8 +487,8 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     invocation: { readonly executable: string; readonly args: readonly string[]; readonly windowsVerbatimArguments?: boolean },
   ): Promise<Result<unknown>> {
     if (this.durableStore === undefined) return err(appError('INTERNAL_ERROR', 'Durable task store is unavailable', true));
-    const taskId = randomUUID();
-    const launched = await this.durableStore.launch({
+    const taskId = request.automationDispatch?.taskId ?? randomUUID();
+    const durableRequest = {
       taskId,
       executable: invocation.executable,
       arguments: invocation.args,
@@ -430,7 +499,10 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       includeStdout: request.includeStdout,
       includeStderr: request.includeStderr,
       owner: request.owner,
-    });
+    };
+    const launched = request.automationDispatch === undefined
+      ? await this.durableStore.launch(durableRequest)
+      : await this.durableStore.launchReserved(durableRequest, request.automationDispatch.requestDigest);
     if (!launched.ok || request.execution === 'background') return launched;
     return this.durableStore.wait(taskId, Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds()), undefined, request.owner, false);
   }
@@ -613,6 +685,11 @@ function parseShellRequest(value: unknown, defaultTimeoutSeconds: number, defaul
   if (cwd !== undefined && (typeof cwd !== 'string' || cwd.includes('\0'))) return err(appError('INVALID_INPUT', 'Working directory is invalid'));
   const taskId = value.task_id === undefined ? undefined : value.task_id;
   if (taskId !== undefined && (typeof taskId !== 'string' || taskId.trim().length === 0)) return err(appError('INVALID_INPUT', 'Task ID is invalid'));
+  const hasAutomationDispatch = Object.prototype.hasOwnProperty.call(value, AUTOMATION_SHELL_DISPATCH_CONTEXT);
+  const automationDispatch = readAutomationShellDispatchContext(value);
+  if (hasAutomationDispatch && automationDispatch === undefined) return err(appError('INVALID_INPUT', 'Reserved automation shell context is invalid'));
+  if (operation === 'run' && taskId !== undefined) return err(appError('INVALID_INPUT', 'Run requests cannot select a task ID'));
+  if (automationDispatch !== undefined && operation !== 'run') return err(appError('INVALID_INPUT', 'Reserved automation context is valid only for shell run'));
   const timeoutSeconds = value.timeout_seconds === undefined
     ? (execution === 'background' || execution === 'auto' ? defaultBackgroundTimeoutSeconds : defaultTimeoutSeconds)
     : value.timeout_seconds;
@@ -632,7 +709,19 @@ function parseShellRequest(value: unknown, defaultTimeoutSeconds: number, defaul
   const owner = readCapabilityTaskOwner(value);
   const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(value);
   if (typeof includeStdout !== 'boolean' || typeof includeStderr !== 'boolean' || typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'Shell flags are invalid'));
-  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), ...(limit === undefined ? {} : { limit }), ...(cursor === undefined ? {} : { cursor }), includeStdout, includeStderr, dryRun, userConfirmed, owner });
+  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), ...(limit === undefined ? {} : { limit }), ...(cursor === undefined ? {} : { cursor }), includeStdout, includeStderr, dryRun, userConfirmed, owner, ...(automationDispatch === undefined ? {} : { automationDispatch }) });
+}
+
+function readAutomationShellDispatchContext(value: Record<string, unknown>): AutomationShellDispatchContext | undefined {
+  const context = (value as Record<PropertyKey, unknown>)[AUTOMATION_SHELL_DISPATCH_CONTEXT];
+  if (!isRecord(context)) return undefined;
+  const fields = ['runId', 'milestoneId', 'attemptId', 'taskId', 'goalId', 'workspaceId'] as const;
+  if (!fields.every((field) => typeof context[field] === 'string'
+    && context[field].length >= 1
+    && context[field].length <= 128
+    && /^[A-Za-z0-9._:-]+$/.test(context[field]))) return undefined;
+  if (typeof context.requestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(context.requestDigest)) return undefined;
+  return context as unknown as AutomationShellDispatchContext;
 }
 
 function isShellOperation(value: unknown): value is ShellOperation {

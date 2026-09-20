@@ -111,8 +111,23 @@ export class DurableShellTaskStore {
     });
   }
 
-  public async launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
-    const requestDigest = durableShellRequestDigest(request);
+  public launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
+    return this.launchWithDigest(request, durableShellRequestDigest(request));
+  }
+
+  /** Trusted deterministic launch used only after the shell backend verifies the canonical automation digest. */
+  public launchReserved(request: DurableShellLaunchRequest, requestDigest: string): Promise<Result<Record<string, unknown>>> {
+    if (!/^[a-f0-9]{64}$/i.test(requestDigest)) {
+      return Promise.resolve(err(appError('INVALID_INPUT', 'Reserved durable task digest is invalid')));
+    }
+    return this.launchWithDigest(request, requestDigest.toLowerCase());
+  }
+
+  private async launchWithDigest(
+    request: DurableShellLaunchRequest,
+    requestDigest: string,
+  ): Promise<Result<Record<string, unknown>>> {
+    if (!isSafeTaskId(request.taskId)) return err(appError('INVALID_INPUT', 'Durable task ID is invalid'));
     const existing = await this.readMetadata(request.taskId, false, 1);
     if (existing.ok) {
       if (existing.value.request_digest !== requestDigest) {
@@ -292,6 +307,27 @@ export class DurableShellTaskStore {
     if (!metadata.ok) return metadata;
     if (metadataOwner(metadata.value).workspaceId !== workspaceId) {
       return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
+    }
+    const reconciled = await this.reconcile(metadata.value);
+    await this.releaseTerminalReservation(reconciled);
+    return ok(await this.snapshotFromMetadata(reconciled));
+  }
+
+  /** Trusted exact lookup for a reserved automation task. Legacy/no-digest rows fail closed. */
+  public async snapshotForAutomation(
+    taskId: string,
+    ownerClientId: string,
+    workspaceId: string,
+    requestDigest: string,
+  ): Promise<Result<Record<string, unknown>>> {
+    const metadata = await this.readMetadata(taskId);
+    if (!metadata.ok) return metadata;
+    const owner = metadataOwner(metadata.value);
+    if (owner.clientId !== ownerClientId || owner.workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Task belongs to another client or workspace'));
+    }
+    if (metadata.value.request_digest === undefined || metadata.value.request_digest !== requestDigest.toLowerCase()) {
+      return err(appError('CONFLICT', 'Durable task identity does not match the reserved automation request', true));
     }
     const reconciled = await this.reconcile(metadata.value);
     await this.releaseTerminalReservation(reconciled);
@@ -1160,4 +1196,8 @@ function normalizeMaxConcurrentTasks(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_CONCURRENT_DURABLE_TASKS;
   if (!Number.isInteger(value) || value < 1 || value > 128) throw new Error('maxConcurrentTasks must be between 1 and 128');
   return value;
+}
+
+function isSafeTaskId(value: string): boolean {
+  return value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9._:-]+$/.test(value);
 }

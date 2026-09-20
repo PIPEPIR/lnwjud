@@ -4,6 +4,7 @@ import {
   MAX_AUTOMATION_EVENTS_PER_RUN,
   MAX_AUTOMATION_MILESTONES,
   automationAttemptIdentityEquals,
+  automationShellRequestDigest,
   readyAutomationMilestones,
   transitionAutomationRun,
   validateAutomationPlan,
@@ -95,5 +96,24 @@ describe('native automation domain', () => {
     const identity = { id: 'attempt-a', milestoneId: 'build', ordinal: 1 };
     expect(automationAttemptIdentityEquals(identity, { ...identity })).toBe(true);
     expect(automationAttemptIdentityEquals(identity, { ...identity, ordinal: 2 })).toBe(false);
+  });
+
+  it('derives a canonical shell request digest from the reserved task, command, output and owner scope', () => {
+    const base = {
+      taskId: 'automation-task-a',
+      ownerClientId: 'client-a',
+      workspaceId: 'workspace-a',
+      dispatch: milestone('build').dispatch,
+    };
+    const first = automationShellRequestDigest(base);
+    const repeated = automationShellRequestDigest({ ...base, dispatch: { ...base.dispatch, arguments: [...base.dispatch.arguments] } });
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(repeated).toBe(first);
+    expect(automationShellRequestDigest({ ...base, taskId: 'automation-task-b' })).not.toBe(first);
+    expect(automationShellRequestDigest({ ...base, ownerClientId: 'client-b' })).not.toBe(first);
+    expect(automationShellRequestDigest({
+      ...base,
+      dispatch: { ...base.dispatch, includeStderr: false },
+    })).not.toBe(first);
   });
 });
