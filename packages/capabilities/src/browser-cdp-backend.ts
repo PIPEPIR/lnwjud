@@ -107,7 +107,7 @@ export class BrowserCdpBackend implements CapabilityBackend {
       case 'list_tabs': return ok({ tabs: await this.protocol.listTabs(signal) });
       case 'new_tab': return ok(await this.protocol.newTab(readString(parameters, 'url') ?? 'about:blank', signal));
       case 'close_tab': return this.withTab(request, action, async (tab) => ok(await this.protocol.closeTab(tab.id, signal)), signal);
-      case 'navigate': return this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Page.navigate', { url: readString(parameters, 'url') ?? '' }, signal), signal);
+      case 'navigate': return this.withTab(request, action, async (tab) => this.navigateProtocol(tab.id, readString(parameters, 'url') ?? '', signal), signal);
       case 'evaluate': {
         const expression = readString(parameters, 'expression');
         return expression === undefined
@@ -163,6 +163,14 @@ export class BrowserCdpBackend implements CapabilityBackend {
     const protectedDecision = authorizeProtectedTabAction(request, action, tab);
     if (!protectedDecision.ok) return protectedDecision;
     return callback(tab);
+  }
+
+  private async navigateProtocol(tabId: string, url: string, signal?: AbortSignal): Promise<Result<unknown>> {
+    try {
+      return readNavigationResult(await this.protocol.request(tabId, 'Page.navigate', { url }, signal));
+    } catch {
+      return err(appError('INTERNAL_ERROR', 'Browser CDP navigation request failed', true));
+    }
   }
 
   private async evaluateProtocol(tabId: string, method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
@@ -288,6 +296,30 @@ function readString(value: Record<string, unknown>, key: string): string | undef
 function readNumber(value: Record<string, unknown>, key: string): number | undefined {
   const result = value[key];
   return typeof result === 'number' && Number.isFinite(result) ? result : undefined;
+}
+
+function readNavigationResult(response: unknown): Result<unknown> {
+  if (!isRecord(response)) return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+  if (isRecord(response.error)) return err(appError('INTERNAL_ERROR', 'Browser CDP navigation request failed', true));
+  if (!isRecord(response.result)) return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+
+  const frameId = response.result.frameId;
+  const loaderId = response.result.loaderId;
+  const errorText = response.result.errorText;
+  const isDownload = response.result.isDownload;
+  if (typeof frameId !== 'string' || frameId.length === 0) return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+  if (loaderId !== undefined && typeof loaderId !== 'string') return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+  if (errorText !== undefined && typeof errorText !== 'string') return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+  if (isDownload !== undefined && typeof isDownload !== 'boolean') return err(appError('INTERNAL_ERROR', 'Browser navigation response was invalid', true));
+  if (typeof errorText === 'string' && errorText.length > 0) return err(appError('INTERNAL_ERROR', 'Browser navigation failed', true));
+
+  return ok({
+    navigation_requested: true,
+    navigation_complete: false,
+    frame_id: frameId,
+    ...(loaderId === undefined ? {} : { loader_id: loaderId }),
+    ...(isDownload === undefined ? {} : { is_download: isDownload }),
+  });
 }
 
 function readCdpValue(response: unknown): unknown {

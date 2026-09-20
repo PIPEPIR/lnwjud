@@ -11,6 +11,7 @@ const tab = (id: string, title: string, url: string): BrowserCdpTab => ({
 function protocolStub(options: {
   readonly tabs: readonly BrowserCdpTab[];
   readonly onRequest?: (tabId: string, method: string, params: Record<string, unknown>) => void;
+  readonly responseForRequest?: (tabId: string, method: string, params: Record<string, unknown>) => unknown;
   readonly onClose?: (tabId: string) => void;
 }): BrowserCdpProtocol {
   return {
@@ -20,7 +21,9 @@ function protocolStub(options: {
     async closeTab(tabId): Promise<unknown> { options.onClose?.(tabId); return { closed: true }; },
     async request(tabId, method, params): Promise<unknown> {
       options.onRequest?.(tabId, method, params);
+      if (options.responseForRequest !== undefined) return options.responseForRequest(tabId, method, params);
       if (method === 'Page.captureScreenshot') return { result: { data: 'aGVsbG8=' } };
+      if (method === 'Page.navigate') return { result: { frameId: 'fixture-frame', loaderId: 'fixture-loader' } };
       return { result: { result: { value: method === 'Runtime.evaluate' ? { ok: true, text: 'hello', tag: 'DIV' } : { ok: true } } } };
     },
   };
@@ -69,6 +72,76 @@ describe('BrowserCdpBackend', () => {
     expect(result).toMatchObject({ ok: true, value: { ok: true, text: 'hello', tag: 'DIV' } });
     expect(requests[0]?.method).toBe('Runtime.evaluate');
     expect(requests[0]?.params.expression).toContain('document.querySelector');
+  });
+
+  it('returns a structured acknowledgement for Page.navigate without claiming page-load completion', async () => {
+    const protocol = protocolStub({ tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')] });
+    const backend = new BrowserCdpBackend({ protocol });
+
+    const result = await backend.execute({
+      action: 'navigate',
+      tab_id: 'tab-1',
+      parameters: { url: 'http://127.0.0.1/next' },
+      userConfirmed: true,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        navigation_requested: true,
+        navigation_complete: false,
+        frame_id: 'fixture-frame',
+        loader_id: 'fixture-loader',
+      },
+    });
+  });
+
+  it.each([
+    ['protocol error', { error: { code: -32000, message: 'secret raw protocol detail' } }],
+    ['navigation error', { result: { frameId: 'fixture-frame', errorText: 'net::ERR_NAME_NOT_RESOLVED' } }],
+    ['malformed response', { result: {} }],
+  ] as const)('rejects a %s from Page.navigate without returning raw protocol details', async (_label, response) => {
+    const protocol = protocolStub({
+      tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')],
+      responseForRequest: () => response,
+    });
+
+    const result = await new BrowserCdpBackend({ protocol }).execute({
+      action: 'navigate',
+      tab_id: 'tab-1',
+      parameters: { url: 'http://127.0.0.1/next' },
+      userConfirmed: true,
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    if (!result.ok) {
+      expect(result.error.message).not.toContain('secret raw protocol detail');
+      expect(result.error.message).not.toContain('ERR_NAME_NOT_RESOLVED');
+    }
+  });
+
+  it('marks Page.navigate download responses without claiming completion', async () => {
+    const protocol = protocolStub({
+      tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')],
+      responseForRequest: () => ({ result: { frameId: 'fixture-frame', isDownload: true } }),
+    });
+
+    const result = await new BrowserCdpBackend({ protocol }).execute({
+      action: 'navigate',
+      tab_id: 'tab-1',
+      parameters: { url: 'http://127.0.0.1/download' },
+      userConfirmed: true,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        navigation_requested: true,
+        navigation_complete: false,
+        frame_id: 'fixture-frame',
+        is_download: true,
+      },
+    });
   });
 
   it('does not navigate any tab when tab_id is absent', async () => {
