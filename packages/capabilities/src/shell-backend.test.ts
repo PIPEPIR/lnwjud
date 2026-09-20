@@ -48,12 +48,13 @@ describe('ShellCapabilityBackend', () => {
       maxOutputBytes: 1024,
       includeStdout: true,
       includeStderr: true,
+      windowsVerbatimArguments: false,
     };
     const taskId = 'automation-reserved-task';
     const requestDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch });
     const context = {
       runId: 'run-a', milestoneId: 'build', attemptId: 'attempt-a', taskId, requestDigest,
-      goalId: 'goal-a', workspaceId: 'workspace-a',
+      goalId: 'goal-a', workspaceId: 'workspace-a', windowsVerbatimArguments: dispatch.windowsVerbatimArguments,
     };
     const input = withAutomationShellDispatchContext({
       operation: 'run', executable: dispatch.executable, arguments: dispatch.arguments, cwd: dispatch.cwd,
@@ -87,6 +88,27 @@ describe('ShellCapabilityBackend', () => {
       include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
     }, { ...context, requestDigest: changedDigest });
     await expect(backend.execute(collision)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    const mismatchedTaskId = 'automation-verbatim-mismatch';
+    const mismatchedDispatch = { ...dispatch, windowsVerbatimArguments: true };
+    const mismatchedDigest = automationShellRequestDigest({
+      taskId: mismatchedTaskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch: mismatchedDispatch,
+    });
+    const mismatchedMode = withAutomationShellDispatchContext({
+      operation: 'run', executable: mismatchedDispatch.executable, arguments: mismatchedDispatch.arguments, cwd: mismatchedDispatch.cwd,
+      execution: 'background', timeout_seconds: mismatchedDispatch.timeoutSeconds, max_output_bytes: mismatchedDispatch.maxOutputBytes,
+      include_stdout: true, include_stderr: true, userConfirmed: true, metadata: ownerMetadata,
+    }, {
+      ...context,
+      taskId: mismatchedTaskId,
+      requestDigest: mismatchedDigest,
+      windowsVerbatimArguments: true,
+    });
+    await expect(backend.execute(mismatchedMode)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'CONFLICT', message: expect.stringContaining('Windows argument mode') },
+    });
+
     await expect(backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5, metadata: ownerMetadata }))
       .resolves.toMatchObject({ ok: true, value: { state: 'completed', stdout: 'once' } });
 

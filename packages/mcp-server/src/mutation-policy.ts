@@ -107,7 +107,7 @@ export function inspectMutationOperation(
     case 'automation_control':
       return opaque('automation_control changes execution state and cancellation can terminate the root Goal');
     case 'automation_finalize':
-      return boundedWrite('automation_finalize records verified terminal state beneath the current Goal lease');
+      return opaque('automation_finalize terminates the root Goal and may stop in-flight requests or tracked tasks');
     case 'workspace_register':
       return boundedWrite('workspace_register adds a validated project registration without changing project files');
     case 'write_file':

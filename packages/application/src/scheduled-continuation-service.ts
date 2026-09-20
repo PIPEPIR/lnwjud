@@ -758,7 +758,8 @@ export class ScheduledContinuationService {
         || stored.run.ownerClientId !== ownerClientId
         || stored.run.workspaceId !== workspaceId
         || stored.run.status === 'completed'
-        || stored.run.status === 'cancelled') return undefined;
+        || stored.run.status === 'cancelled'
+        || stored.run.status === 'paused') return undefined;
       const nextAction = stored.run.status === 'blocked' || stored.run.status === 'failed'
         ? 'inspect_blocker' as const
         : stored.run.status === 'completing' || stored.milestones.every((milestone) => milestone.status === 'completed')

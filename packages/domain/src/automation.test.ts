@@ -116,5 +116,13 @@ describe('native automation domain', () => {
       ...base,
       dispatch: { ...base.dispatch, includeStderr: false },
     })).not.toBe(first);
+    expect(automationShellRequestDigest({
+      ...base,
+      dispatch: { ...base.dispatch, windowsVerbatimArguments: false },
+    })).not.toBe(first);
+    expect(automationShellRequestDigest({
+      ...base,
+      dispatch: { ...base.dispatch, windowsVerbatimArguments: true },
+    })).not.toBe(first);
   });
 });

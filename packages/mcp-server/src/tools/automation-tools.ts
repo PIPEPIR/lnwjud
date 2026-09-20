@@ -83,7 +83,7 @@ export function automationTools(context: McpToolContext): McpToolDefinition[] {
       name: 'automation_finalize',
       description: 'Finalize a fully verified durable automation run and confirm its root Goal reached terminal completion. This fails closed while native scheduled-task cleanup is pending.',
       permission: 'WRITE',
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: automationFinalizeSchema,
       handler: async (input) => {
         const automation = context.services.automation;

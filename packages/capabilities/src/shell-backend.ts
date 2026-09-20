@@ -54,6 +54,7 @@ export interface AutomationShellDispatchContext {
   readonly requestDigest: string;
   readonly goalId: string;
   readonly workspaceId: string;
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 const AUTOMATION_SHELL_DISPATCH_CONTEXT: unique symbol = Symbol('lnwjud.automationShellDispatch');
@@ -252,6 +253,9 @@ export class ShellCapabilityBackend implements CapabilityBackend {
           maxOutputBytes: request.maxOutputBytes,
           includeStdout: request.includeStdout,
           includeStderr: request.includeStderr,
+          ...(request.automationDispatch.windowsVerbatimArguments === undefined
+            ? {}
+            : { windowsVerbatimArguments: request.automationDispatch.windowsVerbatimArguments }),
         },
       });
       if (digest !== request.automationDispatch.requestDigest) {
@@ -275,6 +279,10 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
     const invocation = toSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted || fullBypass });
     if (!invocation.ok) return invocation;
+    if (request.automationDispatch?.windowsVerbatimArguments !== undefined
+      && request.automationDispatch.windowsVerbatimArguments !== (invocation.value.windowsVerbatimArguments ?? false)) {
+      return err(appError('CONFLICT', 'Reserved automation Windows argument mode does not match the resolved executable', true));
+    }
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
 
     if (request.automationDispatch !== undefined && this.durableStore === undefined) {
@@ -721,6 +729,7 @@ function readAutomationShellDispatchContext(value: Record<string, unknown>): Aut
     && context[field].length <= 128
     && /^[A-Za-z0-9._:-]+$/.test(context[field]))) return undefined;
   if (typeof context.requestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(context.requestDigest)) return undefined;
+  if (context.windowsVerbatimArguments !== undefined && typeof context.windowsVerbatimArguments !== 'boolean') return undefined;
   return context as unknown as AutomationShellDispatchContext;
 }
 

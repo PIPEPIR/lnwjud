@@ -67,6 +67,36 @@ describe('scheduled automation resume hint', () => {
     }
   });
 
+  it('does not advertise a paused automation as resumable work on a recurring wake', async () => {
+    const findActiveForGoal = vi.fn<AutomationResumeLookupPort['findActiveForGoal']>((goalId) => ok(activeRun(goalId, 'paused')));
+    const f = await fixture(findActiveForGoal);
+    try {
+      const prepared = await f.scheduled.prepareScheduledContinuation(actor, prepareRequest(f));
+      if (!prepared.ok) throw new Error(prepared.error.message);
+      await f.scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-paused',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+      f.database.connection.prepare('UPDATE goals SET lease_expires_at = ? WHERE id = ?')
+        .run('2026-09-20T10:24:00.000Z', f.goalId);
+      f.clock.set('2026-09-20T10:25:00.000Z');
+
+      const claimed = await f.scheduled.claimScheduledContinuation({ ...actor, sessionId: 'wake-paused' }, {
+        continuationId: prepared.value.continuation.continuationId,
+      });
+      expect(claimed).toMatchObject({ ok: true, value: { outcome: 'recurring_acquired' } });
+      if (!claimed.ok) throw new Error(claimed.error.message);
+      expect('automationResume' in claimed.value).toBe(false);
+      expect(findActiveForGoal).toHaveBeenCalledWith(f.goalId, actor.clientId, 'workspace-a');
+    } finally {
+      f.database.close();
+    }
+  });
+
   it('does not read or mutate automation state on a busy/no-op recurring claim', async () => {
     const findActiveForGoal = vi.fn<AutomationResumeLookupPort['findActiveForGoal']>((goalId) => ok(activeRun(goalId)));
     const f = await fixture(findActiveForGoal);
@@ -152,11 +182,11 @@ function prepareRequest(f: ScheduledAutomationFixture): PrepareScheduledContinua
   };
 }
 
-function activeRun(goalId: string): StoredAutomationRun {
+function activeRun(goalId: string, status: StoredAutomationRun['run']['status'] = 'active'): StoredAutomationRun {
   return {
     run: {
       id: 'run-a', goalId, workspaceId: 'workspace-a', ownerClientId: actor.clientId,
-      status: 'active', revision: 7, createdAt: '2026-09-20T10:00:00.000Z', updatedAt: '2026-09-20T10:00:00.000Z',
+      status, revision: 7, createdAt: '2026-09-20T10:00:00.000Z', updatedAt: '2026-09-20T10:00:00.000Z',
     },
     milestones: [{
       runId: 'run-a', id: 'build', title: 'Build', goalStepId: 'build', position: 0, dependsOn: [],

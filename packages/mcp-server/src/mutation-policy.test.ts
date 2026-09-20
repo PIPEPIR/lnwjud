@@ -79,6 +79,7 @@ const cases: readonly MutationCase[] = [
   { label: 'batch dispatcher delegates policy to each child', tool: 'tool_batch', input: { calls: [] }, permission: 'EXECUTE', kind: 'read' },
   { label: 'workspace registration listing', tool: 'workspace_list', input: {}, permission: 'READ', kind: 'read' },
   { label: 'bounded workspace registration', tool: 'workspace_register', input: {}, permission: 'WRITE', kind: 'bounded_write' },
+  { label: 'automation finalization can stop owned work', tool: 'automation_finalize', input: {}, permission: 'WRITE', kind: 'opaque_mutation' },
   { label: 'skill catalog listing', tool: 'skills_list', input: {}, permission: 'READ', kind: 'read' },
   { label: 'skill content read', tool: 'skills_read', input: { skillId: 'a/b' }, permission: 'READ', kind: 'read' },
   { label: 'MCP server listing', tool: 'mcp_list', input: {}, permission: 'READ', kind: 'read' },

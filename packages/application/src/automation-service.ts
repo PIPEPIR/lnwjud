@@ -78,6 +78,7 @@ export interface AutomationDispatchContext {
   readonly requestDigest: string;
   readonly goalId: string;
   readonly workspaceId: string;
+  readonly windowsVerbatimArguments?: boolean;
 }
 
 export interface AutomationDispatchRequest {
@@ -255,26 +256,57 @@ export class AutomationService {
   }
 
   public async cancel(actor: FileActor, request: CancelAutomationRunRequest): Promise<Result<StoredAutomationRun>> {
-    const authorized = await this.loadAuthorizedRun(actor, request, true);
-    if (!authorized.ok) return authorized;
-    const cancelled = this.transitionRun(actor, authorized.value.run, request.expectedRevision, 'cancelled', 'run_cancelled');
-    if (!cancelled.ok) return cancelled;
+    const loaded = await this.loadAuthorizedRun(actor, request, false);
+    if (!loaded.ok) return loaded;
+    const requestValidation = this.validateMutationRequest(loaded.value.run, request);
+    if (!requestValidation.ok) return requestValidation;
     const summary = boundedSummary(request.summary ?? 'Automation run cancelled by its owner.');
     if (!summary.ok) return summary;
+
+    if (loaded.value.goal.status === 'cancelled') {
+      if (loaded.value.run.run.status === 'cancelled') return ok(loaded.value.run);
+      if (isTerminalRun(loaded.value.run.run.status)) {
+        return err(appError('CONFLICT', 'Automation run terminal state does not match the cancelled root goal', true));
+      }
+      return this.transitionRun(actor, loaded.value.run, request.expectedRevision, 'cancelled', 'run_cancelled_reconciled');
+    }
+    if (loaded.value.goal.status !== 'active') {
+      return err(appError('CONFLICT', 'Root goal is already terminal', true));
+    }
+
+    const goal = await this.validateMutationGoal(actor, loaded.value.run, request);
+    if (!goal.ok) return goal;
     const rootCancellation = await this.goals.cancelGoal(actor, {
-      goalId: authorized.value.goal.goalId,
-      expectedRevision: authorized.value.goal.revision,
+      goalId: goal.value.goalId,
+      expectedRevision: goal.value.revision,
       summary: summary.value,
-      evidence: [{ kind: 'task', value: `automation:${authorized.value.run.run.id}` }],
+      evidence: [{ kind: 'task', value: `automation:${loaded.value.run.run.id}` }],
     });
     if (!rootCancellation.ok) return rootCancellation;
-    return cancelled;
+    return this.transitionRun(actor, loaded.value.run, request.expectedRevision, 'cancelled', 'run_cancelled');
   }
 
   public async finalize(actor: FileActor, request: MutateAutomationRunRequest): Promise<Result<AutomationFinalizeResult>> {
-    const authorized = await this.loadAuthorizedRun(actor, request, true);
-    if (!authorized.ok) return authorized;
-    let stored = authorized.value.run;
+    const loaded = await this.loadAuthorizedRun(actor, request, false);
+    if (!loaded.ok) return loaded;
+    const requestValidation = this.validateMutationRequest(loaded.value.run, request);
+    if (!requestValidation.ok) return requestValidation;
+    let stored = loaded.value.run;
+
+    if (loaded.value.goal.status === 'completed') {
+      if (stored.run.status === 'completed') return ok({ run: stored, goal: loaded.value.goal });
+      if (stored.run.status !== 'completing') {
+        return err(appError('CONFLICT', 'Automation run state does not match the completed root goal', true));
+      }
+      const reconciled = this.transitionRun(actor, stored, request.expectedRevision, 'completed', 'run_completed_reconciled');
+      return reconciled.ok ? ok({ run: reconciled.value, goal: loaded.value.goal }) : reconciled;
+    }
+    if (loaded.value.goal.status !== 'active') {
+      return err(appError('CONFLICT', 'Root goal is already terminal', true));
+    }
+
+    const goal = await this.validateMutationGoal(actor, stored, request);
+    if (!goal.ok) return goal;
     if (stored.run.status !== 'active' && stored.run.status !== 'completing') {
       return err(appError('CONFLICT', 'Automation run is not ready to finalize', true));
     }
@@ -305,7 +337,7 @@ export class AutomationService {
     }
     const checkpoint = await this.syncGoalState(
       actor,
-      authorized.value.goal,
+      goal.value,
       stored,
       request.leaseToken,
       'finalize',
@@ -528,11 +560,7 @@ export class AutomationService {
     return ok({ run: stored.value, goal: goal.value });
   }
 
-  private async validateMutationGoal(
-    actor: FileActor,
-    stored: StoredAutomationRun,
-    request: MutateAutomationRunRequest,
-  ): Promise<Result<GoalSnapshot>> {
+  private validateMutationRequest(stored: StoredAutomationRun, request: MutateAutomationRunRequest): Result<void> {
     if (request.goalId !== undefined && request.goalId !== stored.run.goalId) {
       return err(appError('CONFLICT', 'Automation run does not belong to the supplied goal', true));
     }
@@ -542,6 +570,16 @@ export class AutomationService {
     if (stored.run.revision !== request.expectedRevision) {
       return err(appError('CONFLICT', 'Automation run revision changed', true));
     }
+    return ok(undefined);
+  }
+
+  private async validateMutationGoal(
+    actor: FileActor,
+    stored: StoredAutomationRun,
+    request: MutateAutomationRunRequest,
+  ): Promise<Result<GoalSnapshot>> {
+    const requestValidation = this.validateMutationRequest(stored, request);
+    if (!requestValidation.ok) return requestValidation;
     if (typeof request.leaseToken !== 'string' || request.leaseToken.trim().length === 0) {
       return err(appError('CONFLICT', 'A current goal lease is required', true));
     }
@@ -926,6 +964,9 @@ function toDispatchRequest(
       requestDigest: attempt.requestDigest,
       goalId: stored.run.goalId,
       workspaceId: stored.run.workspaceId,
+      ...(milestone.dispatch.windowsVerbatimArguments === undefined
+        ? {}
+        : { windowsVerbatimArguments: milestone.dispatch.windowsVerbatimArguments }),
     },
     dispatch: milestone.dispatch,
     role: milestone.role,

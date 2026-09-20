@@ -220,6 +220,9 @@ export function automationShellRequestDigest(input: AutomationShellRequestDigest
     max_output_bytes: input.dispatch.maxOutputBytes,
     include_stdout: input.dispatch.includeStdout,
     include_stderr: input.dispatch.includeStderr,
+    ...(input.dispatch.windowsVerbatimArguments === undefined
+      ? {}
+      : { windows_verbatim_arguments: input.dispatch.windowsVerbatimArguments }),
     owner_client_id: input.ownerClientId,
     owner_workspace_id: input.workspaceId,
   });

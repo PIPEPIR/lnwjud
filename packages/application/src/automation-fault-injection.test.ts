@@ -257,6 +257,73 @@ describe('AutomationService fault injection', () => {
     }
   });
 
+  it('reconciles a completing automation after the root goal committed but the local completion event failed', async () => {
+    const harness = await createHarness('finalize-reconcile');
+    const opened = harness.reopen();
+    try {
+      const launched = await advanceCurrent(opened.service, harness);
+      if (!launched.ok || launched.value.taskId === undefined) throw new Error('missing launched task');
+      await harness.dispatch.complete(launched.value.taskId);
+      expect(await advanceCurrent(opened.service, harness)).toMatchObject({
+        ok: true, value: { boundary: 'verification_pending' },
+      });
+      const verified = await advanceCurrent(opened.service, harness);
+      expect(verified).toMatchObject({ ok: true, value: { boundary: 'verified' } });
+      if (!verified.ok) throw new Error(verified.error.message);
+
+      opened.database.connection.exec(`CREATE TRIGGER fail_automation_complete_event
+        BEFORE INSERT ON automation_events WHEN NEW.kind = 'run_completed'
+        BEGIN SELECT RAISE(ABORT, 'injected completion event failure'); END;`);
+      const failed = await opened.service.finalize(actor, mutation(harness, verified.value.run.run.revision));
+      expect(failed).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+      expect(await opened.goals.getGoal(actor, { goalId: harness.started.goalId })).toMatchObject({
+        ok: true, value: { status: 'completed' },
+      });
+      const partial = await opened.service.status(actor, { workspaceId: 'workspace-a', runId: harness.runId });
+      expect(partial).toMatchObject({ ok: true, value: { run: { status: 'completing' } } });
+      if (!partial.ok) throw new Error(partial.error.message);
+
+      opened.database.connection.exec('DROP TRIGGER fail_automation_complete_event;');
+      const recovered = await opened.service.finalize(actor, mutation(harness, partial.value.run.revision));
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: { run: { run: { status: 'completed' } }, goal: { status: 'completed' } },
+      });
+    } finally {
+      opened.close();
+    }
+  });
+
+  it('reconciles local cancellation after the root goal cancelled but the automation event write failed', async () => {
+    const harness = await createHarness('cancel-reconcile');
+    const opened = harness.reopen();
+    try {
+      opened.database.connection.exec(`CREATE TRIGGER fail_automation_cancel_event
+        BEFORE INSERT ON automation_events WHEN NEW.kind = 'run_cancelled'
+        BEGIN SELECT RAISE(ABORT, 'injected cancellation event failure'); END;`);
+      const failed = await opened.service.cancel(actor, {
+        ...mutation(harness, 0),
+        summary: 'Cancel with an injected local persistence failure.',
+      });
+      expect(failed).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+      expect(await opened.goals.getGoal(actor, { goalId: harness.started.goalId })).toMatchObject({
+        ok: true, value: { status: 'cancelled' },
+      });
+      expect(await opened.service.status(actor, { workspaceId: 'workspace-a', runId: harness.runId })).toMatchObject({
+        ok: true, value: { run: { status: 'active', revision: 0 } },
+      });
+
+      opened.database.connection.exec('DROP TRIGGER fail_automation_cancel_event;');
+      const recovered = await opened.service.cancel(actor, {
+        ...mutation(harness, 0),
+        summary: 'Reconcile cancelled root goal.',
+      });
+      expect(recovered).toMatchObject({ ok: true, value: { run: { status: 'cancelled', revision: 1 } } });
+    } finally {
+      opened.close();
+    }
+  });
+
   it('rolls back run state and event sequence when an injected SQLite event write fails', async () => {
     const harness = await createHarness('transaction-rollback');
     const opened = harness.reopen();
