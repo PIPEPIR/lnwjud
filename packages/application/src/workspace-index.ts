@@ -27,8 +27,11 @@ export interface WorkspaceIndexEntry {
   readonly indexedAt: string;
 }
 
+const WORKSPACE_INDEX_DISCOVERY_POLICY_REVISION = 1;
+
 export interface WorkspaceIndexSnapshot {
   readonly version: 1;
+  readonly discoveryPolicyRevision: 1;
   readonly workspaceId: string;
   readonly rootPath: string;
   readonly indexedAt: string;
@@ -276,12 +279,12 @@ export class WorkspaceIndexService {
   }
 
   private snapshotValue(workspace: Workspace, entries: readonly WorkspaceIndexEntry[]): WorkspaceIndexSnapshot {
-    return { version: 1, workspaceId: workspace.id, rootPath: workspace.realRootPath, indexedAt: new Date().toISOString(), entries: [...entries].sort((left, right) => left.relativePath.localeCompare(right.relativePath)) };
+    return { version: 1, discoveryPolicyRevision: WORKSPACE_INDEX_DISCOVERY_POLICY_REVISION, workspaceId: workspace.id, rootPath: workspace.realRootPath, indexedAt: new Date().toISOString(), entries: [...entries].sort((left, right) => left.relativePath.localeCompare(right.relativePath)) };
   }
 }
 
 function snapshotGeneration(snapshot: WorkspaceIndexSnapshot): string {
-  const identity = snapshot.entries.map((entry) => [entry.relativePath, entry.kind, entry.mtimeMs, entry.size, entry.contentHash]);
+  const identity = [snapshot.discoveryPolicyRevision, snapshot.entries.map((entry) => [entry.relativePath, entry.kind, entry.mtimeMs, entry.size, entry.contentHash])];
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 }
 
@@ -344,7 +347,11 @@ async function statOrLstat(filePath: string, lstat: boolean): Promise<Awaited<Re
 function isSnapshot(value: unknown): value is WorkspaceIndexSnapshot {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
-  return record.version === 1 && typeof record.workspaceId === 'string' && typeof record.rootPath === 'string' && Array.isArray(record.entries);
+  return record.version === 1
+    && record.discoveryPolicyRevision === WORKSPACE_INDEX_DISCOVERY_POLICY_REVISION
+    && typeof record.workspaceId === 'string'
+    && typeof record.rootPath === 'string'
+    && Array.isArray(record.entries);
 }
 
 function isNodeError(error: unknown, code: string): boolean {

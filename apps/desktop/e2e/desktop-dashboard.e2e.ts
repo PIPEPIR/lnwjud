@@ -112,6 +112,14 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
 
     await page.getByRole('button', { name: 'ตั้งค่า', exact: true }).click();
     await expectNoHorizontalOverflow(page);
+    await expect(page.getByRole('button', { name: 'ล้างข้อมูลทั้งหมดและเริ่มใหม่' })).toBeVisible();
+    await page.getByRole('button', { name: /^MCP & Extensions/ }).click();
+    await page.getByRole('button', { name: /^\+ (เพิ่ม MCP Server|Add MCP Server)$/ }).click();
+    const customMcpNameInput = page.locator('.mcp-server-settings-item input').first();
+    await customMcpNameInput.fill('');
+    await customMcpNameInput.pressSequentially('focus-stable', { delay: 5 });
+    await expect(customMcpNameInput).toHaveValue('focus-stable');
+    await expect(customMcpNameInput).toBeFocused();
     await page.getByRole('button', { name: /^(เชื่อมต่อ ChatGPT|Connect ChatGPT)/ }).click();
     const tunnelAuthCard = page.locator('[aria-label="การยืนยันตัวตนของ Tunnel"], [aria-label="Tunnel authentication"]').first();
     const tunnelGuideCard = page.locator('[aria-label="เปิดคู่มือตั้งค่า"], [aria-label="Open setup guide"]').first();

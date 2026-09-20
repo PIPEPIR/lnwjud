@@ -118,6 +118,7 @@ describe('WorkLogPanel', () => {
     expect(markup).toContain('Destructive operation requires explicit user confirmation');
     expect(markup).toContain('71ms');
     expect(markup).toContain('12ms');
+    expect(markup).toContain('Session 19/08/2026 21:00');
   });
 
   it('filters by error properly when filter is error', () => {
@@ -168,8 +169,8 @@ describe('WorkLogPanel', () => {
       clearSessionLabel: 'Clear session', clearWorkspaceLabel: 'Clear workspace', clearAllLabel: 'Clear all',
       filter: 'all', onFilterChange: () => {}, onClear: async () => {}, entries: [], inFlight: [], workspaces,
     }));
-    expect(markup).toContain('lnwjud — workspace-a — E:\\lnwjud');
-    expect(markup).toContain('lnwjud — workspace-b — D:\\projects\\lnwjud');
+    expect(markup).toContain('lnwjud — E:\\lnwjud');
+    expect(markup).toContain('lnwjud — D:\\projects\\lnwjud');
     expect(markup.match(/value="workspace-alias"/g)).toBeNull();
     expect(markup).not.toContain('Local Disk E:');
   });

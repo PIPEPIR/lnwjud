@@ -15,6 +15,21 @@ function fixtureRepository(workspace: Workspace): WorkspaceRepository {
 }
 
 describe('WorkspaceIndexService', () => {
+  it('invalidates a persisted snapshot that predates the discovery-policy revision', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-policy-'));
+    const storeDir = path.join(root, 'index-store');
+    await mkdir(storeDir, { recursive: true });
+    await writeFile(path.join(storeDir, `${encodeURIComponent('workspace-policy')}.json`), `${JSON.stringify({
+      version: 1,
+      workspaceId: 'workspace-policy',
+      rootPath: root,
+      indexedAt: '2026-09-18T00:00:00.000Z',
+      entries: [],
+    })}\n`, 'utf8');
+    const store = new JsonWorkspaceIndexStore(storeDir);
+    await expect(store.load('workspace-policy')).resolves.toBeNull();
+  });
+
   it('indexes source and metadata paths by default while allowing an explicit ignored subtree', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-'));
     await mkdir(path.join(root, '.git'), { recursive: true });

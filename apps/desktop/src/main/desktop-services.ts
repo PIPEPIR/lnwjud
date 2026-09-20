@@ -131,6 +131,9 @@ import {
   type ToolCatalogItem,
   type ToolProfileDecision,
   type InFlightWorkItem,
+  type LoadLogSessionHistoryRequest,
+  type LoadLogSessionHistoryResult,
+  type LogSessionSummary,
   type LogSnapshot,
   type ManagedBrowserStatus,
   type PdfProviderInstallResult,
@@ -246,6 +249,10 @@ export interface DesktopRuntimeOptions {
   readonly collectIncidentMemory?: () => IncidentDesktopMemory;
   /** Flush the latest bounded runtime diagnostics sample immediately before an incident export. */
   readonly captureRuntimeDiagnostics?: () => void;
+  /** Stable presentation-only session for one Desktop application launch. MCP ownership keeps its transport session separately. */
+  readonly logSessionId?: string;
+  /** Previous Desktop launch start used only for one-time migration of the old automatic startup-clear cursor. */
+  readonly previousLogSessionStartedAt?: string;
 }
 
 export function toolAvailabilityHostSyncDisposition(
@@ -321,8 +328,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ? toolAvailabilityService.watch(250)
     : (): void => {};
   const workLogViewState = new WorkLogViewState(settingsRepository);
-  // Each desktop launch starts a fresh visible work-log session. Audit rows stay in SQLite.
-  workLogViewState.clear({});
+  if (options.previousLogSessionStartedAt !== undefined) workLogViewState.migrateAutomaticStartupClear(options.previousLogSessionStartedAt);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
   const checkpointEncryptionKey = options.checkpointEncryptionKey ?? resolveTestCheckpointEncryptionKey();
@@ -523,9 +529,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     agentSwarm: agentSwarmService,
   };
   const activityLogPath = mcpActivityLogPath(dataPath);
+  const logSessionId = options.logSessionId?.trim() || undefined;
+  const fileActivitySink = createFileActivitySink(activityLogPath);
+  const toLogActivityEvent = (event: ActivitySinkEvent): ActivitySinkEvent => logSessionId === undefined
+    ? event
+    : { ...event, sessionId: logSessionId };
   let activityLogDiagnostic: ((key: string, message: string) => void) | null = null;
   const activityTracker = new ActivityTracker(
-    createFileActivitySink(activityLogPath),
+    { record: (event): Promise<void> => fileActivitySink.record(toLogActivityEvent(event)) },
     (error, event) => {
       const message = error instanceof Error ? error.message : String(error);
       activityLogDiagnostic?.(
@@ -535,11 +546,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     {
       async record(event: ActivitySinkEvent, detail): Promise<void> {
+        const loggedEvent = toLogActivityEvent(event);
         await auditService.recordMcpTool({
           actorId: mcpActor.clientId,
           actorName: mcpActor.clientName,
-          ...(event.workspaceId === undefined ? {} : { workspaceId: event.workspaceId }),
-          ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
+          ...(loggedEvent.workspaceId === undefined ? {} : { workspaceId: loggedEvent.workspaceId }),
+          ...(loggedEvent.sessionId === undefined ? {} : { sessionId: loggedEvent.sessionId }),
           toolName: event.toolName,
           callId: event.callId,
           phase: event.phase,
@@ -1184,7 +1196,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const capabilities = await capabilitySummaryCache.get(() => buildCapabilitySummary(capabilityRuntime.health));
       const mcp = mcpLifecycle.status();
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
-      const inFlight = activityTracker.listInFlight().map(toInFlightItem);
+      const workLogSessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      const inFlight = activityTracker.listInFlight().map((entry) => toInFlightItem(entry, logSessionId));
       const tunnel = await observedTunnelStatus();
       const remoteMcp = await remoteMcpController.status();
       const backups = await backupService.list();
@@ -1241,6 +1254,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           fullBypassAll: readSettings().stdioFullBypassAll,
         }),
         workLog,
+        workLogSessions,
         inFlight,
         tunnel,
         remoteMcp,
@@ -1462,7 +1476,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     resetToolAvailability: async (request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> => mutateToolAvailability(request, null),
     getLogSnapshot: async (): Promise<LogSnapshot> => {
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
-      const inFlight = activityTracker.listInFlight().map(toInFlightItem);
+      const inFlight = activityTracker.listInFlight().map((entry) => toInFlightItem(entry, logSessionId));
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
       logHub.syncWorkLog(workLog, inFlight.map((item) => ({ callId: item.callId, toolName: item.toolName, targetSummary: item.targetSummary, targetDetail: item.targetDetail, startedAt: item.startedAt, workspaceId: item.workspaceId, sessionId: item.sessionId })));
       logHub.syncProcesses(processSummaries.map((summary) => ({
@@ -1475,7 +1489,17 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         logSummary: summary.logSummary,
       })));
       const snapshot = logHub.snapshot();
-      return { ...snapshot, tunnelAuth: await tunnelController.authStatus() };
+      const sessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      return { ...snapshot, sessions, tunnelAuth: await tunnelController.authStatus() };
+    },
+    loadLogSessionHistory: async (request: LoadLogSessionHistoryRequest): Promise<LoadLogSessionHistoryResult> => {
+      const workLog = await buildWorkLogHistory(auditRepository, workLogViewState, request);
+      logHub.syncWorkLog(workLog, []);
+      const sessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      return {
+        workLog,
+        logSnapshot: { ...logHub.snapshot(), sessions, tunnelAuth: await tunnelController.authStatus() },
+      };
     },
     clearLogBuffer: async (request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> => {
       const workspaceSummaries = (await workspaceRepository.listAll()).map(toWorkspaceSummary);
@@ -1984,33 +2008,64 @@ async function buildWorkLog(
   repository: AuditEventRepository,
   viewState: WorkLogViewState,
 ): Promise<readonly WorkLogEntry[]> {
-  const events = await listVisibleMcpEvents(repository, viewState, 500);
-  return events.map((event) => {
-    const kind = classifyMcpWorkLogKind(event.toolName, event.phase, event.resultCode);
-    return {
-      id: event.id,
-      timestamp: event.timestamp,
-      kind,
-      toolName: event.toolName,
-      resultCode: event.resultCode,
-      errorMessage: event.errorMessage ?? null,
-      targetSummary: event.targetSummary ?? null,
-      targetDetail: event.targetDetail,
-      durationMs: event.durationMs,
-      workspaceId: event.workspaceId ?? null,
-      sessionId: event.sessionId ?? null,
-      ...(event.callId === undefined ? {} : { callId: event.callId }),
-    } satisfies WorkLogEntry;
-  });
+  return (await listVisibleMcpEvents(repository, viewState, 500)).map(toWorkLogEntry);
+}
+
+async function buildWorkLogHistory(
+  repository: AuditEventRepository,
+  viewState: WorkLogViewState,
+  request: LoadLogSessionHistoryRequest,
+): Promise<readonly WorkLogEntry[]> {
+  const limit = request.limit === undefined || !Number.isInteger(request.limit) || request.limit < 1 || request.limit > 500 ? 500 : request.limit;
+  return (await listVisibleMcpEvents(repository, viewState, limit, {
+    ...(request.workspaceId === undefined ? {} : { workspaceId: request.workspaceId }),
+    sessionId: request.sessionId,
+  })).map(toWorkLogEntry);
+}
+
+async function listVisibleMcpSessions(
+  repository: AuditEventRepository,
+  viewState: WorkLogViewState,
+): Promise<readonly LogSessionSummary[]> {
+  return (await repository.listActivitySessions('mcp_tool:'))
+    .filter((session) => viewState.isVisible({
+      timestamp: session.lastActivityAt,
+      ...(session.workspaceId === undefined ? {} : { workspaceId: session.workspaceId }),
+      sessionId: session.sessionId,
+    }))
+    .map((session) => ({
+      sessionId: session.sessionId,
+      workspaceId: session.workspaceId ?? null,
+      startedAt: session.startedAt,
+      lastActivityAt: session.lastActivityAt,
+    }));
+}
+
+function toWorkLogEntry(event: ActivityAuditEvent): WorkLogEntry {
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    kind: classifyMcpWorkLogKind(event.toolName, event.phase, event.resultCode),
+    toolName: event.toolName,
+    resultCode: event.resultCode,
+    errorMessage: event.errorMessage ?? null,
+    targetSummary: event.targetSummary ?? null,
+    targetDetail: event.targetDetail,
+    durationMs: event.durationMs,
+    workspaceId: event.workspaceId ?? null,
+    sessionId: event.sessionId ?? null,
+    ...(event.callId === undefined ? {} : { callId: event.callId }),
+  };
 }
 
 async function listVisibleMcpEvents(
   repository: AuditEventRepository,
   viewState: WorkLogViewState,
   limit: number,
+  scope: { readonly workspaceId?: string; readonly sessionId?: string } = {},
 ): Promise<readonly ActivityAuditEvent[]> {
-  const events = await repository.listActivityScoped({ actionPrefix: 'mcp_tool:' }, 500);
-  return events.filter((event) => viewState.isVisible(event)).slice(0, limit);
+  const events = await repository.listActivityScoped({ actionPrefix: 'mcp_tool:', ...scope }, limit);
+  return events.filter((event) => viewState.isVisible(event));
 }
 
 async function listVisibleAuditEvents(
@@ -2024,7 +2079,10 @@ async function listVisibleAuditEvents(
   return events.filter((event) => event.timestamp > clearedAt);
 }
 
-function toInFlightItem(entry: { callId: string; toolName: string; startedAt: string; targetSummary?: string; targetDetail: InFlightWorkItem['targetDetail']; workspaceId?: string; sessionId?: string }): InFlightWorkItem {
+function toInFlightItem(
+  entry: { callId: string; toolName: string; startedAt: string; targetSummary?: string; targetDetail: InFlightWorkItem['targetDetail']; workspaceId?: string; sessionId?: string },
+  logSessionId?: string,
+): InFlightWorkItem {
   return {
     callId: entry.callId,
     toolName: entry.toolName,
@@ -2032,7 +2090,7 @@ function toInFlightItem(entry: { callId: string; toolName: string; startedAt: st
     targetSummary: entry.targetSummary ?? null,
     targetDetail: entry.targetDetail,
     workspaceId: entry.workspaceId ?? null,
-    sessionId: entry.sessionId ?? null,
+    sessionId: logSessionId ?? entry.sessionId ?? null,
   };
 }
 

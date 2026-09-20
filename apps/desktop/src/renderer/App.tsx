@@ -7,6 +7,7 @@ import type {
   ToolCatalogSnapshot,
   ResolvedRemediation,
   LogLine,
+  LogSessionSummary,
   LiveLogExportReference,
   LogSource,
   PermissionProfileName,
@@ -21,6 +22,7 @@ import type {
   TunnelStatus,
   TunnelOAuthLoginStatus,
   WorkspaceSummary,
+  WorkLogEntry,
 } from '@lnwjud/ipc-contracts';
 import { AppShell, type Screen } from './features/shell/AppShell.js';
 import { ControlCenterPage } from './features/home/ControlCenterPage.js';
@@ -62,6 +64,7 @@ export function App(): ReactElement {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [locale, setLocale] = useState<UiLocale>('th');
   const [logLines, setLogLines] = useState<readonly LogLine[]>([]);
+  const [logSessions, setLogSessions] = useState<readonly LogSessionSummary[]>([]);
   const [tunnelLogPath, setTunnelLogPath] = useState<string | null>(null);
   const [tunnelLogExists, setTunnelLogExists] = useState(false);
   const [incidentClassification, setIncidentClassification] = useState<IncidentClassification | null>(null);
@@ -137,6 +140,7 @@ export function App(): ReactElement {
         logIds.current = merged.ids;
         return merged.lines;
       });
+      setLogSessions(snapshot.sessions ?? []);
       setTunnelLogPath(snapshot.tunnelLogPath);
       setTunnelLogExists(snapshot.tunnelLogExists);
     }).catch(() => undefined);
@@ -526,6 +530,27 @@ export function App(): ReactElement {
     }
   }
 
+  async function loadLogSessionHistory(scope: LogScopeSelection): Promise<readonly WorkLogEntry[]> {
+    if (scope.sessionId === null) return [];
+    try {
+      const history = await window.lnwjud.loadLogSessionHistory({
+        sessionId: scope.sessionId,
+        ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
+        limit: 500,
+      });
+      setLogLines((previous) => {
+        const merged = applyLogSnapshot(previous, logIds.current, history.logSnapshot.lines, MAX_CLIENT_LOG_LINES);
+        logIds.current = merged.ids;
+        return merged.lines;
+      });
+      setLogSessions(history.logSnapshot.sessions ?? []);
+      return history.workLog;
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, t('error.desktopService')));
+      return [];
+    }
+  }
+
   async function exportWorkLog(rowIds: readonly string[]): Promise<void> {
     try {
       await window.lnwjud.exportWorkLog({ rowIds, locale });
@@ -628,6 +653,15 @@ export function App(): ReactElement {
     await refresh();
     if (catalogPromise !== null) setToolCatalog(await catalogPromise);
     if (doctorPromise !== null) setDoctor(await doctorPromise);
+  }
+
+  async function factoryReset(): Promise<{ readonly accepted: boolean }> {
+    try {
+      return await window.lnwjud.factoryReset();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, t('settingsPage.factoryResetFailed')));
+      throw cause;
+    }
   }
 
   async function setUserSettings(settings: UserSettings): Promise<boolean> {
@@ -916,7 +950,7 @@ export function App(): ReactElement {
         />
       ) : null}
       {screen === 'worklog' ? (
-        <WorkLogPage locale={locale} dashboard={dashboard} workspaces={workspaces} onClearWorkLog={clearWorkLog} onExportWorkLog={exportWorkLog} />
+        <WorkLogPage locale={locale} dashboard={dashboard} workspaces={workspaces} onClearWorkLog={clearWorkLog} onExportWorkLog={exportWorkLog} onLoadSessionHistory={loadLogSessionHistory} />
       ) : null}
       {screen === 'live' ? (
         <LiveLogsPage
@@ -935,6 +969,8 @@ export function App(): ReactElement {
           incidentCapturedAt={incidentCapturedAt}
           incidentNotice={incidentNotice}
           workspaces={workspaces}
+          sessions={logSessions}
+          onLoadSessionHistory={loadLogSessionHistory}
         />
       ) : null}
       {screen === 'settings' ? (
@@ -942,6 +978,7 @@ export function App(): ReactElement {
           locale={locale}
           dashboard={dashboard}
           onLocaleChange={changeLocale}
+          onFactoryReset={factoryReset}
           onPermissionProfileChange={setPermissionProfile}
           onUnrestrictedChange={setUnrestrictedMode}
           onDestructiveDeletePolicyChange={setDestructiveDeletePolicy}

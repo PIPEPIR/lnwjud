@@ -1,5 +1,5 @@
-import { useCallback, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { useCallback, useRef, useState, type ReactElement } from 'react';
+import type { DashboardSnapshot, UiLocale, WorkLogEntry, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { WorkLogPanel, type LogScopeSelection, type WorkLogFilter } from '../worklog/WorkLogPanel.js';
 
@@ -9,16 +9,29 @@ interface WorkLogPageProps {
   readonly workspaces: readonly WorkspaceSummary[];
   readonly onClearWorkLog: (scope: LogScopeSelection) => Promise<void>;
   readonly onExportWorkLog: (rowIds: readonly string[]) => Promise<void>;
+  readonly onLoadSessionHistory: (scope: LogScopeSelection) => Promise<readonly WorkLogEntry[]>;
 }
 
 export function WorkLogPage(props: WorkLogPageProps): ReactElement {
   const t = createTranslator(props.locale);
   const [filter, setFilter] = useState<WorkLogFilter>('all');
+  const [historicalEntries, setHistoricalEntries] = useState<readonly WorkLogEntry[]>([]);
+  const sessionLoadGeneration = useRef(0);
   const resolveTargetDetail = useCallback(async (detailRef: string) => (await window.lnwjud.resolveActivityTargetDetail({ detailRef })).detail, []);
   const searchTargetDetails = useCallback(async (
     query: string,
     candidates: readonly { readonly id: string; readonly detailRef: string | null }[],
   ) => (await window.lnwjud.searchActivityTargetDetails({ query, candidates })).matchingIds, []);
+  const entries = [...new Map([...props.dashboard.workLog, ...historicalEntries].map((entry) => [entry.id, entry])).values()];
+  const loadSession = async (scope: LogScopeSelection): Promise<void> => {
+    const generation = ++sessionLoadGeneration.current;
+    if (scope.sessionId === null) {
+      setHistoricalEntries([]);
+      return;
+    }
+    const entries = await props.onLoadSessionHistory(scope);
+    if (generation === sessionLoadGeneration.current) setHistoricalEntries(entries);
+  };
   return (
     <div className="page-content viewport-list-page worklog-page">
       <p className="page-subtitle">{t('workLog.subtitle')}</p>
@@ -38,8 +51,10 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
         onExport={props.onExportWorkLog}
         onResolveTargetDetail={resolveTargetDetail}
         onSearchTargetDetails={searchTargetDetails}
-        entries={props.dashboard.workLog}
+        entries={entries}
         inFlight={props.dashboard.inFlight}
+        sessions={props.dashboard.workLogSessions ?? []}
+        onSessionChange={loadSession}
         workspaces={props.workspaces}
         defaultWorkspaceId={props.dashboard.selectedWorkspace?.id ?? null}
         workspaceLabel={t('scope.workspace')}

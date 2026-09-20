@@ -54,6 +54,15 @@ describe('desktop packaged startup regression contract', () => {
     expect(mcpIndex).toBeGreaterThan(windowIndex);
   });
 
+  it('replays persisted Live Log history on normal and standalone log-viewer startup', () => {
+    const desktop = section('function bootstrapDesktop', 'function bootstrapLogViewerOnly');
+    const viewer = section('function bootstrapLogViewerOnly', 'function handleDesktopStartupFailure');
+    expect(desktop).toContain('runtime.logHub.start();');
+    expect(viewer).toContain('runtime.logHub.start();');
+    expect(desktop).not.toContain('skipExisting: true');
+    expect(viewer).not.toContain('skipExisting: true');
+  });
+
   it('turns startup rejection into a reported quit instead of a ghost process', () => {
     const desktop = section('function bootstrapDesktop', 'function bootstrapLogViewerOnly');
     expect(desktop).toContain(".catch((error: unknown) => handleDesktopStartupFailure('desktop', error))");
@@ -65,6 +74,20 @@ describe('desktop packaged startup regression contract', () => {
     const instances = section('const gotInstanceLock', 'if (wantsMcpStdio');
     expect(instances).toContain("app.on('second-instance'");
     expect(instances).toContain('revealMainWindow();');
+  });
+
+  it('applies a staged factory reset in a temporary-userData bootstrap before normal runtime startup', () => {
+    const resetBootstrap = section('const factoryResetApplyRequested', '  const holdsSingleInstanceLock');
+    expect(resetBootstrap).toContain('process.argv.includes(FACTORY_RESET_APPLY_ARG)');
+    expect(resetBootstrap).toContain('applyPendingFactoryResetSync(dataPath, resolveTunnelProfileDirectory())');
+    expect(resetBootstrap).toContain("argument !== FACTORY_RESET_APPLY_ARG && !argument.startsWith('--user-data-dir=')");
+    expect(resetBootstrap).toContain('app.relaunch({ args })');
+    expect(resetBootstrap).not.toContain('app.requestSingleInstanceLock()');
+    expect(resetBootstrap).not.toContain('configureCrashRecovery(');
+    const resetRequest = section('async function requestFactoryReset', 'function requestUpdateCheck');
+    expect(resetRequest).toContain('factoryResetBootstrapUserDataPath(dataPath)');
+    expect(resetRequest).toContain('`--user-data-dir=${bootstrapUserDataPath}`');
+    expect(resetRequest).toContain('FACTORY_RESET_APPLY_ARG');
   });
 
   it('selects the configured user-data path before acquiring the instance lock', () => {

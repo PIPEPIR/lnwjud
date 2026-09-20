@@ -192,6 +192,7 @@ describe('viewport-sized log and list layout', () => {
     expect(markup).toContain('scope-filter-bar');
     expect(markup).toContain('scope-badge workspace');
     expect(markup).toContain('scope-badge session');
+    expect(markup).toContain('Session 22/08/2026 07:00');
   });
 
   it('treats legacy slash/case path workspace IDs as the registered project and exports the exact visible order', () => {
@@ -219,7 +220,7 @@ describe('viewport-sized log and list layout', () => {
       workspaceLabel: 'Workspace', sessionLabel: 'Session', scopeAllLabel: 'All', onClear: noop, onExport: noop, workspaces,
     }));
     expect(markup).not.toContain('Local Disk E:');
-    expect((markup.match(/>lnwjud — project-a<\/option>/g) ?? [])).toHaveLength(1);
+    expect(markup).toContain('>lnwjud — E:\\lnwjud</option>');
   });
 
   it('keeps Live Logs inside the window and scrolls only the log table', () => {

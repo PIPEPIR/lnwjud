@@ -533,6 +533,15 @@ describe('LocalExtensionsService MCP bridge', () => {
         connected: true,
         lifecycle: 'connected',
       });
+      await service.disconnectMcpServer?.('mock');
+      const disconnected = await service.listMcpServers();
+      expect(disconnected.ok).toBe(true);
+      if (!disconnected.ok) return;
+      expect(disconnected.value.servers.find((server) => server.name === 'mock')).toMatchObject({
+        name: 'mock',
+        connected: false,
+        lifecycle: 'disconnected',
+      });
     } finally {
       await service.close();
       await rm(root, { recursive: true, force: true });

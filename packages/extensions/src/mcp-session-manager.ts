@@ -295,6 +295,7 @@ export class McpSessionManager {
       }
       if (this.closed) throw new Error('Child MCP session manager is closed');
       this.sessions.set(server, managed);
+      this.closeFailures.delete(server);
       this.scheduleIdleSweep();
       return managed;
     } catch (error: unknown) {

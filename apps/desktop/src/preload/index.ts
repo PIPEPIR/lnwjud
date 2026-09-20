@@ -36,7 +36,10 @@ import {
   type IncidentExportResult,
   type InFlightWorkItem,
   type LnwjudApi,
+  type LoadLogSessionHistoryRequest,
+  type LoadLogSessionHistoryResult,
   type LogLine,
+  type LogSessionSummary,
   type OpenExternalSetupPageRequest,
   type LogSnapshot,
   type ManagedBrowserStatus,
@@ -172,6 +175,19 @@ function workLogEntries(value: unknown): readonly WorkLogEntry[] {
       workspaceId: nullableString(entry.workspaceId),
       sessionId: nullableString(entry.sessionId),
       ...(typeof entry.callId === 'string' ? { callId: entry.callId } : {}),
+    };
+  });
+}
+
+function logSessionSummaries(value: unknown): readonly LogSessionSummary[] {
+  if (!Array.isArray(value)) throw new Error('Invalid IPC response');
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new Error('Invalid IPC response');
+    return {
+      sessionId: stringField(entry, 'sessionId'),
+      workspaceId: nullableString(entry.workspaceId),
+      startedAt: stringField(entry, 'startedAt'),
+      lastActivityAt: stringField(entry, 'lastActivityAt'),
     };
   });
 }
@@ -509,6 +525,7 @@ function dashboard(value: unknown): DashboardSnapshot {
       stdioCommand: stringField(value.connectionModes, 'stdioCommand'),
     },
     workLog: workLogEntries(value.workLog),
+    ...(value.workLogSessions === undefined ? {} : { workLogSessions: logSessionSummaries(value.workLogSessions) }),
     inFlight: inFlightItems(value.inFlight),
     tunnel: tunnelStatus(value.tunnel),
     remoteMcp: remoteMcpStatus(value.remoteMcp),
@@ -1200,6 +1217,7 @@ function logSnapshot(value: unknown): LogSnapshot {
     lines: value.lines.map(logLine),
     tunnelLogPath: nullableString(value.tunnelLogPath),
     tunnelLogExists: booleanField(value, 'tunnelLogExists'),
+    ...(value.sessions === undefined ? {} : { sessions: logSessionSummaries(value.sessions) }),
     ...(value.tunnelAuth === undefined ? {} : { tunnelAuth: tunnelAuthStatus(value.tunnelAuth) }),
   };
 }
@@ -1216,6 +1234,19 @@ function scopePayload(request: { readonly workspaceId?: string; readonly session
   const workspaceId = typeof request.workspaceId === 'string' && request.workspaceId.trim().length > 0 ? request.workspaceId.trim() : undefined;
   const sessionId = typeof request.sessionId === 'string' && request.sessionId.trim().length > 0 ? request.sessionId.trim() : undefined;
   return { ...(workspaceId === undefined ? {} : { workspaceId }), ...(sessionId === undefined ? {} : { sessionId }) };
+}
+
+function loadLogSessionHistory(request: LoadLogSessionHistoryRequest): Promise<LoadLogSessionHistoryResult> {
+  if (!isRecord(request) || typeof request.sessionId !== 'string' || request.sessionId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  if (request.limit !== undefined && (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 500)) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.loadLogSessionHistory, {
+    ...scopePayload(request),
+    sessionId: request.sessionId.trim(),
+    ...(request.limit === undefined ? {} : { limit: request.limit }),
+  }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { workLog: workLogEntries(value.workLog), logSnapshot: logSnapshot(value.logSnapshot) };
+  });
 }
 
 function clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> {
@@ -1382,6 +1413,7 @@ const api: LnwjudApi = {
   openToolSetupTarget,
   copyToolCommand,
   getLogSnapshot: () => invoke(ipcChannels.getLogSnapshot).then(logSnapshot),
+  loadLogSessionHistory,
   clearLogBuffer,
   resolveActivityTargetDetail,
   searchActivityTargetDetails,
@@ -1393,6 +1425,10 @@ const api: LnwjudApi = {
     return { opened: booleanField(value, 'opened') };
   }),
   getUpdateStatus: () => invoke(ipcChannels.getUpdateStatus).then(updateStatus),
+  factoryReset: () => invoke(ipcChannels.factoryReset).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { accepted: booleanField(value, 'accepted') };
+  }),
   checkForUpdates: () => invoke(ipcChannels.checkForUpdates).then(updateStatus),
   installUpdate: () => invoke(ipcChannels.installUpdate).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');

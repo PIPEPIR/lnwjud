@@ -67,6 +67,30 @@ describe('SqliteAuditRepository', () => {
     database.close();
   }, 20_000);
 
+  it('lists historical activity sessions independently of the 500-row event window', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-audit-session-catalog-db-'));
+    temporaryRoots.push(root);
+    const database = new SqliteDatabase(path.join(root, 'state.db'));
+    const repository = new SqliteAuditRepository(database);
+    await repository.insert(scopedEvent('old-session-event', '2026-08-20T00:00:00.000Z', 'workspace-old', 'session-old'));
+    const base = Date.parse('2026-08-21T00:00:00.000Z');
+    for (let index = 0; index < 520; index += 1) {
+      await repository.insert(scopedEvent(
+        `noise-${index}`,
+        new Date(base + index * 1_000).toISOString(),
+        'workspace-new',
+        'session-new',
+      ));
+    }
+
+    const sessions = await repository.listActivitySessions('mcp_tool:');
+    expect(sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: 'session-old', workspaceId: 'workspace-old', startedAt: '2026-08-20T00:00:00.000Z' }),
+      expect.objectContaining({ sessionId: 'session-new', workspaceId: 'workspace-new' }),
+    ]));
+    database.close();
+  }, 20_000);
+
   it('preserves legacy null session scope during migration and can query it explicitly', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-audit-legacy-db-'));
     temporaryRoots.push(root);

@@ -16,6 +16,7 @@ interface SettingsPageProps {
   readonly locale: UiLocale;
   readonly dashboard: DashboardSnapshot;
   readonly onLocaleChange: (locale: UiLocale) => Promise<void>;
+  readonly onFactoryReset: () => Promise<{ readonly accepted: boolean }>;
   readonly onPermissionProfileChange: (profile: PermissionProfileName) => Promise<void>;
   readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onDestructiveDeletePolicyChange: (policy: DestructiveDeletePolicy) => Promise<void>;
@@ -106,6 +107,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [retentionBusy, setRetentionBusy] = useState(false);
   const [eccBusy, setEccBusy] = useState(false);
   const [eccMessage, setEccMessage] = useState<string | null>(null);
+  const [factoryResetBusy, setFactoryResetBusy] = useState(false);
+  const [factoryResetError, setFactoryResetError] = useState<string | null>(null);
 
   useEffect(() => {
     if (props.requestedSection === undefined) return;
@@ -221,6 +224,18 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       setStdioMessage(restartRequired ? t('settingsPage.stdioReconnectRequired') : t('settings.saved'));
     } catch (cause: unknown) {
       setPolicyError(cause instanceof Error ? cause.message : 'Could not save STDIO policy');
+    }
+  }
+
+  async function factoryReset(): Promise<void> {
+    setFactoryResetBusy(true);
+    setFactoryResetError(null);
+    try {
+      await props.onFactoryReset();
+    } catch (cause: unknown) {
+      setFactoryResetError(cause instanceof Error ? cause.message : t('settingsPage.factoryResetFailed'));
+    } finally {
+      setFactoryResetBusy(false);
     }
   }
 
@@ -462,6 +477,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
           </header>
 
           {activeSection === 'general' ? (
+            <>
             <section className="panel settings-card settings-card-polished" aria-label={t('settings.generalTitle')}>
               <SettingsCardHeading icon="A" title={t('settings.generalTitle')} subtitle={t('settingsPage.languageSubtitle')} badge={props.locale.toUpperCase()} />
               <div className="setting-field max-field-width">
@@ -473,6 +489,17 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               </div>
               <p className="hint">{t('settingsPage.languageHint')}</p>
             </section>
+            <section className="panel settings-card settings-card-polished" aria-label={t('settingsPage.factoryResetTitle')}>
+              <SettingsCardHeading icon="↻" title={t('settingsPage.factoryResetTitle')} subtitle={t('settingsPage.factoryResetSubtitle')} badge="RESET" />
+              <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('settingsPage.factoryResetWarning')}</StatusMessage>
+              {factoryResetError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{factoryResetError}</StatusMessage>}
+              <div className="inline-actions">
+                <button type="button" disabled={factoryResetBusy} onClick={() => { void factoryReset(); }}>
+                  {factoryResetBusy ? t('settingsPage.factoryResetWorking') : t('settingsPage.factoryResetButton')}
+                </button>
+              </div>
+            </section>
+            </>
           ) : null}
 
           {activeSection === 'security' ? (

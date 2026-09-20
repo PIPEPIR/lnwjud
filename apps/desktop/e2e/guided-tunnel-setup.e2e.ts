@@ -18,12 +18,13 @@ test('fresh user sees Thai Tips, enters Secure Tunnel guide, and switches langua
     await page.setViewportSize({ width: 1280, height: 720 });
     await ensureThaiLocale(page);
     await expect(page.getByRole('dialog', { name: 'ตั้งค่า ChatGPT ให้ใช้ lnwjud' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('ต้องเปิด Dev Mode ในหน้า Plugin Settings ก่อน', { exact: false })).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
     await page.getByRole('button', { name: 'เริ่มตั้งค่า' }).click();
     await expect(page.getByTestId('guided-tunnel-setup')).toBeVisible();
     await expect(page.getByText('1. สร้าง OpenAI Tunnel')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'เปิดหน้า Tunnel Settings' })).toBeVisible();
+    await expect(page.getByTestId('guided-tunnel-setup').getByRole('button', { name: 'เปิดหน้า Tunnel Settings' })).toBeVisible();
 
     const tunnelId = page.locator('#guided-tunnel-id');
     await tunnelId.fill('tunnel_abcdefgh12345678');

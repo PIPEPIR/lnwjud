@@ -44,6 +44,7 @@ export function FirstRunTunnelTip(props: FirstRunTunnelTipProps): ReactElement {
           <span className="settings-eyebrow">{t('settingsPage.secureTunnelName')}</span>
           <h2 id="guided-tunnel-tip-title">{t('guidedTunnel.tipTitle')}</h2>
           <p>{t('guidedTunnel.tipBody')}</p>
+          <div className="alert-box-warning" role="note">⚠️ {t('guidedTunnel.devModeWarning')}</div>
           <div className="guided-tunnel-privacy" role="note">🔒 {t('guidedTunnel.privacy')}</div>
           <label className="setting-field" htmlFor="first-run-permission-profile">
             <span className="field-label">{t('guidedTunnel.permissionLabel')}</span>
