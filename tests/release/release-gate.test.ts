@@ -194,7 +194,7 @@ describe('MVP release verification gate', () => {
     const release = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8')).replaceAll('\r\n', '\n');
     const releaseNotes = await readFile(path.join(repositoryRoot, 'scripts', 'release-notes.mjs'), 'utf8');
 
-    expect(ci).toContain('actions/upload-artifact@v4');
+    expect(ci).toContain('actions/upload-artifact@v7');
     expect(ci).toContain('apps/desktop/dist/installers/latest.yml');
     expect(ci).toContain('windows-release-${{ github.sha }}');
     expect(ci).toContain('apps/desktop/dist/installers/*.exe');
