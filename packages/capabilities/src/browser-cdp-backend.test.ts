@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Result } from '@lnwjud/domain';
 import { BrowserCdpBackend, type BrowserCdpProtocol, type BrowserCdpTab } from './browser-cdp-backend.js';
 
 const tab = (id: string, title: string, url: string): BrowserCdpTab => ({
@@ -352,15 +353,54 @@ describe('BrowserCdpBackend', () => {
     expect(requests).toEqual([]);
   });
 
-  it('does not dispatch a mutating DOM action without confirmation', async () => {
+  it('starts managed Chrome on demand once and reuses the ready runtime', async () => {
+    let ready = false;
+    let launches = 0;
+    const base = protocolStub({ tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')] });
+    const protocol: BrowserCdpProtocol = {
+      ...base,
+      async status(): Promise<{ readonly ready: boolean; readonly port: number }> { return { ready, port: 9222 }; },
+    };
+    const backend = new BrowserCdpBackend({
+      protocol,
+      launcher: async (): Promise<Result<unknown>> => {
+        launches += 1;
+        await Promise.resolve();
+        ready = true;
+        return { ok: true, value: { ready: true, port: 9222, launched: true } };
+      },
+    });
+
+    await Promise.all([
+      expect(backend.execute({ action: 'list_tabs' })).resolves.toMatchObject({ ok: true }),
+      expect(backend.execute({ action: 'list_tabs' })).resolves.toMatchObject({ ok: true }),
+    ]);
+    await expect(backend.execute({ action: 'list_tabs' })).resolves.toMatchObject({ ok: true });
+    expect(launches).toBe(1);
+  });
+
+  it('does not start or dispatch a mutating DOM action without confirmation', async () => {
     let dispatched = false;
-    const protocol = protocolStub({
+    let launches = 0;
+    const base = protocolStub({
       tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')],
       onRequest: () => { dispatched = true; },
     });
+    const protocol: BrowserCdpProtocol = {
+      ...base,
+      async status(): Promise<{ readonly ready: boolean; readonly port: number }> { return { ready: false, port: 9222 }; },
+    };
+    const backend = new BrowserCdpBackend({
+      protocol,
+      launcher: async (): Promise<Result<unknown>> => {
+        launches += 1;
+        return { ok: true, value: { ready: true, port: 9222, launched: true } };
+      },
+    });
 
-    await expect(new BrowserCdpBackend({ protocol }).execute({ action: 'click', tab_id: 'tab-1', parameters: { selector: '#delete' } }))
+    await expect(backend.execute({ action: 'click', tab_id: 'tab-1', parameters: { selector: '#delete' } }))
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    expect(launches).toBe(0);
     expect(dispatched).toBe(false);
   });
 

@@ -49,10 +49,25 @@ const MAX_TIMEOUT_SECONDS = 3600;
 export class BrowserCdpBackend implements CapabilityBackend {
   private readonly protocol: BrowserCdpProtocol;
   private readonly launcher: ((url: string | undefined, signal?: AbortSignal) => Promise<Result<unknown>>) | undefined;
+  private startInFlight: Promise<Result<unknown>> | null = null;
 
   public constructor(options: BrowserCdpBackendOptions = {}) {
     this.protocol = options.protocol ?? new NodeBrowserCdpProtocol();
     this.launcher = options.launcher;
+  }
+
+  public async ensureStarted(url?: string, signal?: AbortSignal): Promise<Result<unknown>> {
+    const current = await this.protocol.status(signal);
+    if (current.ready) return ok({ ready: true, port: current.port, launched: false });
+    if (this.launcher === undefined) return err(appError('INTERNAL_ERROR', 'Browser launcher is not configured', true));
+    if (this.startInFlight !== null) return this.startInFlight;
+    const launch = this.launcher(url, signal);
+    this.startInFlight = launch;
+    try {
+      return await launch;
+    } finally {
+      if (this.startInFlight === launch) this.startInFlight = null;
+    }
   }
 
   public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -99,11 +114,13 @@ export class BrowserCdpBackend implements CapabilityBackend {
     if (!isReadOnlyBrowserAction(action) && !isApplicationAuthorized(authorization, request.userConfirmed)) {
       return err(appError('PERMISSION_REQUIRED', 'Browser actions that can change local or remote state require explicit user confirmation'));
     }
+    if (action !== 'status' && action !== 'launch') {
+      const started = await this.ensureStarted(undefined, signal);
+      if (!started.ok) return started;
+    }
     switch (action) {
       case 'status': return ok(await this.protocol.status(signal));
-      case 'launch':
-        if (this.launcher === undefined) return err(appError('INTERNAL_ERROR', 'Browser launcher is not configured', true));
-        return this.launcher(readString(parameters, 'url'), signal);
+      case 'launch': return this.ensureStarted(readString(parameters, 'url'), signal);
       case 'list_tabs': return ok({ tabs: await this.protocol.listTabs(signal) });
       case 'new_tab': return ok(await this.protocol.newTab(readString(parameters, 'url') ?? 'about:blank', signal));
       case 'close_tab': return this.withTab(request, action, async (tab) => ok(await this.protocol.closeTab(tab.id, signal)), signal);

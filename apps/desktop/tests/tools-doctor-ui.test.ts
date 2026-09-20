@@ -264,7 +264,7 @@ describe('Tools and Doctor UX', () => {
     expect(styles).toContain('.tool-status-strip button:focus-visible');
   });
 
-  it('keeps Managed Browser remediation responsive and refreshes the selected tool from the latest catalog', () => {
+  it('keeps Managed Browser remediation responsive and auto-starts only exposed browser tools', () => {
     const modalSource = readFileSync(new URL('../src/renderer/features/tools/ToolDetailModal.tsx', import.meta.url), 'utf8');
     const toolsPageSource = readFileSync(new URL('../src/renderer/features/tools/ToolsPage.tsx', import.meta.url), 'utf8');
     const desktopServicesSource = readFileSync(new URL('../src/main/desktop-services.ts', import.meta.url), 'utf8');
@@ -272,7 +272,10 @@ describe('Tools and Doctor UX', () => {
     expect(modalSource).toContain("t('tools.detail.startingManagedBrowser')");
     expect(modalSource).toContain('disabled={busyActionKey !== null}');
     expect(toolsPageSource).toContain('items.find((item) => toolKey(item) === selectedKey)');
-    expect(desktopServicesSource).toContain("{ action: 'launch', userConfirmed: true }");
+    expect(desktopServicesSource).toContain('capabilityRuntime.domCdp.ensureStarted()');
+    expect(desktopServicesSource).toContain('item.effectiveExposed');
+    expect(desktopServicesSource).toContain("requirement.id === 'browser_cdp'");
+    expect(desktopServicesSource).toContain("requirementRegistry.probe(['browser_cdp'], true)");
     expect(remediationSource).not.toContain('implementation/build');
     expect(remediationSource).toContain('เวอร์ชันนี้ยังไม่มีส่วนทำงานของเครื่องมือนี้');
   });

@@ -45,6 +45,7 @@ export interface PlatformCapabilitySet {
   readonly service: LocalCapabilityService;
   readonly health: HealthCapabilityBackend;
   readonly shell: ShellCapabilityBackend;
+  readonly domCdp: BrowserCdpBackend;
   readonly backends: Readonly<Record<string, CapabilityBackend>>;
 }
 
@@ -209,6 +210,7 @@ export function createPlatformCapabilitySet(options: PlatformCapabilitySetOption
     service,
     health,
     shell,
+    domCdp: browser,
     backends: { accessibility, inputEvent, vision, window, systemInfo, notification, fileDialog, clipboard, audio, screenRecord, office, scheduler, wslExec, wslFs },
   };
 }

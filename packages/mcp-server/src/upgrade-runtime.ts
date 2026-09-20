@@ -2136,20 +2136,13 @@ export class UpgradeRuntimeService {
     if (!target.ok) return target;
     const tabId = target.value;
     const invoke = (action: string, parameters: Record<string, unknown> = {}): Promise<Result<unknown>> => capabilities.execute('dom_cdp', { action, parameters, tab_id: tabId }, signal, authorization);
-    const status = await invoke('status');
+    let status = await invoke('status');
     if (!status.ok) return status;
     if (browserRuntimeNeedsStart(status.value)) {
-      return ok({
-        tool: name,
-        status: 'needs_setup',
-        readinessReason: 'runtime_not_ready',
-        deliveryState: 'operational',
-        available: true,
-        ready: false,
-        executed: false,
-        requirements: ['Start the lnwjud managed browser before using browser context tools.'],
-        runtimeStatus: status.value,
-      });
+      const recovered = await invoke('list_tabs');
+      if (!recovered.ok) return recovered;
+      status = await invoke('status');
+      if (!status.ok) return status;
     }
 
     if (name === 'form_context') {

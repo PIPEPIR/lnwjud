@@ -228,6 +228,7 @@ export interface DesktopRuntime {
   createBackup(reason?: BackupReason): Promise<BackupSummary>;
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
+  autoStartManagedBrowser(): Promise<ManagedBrowserStatus | null>;
   autoStartTunnel(): Promise<TunnelStatus | null>;
   autoStartRemoteMcp(): Promise<RemoteMcpStatus>;
   close(): Promise<void>;
@@ -1061,6 +1062,17 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     externalItems: (locale): Promise<readonly ToolCatalogItem[]> => projectExternalMcpTools(extensionsService, locale),
   };
   const toolCatalogService = new ToolCatalogService(requirementRegistry, remediationRegistry, toolCatalogOptions);
+  const autoStartManagedBrowser = async (): Promise<ManagedBrowserStatus | null> => {
+    const catalog = await toolCatalogService.getSnapshot(readLocale(settingsRepository));
+    const browserEnabled = catalog.items.some((item) => item.origin === 'lnwjud'
+      && item.effectiveExposed
+      && item.requirements.some((requirement) => requirement.id === 'browser_cdp'));
+    if (!browserEnabled) return null;
+    const result = await capabilityRuntime.domCdp.ensureStarted();
+    const status = toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
+    if (status.ready) await requirementRegistry.probe(['browser_cdp'], true);
+    return status;
+  };
   const tunnelDoctorCheckIds = new Set([
     'persistent_tunnel_identity', 'runtime_alias_state', 'runtime_process_running', 'tunnel_health', 'tunnel_ready',
     'control_plane_poll_health', 'local_mcp_binding', 'local_mcp_reachable', 'tunnel_id_matches_saved_identity',
@@ -1099,9 +1111,15 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     if (beforeItem === undefined) throw new Error(`Unknown first-party tool: ${request.name}`);
     if (enabled === null) toolAvailabilityService.resetTool(request.name);
     else toolAvailabilityService.setToolEnabled(request.name, enabled);
-    const catalog = await toolCatalogService.getSnapshot(request.locale);
-    const item = catalog.items.find((candidate) => candidate.origin === 'lnwjud' && candidate.name === request.name);
+    let catalog = await toolCatalogService.getSnapshot(request.locale);
+    let item = catalog.items.find((candidate) => candidate.origin === 'lnwjud' && candidate.name === request.name);
     if (item === undefined) throw new Error(`Tool Catalog item disappeared after availability update: ${request.name}`);
+    if (item.effectiveExposed && item.requirements.some((requirement) => requirement.id === 'browser_cdp')) {
+      await autoStartManagedBrowser();
+      catalog = await toolCatalogService.getSnapshot(request.locale);
+      item = catalog.items.find((candidate) => candidate.origin === 'lnwjud' && candidate.name === request.name);
+      if (item === undefined) throw new Error(`Tool Catalog item disappeared after Managed Browser start: ${request.name}`);
+    }
     const exposureChanged = beforeItem.effectiveExposed !== item.effectiveExposed;
     const remoteMcp = exposureChanged ? await remoteMcpController.status() : null;
     const hostSync = toolAvailabilityHostSyncDisposition(request.locale, exposureChanged, remoteMcp);
@@ -1480,10 +1498,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { configured: true, profilePath };
     },
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
-      // This path is invoked only by the user clicking the desktop UI action.
-      // Preserve the normal MCP authorization boundary while carrying that explicit click
-      // through to the capability backend so launch is not rejected as unconfirmed.
-      const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch', userConfirmed: true });
+      const result = await capabilityRuntime.domCdp.ensureStarted();
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
@@ -1702,6 +1717,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await activateWorkspace(selected.id);
       return mcpLifecycle.start();
     },
+    autoStartManagedBrowser,
     autoStartTunnel: async (): Promise<TunnelStatus | null> => autoStartPersistentTunnel(
       tunnelController,
       readSettings().tunnelAutoReconnect,
