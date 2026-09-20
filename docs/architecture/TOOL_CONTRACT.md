@@ -299,7 +299,7 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 256 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
 | 257 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
 | 258 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
-| 259 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | no |
+| 259 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | yes |
 <!-- END GENERATED TOOL REGISTRY -->
 
 ## Protocol and result rules
