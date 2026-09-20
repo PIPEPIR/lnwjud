@@ -139,9 +139,9 @@ describe('AutomationRuntimeAdapter', () => {
       },
     };
     const registry = new ToolRegistry({ capabilities }, actor, {
-      profileProvider: () => permissionProfiles.full,
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
       activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath: root }),
-      hostMutationApprovalProvider: async () => true,
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
     });
     const adapter = new AutomationRuntimeAdapter(registry, actor);
     const request = dispatchRequest(root);
@@ -199,7 +199,7 @@ describe('AutomationRuntimeAdapter', () => {
       includeStderr: false,
     });
 
-    const compose = () => {
+    const compose = (): { registry: ToolRegistry; adapter: AutomationRuntimeAdapter } => {
       const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: taskDirectory, unrestricted: true });
       const capabilities: CapabilityService = {
         execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal, authorization?: Parameters<ShellCapabilityBackend['execute']>[2]): Promise<Result<unknown>> {
@@ -212,10 +212,10 @@ describe('AutomationRuntimeAdapter', () => {
         },
       };
       const registry = new ToolRegistry({ capabilities }, actor, {
-        profileProvider: () => permissionProfiles.full,
-        authorizationModeProvider: () => 'full_bypass',
+        profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+        authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
         activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath: root }),
-        hostMutationApprovalProvider: async () => true,
+        hostMutationApprovalProvider: async (): Promise<boolean> => true,
       });
       return { registry, adapter: new AutomationRuntimeAdapter(registry, actor) };
     };

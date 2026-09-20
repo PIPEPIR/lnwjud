@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 import { ok, type AutomationVerificationRequirement } from '@lnwjud/domain';
 import type { StoredAutomationRun } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
@@ -12,6 +12,18 @@ import type { FileActor } from './file-service.js';
 const roots: string[] = [];
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
 const observedAt = '2026-09-20T10:00:02.000Z';
+
+interface VerificationFixture {
+  readonly workspace: Workspace;
+  readonly stored: StoredAutomationRun;
+  readonly milestone: StoredAutomationRun['milestones'][number];
+  readonly attempt: StoredAutomationRun['attempts'][number];
+  readonly runtime: {
+    readonly readTask: MockedFunction<AutomationVerificationRuntimePort['readTask']>;
+    readonly ensureTask: MockedFunction<AutomationVerificationRuntimePort['ensureTask']>;
+  };
+  readonly verifier: AutomationVerifier;
+}
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -138,7 +150,7 @@ describe('AutomationVerifier', () => {
   });
 });
 
-async function createFixture(requirements: readonly AutomationVerificationRequirement[], root = 'C:\\workspace-a') {
+async function createFixture(requirements: readonly AutomationVerificationRequirement[], root = 'C:\\workspace-a'): Promise<VerificationFixture> {
   const workspace: Workspace = {
     id: 'workspace-a', displayName: 'Workspace A', rootPath: root, realRootPath: root, createdAt: '2026-09-20T10:00:00.000Z',
   };
@@ -154,11 +166,11 @@ async function createFixture(requirements: readonly AutomationVerificationRequir
     milestone: stored.milestones[0]!,
     attempt: stored.attempts[0]!,
     runtime,
-    verifier: new AutomationVerifier(workspaces, runtime, undefined, () => new Date(observedAt)),
+    verifier: new AutomationVerifier(workspaces, runtime, undefined, (): Date => new Date(observedAt)),
   };
 }
 
-function verificationRequest(fixture: Awaited<ReturnType<typeof createFixture>>) {
+function verificationRequest(fixture: VerificationFixture): Parameters<AutomationVerifier['verify']>[1] {
   return {
     stored: fixture.stored,
     milestone: fixture.milestone,
@@ -169,7 +181,7 @@ function verificationRequest(fixture: Awaited<ReturnType<typeof createFixture>>)
 }
 
 function taskSnapshot(
-  fixture: Awaited<ReturnType<typeof createFixture>>,
+  fixture: VerificationFixture,
   overrides: Partial<AutomationTaskEvidenceSnapshot> = {},
 ): AutomationTaskEvidenceSnapshot {
   return {

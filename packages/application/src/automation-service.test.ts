@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ok } from '@lnwjud/domain';
+import { ok, type AutomationPlan } from '@lnwjud/domain';
+import type { StoredAutomationRun } from '@lnwjud/storage';
 import { SqliteAutomationRepository } from '../../storage/src/automation-repository.js';
 import { SqliteDatabase } from '../../storage/src/database.js';
 import { SqliteGoalRepository } from '../../storage/src/goal-repository.js';
@@ -8,7 +9,6 @@ import {
   AutomationService,
   createAutomationDispatchReservation,
   type AutomationDispatchPort,
-  type AutomationDispatchRequest,
 } from './automation-service.js';
 import type { FileActor } from './file-service.js';
 import { GoalContinuationService, type RunGoalResult } from './goal-continuation-service.js';
@@ -82,7 +82,7 @@ async function fixture(
   };
   const repository = new SqliteAutomationRepository(database);
   const verifier: AutomationVerificationPort = {
-    verify: vi.fn<AutomationVerificationPort['verify']>(verification ?? (async (_actor, request) => ok({
+    verify: vi.fn<AutomationVerificationPort['verify']>(verification ?? (async (_actor, request): ReturnType<AutomationVerificationPort['verify']> => ok({
       status: 'pending',
       evidence: request.milestone.verification.map((requirement) => ({
         requirementId: requirement.id,
@@ -95,7 +95,7 @@ async function fixture(
   };
   const service = new AutomationService(repository, goals, dispatch, verifier, {
     now: nowProvider,
-    idFactory: () => 'run-a',
+    idFactory: (): string => 'run-a',
   });
   return {
     database,
@@ -109,7 +109,7 @@ async function fixture(
   };
 }
 
-function plan() {
+function plan(): AutomationPlan {
   return {
     milestones: [
       {
@@ -154,7 +154,7 @@ function plan() {
   } as const;
 }
 
-async function createRun(f: Fixture) {
+async function createRun(f: Fixture): Promise<StoredAutomationRun> {
   const created = await f.service.createRun(actor, {
     workspaceId: 'workspace-a',
     goalId: f.started.goalId,
@@ -239,7 +239,7 @@ describe('AutomationService', () => {
   it('selects the first ready milestone deterministically and only one concurrent advance reserves or launches it', async () => {
     let releaseLaunch!: () => void;
     const launchGate = new Promise<void>((resolve) => { releaseLaunch = resolve; });
-    const launch = vi.fn(async (_actor: FileActor, request: AutomationDispatchRequest) => {
+    const launch = vi.fn<AutomationDispatchPort['launch']>(async (): ReturnType<AutomationDispatchPort['launch']> => {
       await launchGate;
       return ok({ presence: 'found' as const, state: 'running' as const, observedAt: '2026-09-20T10:00:01.000Z' });
     });

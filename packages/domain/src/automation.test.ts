@@ -8,9 +8,10 @@ import {
   readyAutomationMilestones,
   transitionAutomationRun,
   validateAutomationPlan,
+  type AutomationMilestoneDefinition,
 } from './automation.js';
 
-function milestone(id: string, dependsOn: readonly string[] = []) {
+function milestone(id: string, dependsOn: readonly string[] = []): AutomationMilestoneDefinition {
   return {
     id,
     title: `Milestone ${id}`,

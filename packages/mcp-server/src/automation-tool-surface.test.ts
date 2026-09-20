@@ -41,8 +41,8 @@ describe('public automation tool surface', () => {
       },
     } as unknown as McpApplicationServices;
     const registry = new ToolRegistry(services, actor, {
-      authorizationModeProvider: () => 'full_bypass',
-      activeWorkspaceScopeProvider: async () => ({ workspaceId: 'workspace-1', rootPath: 'E:\\project' }),
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId: 'workspace-1', rootPath: 'E:\\project' }),
     });
     const mutation = {
       workspaceId: 'workspace-1', goalId: 'goal-1', leaseToken: 'lease-1',

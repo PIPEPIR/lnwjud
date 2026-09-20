@@ -152,7 +152,7 @@ function observationFromSnapshot(
   return ok({ presence: 'unknown', observedAt, detail: 'Durable task state is unknown' });
 }
 
-function responseError(response: McpToolResponse) {
+function responseError(response: McpToolResponse): ReturnType<typeof appError> {
   const raw = isRecord(response.structuredContent?.error) ? response.structuredContent.error : undefined;
   const code = isAppErrorCode(raw?.code) ? raw.code : 'INTERNAL_ERROR';
   const message = typeof raw?.message === 'string' && raw.message.length > 0

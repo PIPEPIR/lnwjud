@@ -174,7 +174,7 @@ export class AutomationService {
     private readonly verifier: AutomationVerificationPort,
     options: AutomationServiceOptions = {},
   ) {
-    this.now = options.now ?? (() => new Date());
+    this.now = options.now ?? ((): Date => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
   }
 

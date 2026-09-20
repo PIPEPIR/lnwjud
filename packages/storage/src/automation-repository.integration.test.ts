@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SqliteDatabase } from './database.js';
 import { SqliteGoalRepository } from './goal-repository.js';
-import { SqliteAutomationRepository } from './automation-repository.js';
+import { SqliteAutomationRepository, type CreateAutomationRunRequest } from './automation-repository.js';
 
 const now = '2026-09-20T10:00:00.000Z';
 
@@ -222,7 +222,7 @@ describe('SqliteAutomationRepository', () => {
   });
 });
 
-async function createFixture() {
+async function createFixture(): Promise<{ database: SqliteDatabase; repository: SqliteAutomationRepository }> {
   const database = new SqliteDatabase(':memory:');
   database.connection.prepare(`INSERT INTO workspaces (id, display_name, root_path, real_root_path, created_at)
     VALUES (?, ?, ?, ?, ?)`).run('workspace-a', 'Workspace A', 'C:\\workspace-a', 'C:\\workspace-a', now);
@@ -235,7 +235,7 @@ async function createFixture() {
   return { database, repository: new SqliteAutomationRepository(database) };
 }
 
-function runInput(id: string) {
+function runInput(id: string): CreateAutomationRunRequest {
   return {
     id,
     goalId: 'goal-a',

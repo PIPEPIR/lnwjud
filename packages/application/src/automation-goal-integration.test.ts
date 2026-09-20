@@ -1,16 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ok } from '@lnwjud/domain';
+import { ok, type AutomationMilestoneDefinition } from '@lnwjud/domain';
 import { SqliteAutomationRepository } from '../../storage/src/automation-repository.js';
 import { SqliteDatabase } from '../../storage/src/database.js';
 import { SqliteGoalRepository } from '../../storage/src/goal-repository.js';
 import { SqliteWorkspaceRepository } from '../../storage/src/workspace-repository.js';
-import { AutomationService, type AutomationDispatchPort } from './automation-service.js';
+import { AutomationService, type AutomationDispatchPort, type MutateAutomationRunRequest } from './automation-service.js';
 import type { AutomationVerificationPort } from './automation-verifier.js';
 import type { FileActor } from './file-service.js';
 import { GoalContinuationService } from './goal-continuation-service.js';
 
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
 const now = '2026-09-20T10:00:00.000Z';
+
+interface IntegrationFixture {
+  readonly database: SqliteDatabase;
+  readonly goals: GoalContinuationService;
+  readonly service: AutomationService;
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly runId: string;
+}
 
 describe('AutomationService durable goal integration', () => {
   it('checkpoints the exact task binding before return, removes it after terminal evidence and completes the mapped step', async () => {
@@ -123,14 +132,14 @@ describe('AutomationService durable goal integration', () => {
 async function fixture(input: {
   readonly milestones: readonly ReturnType<typeof milestone>[];
   readonly taskCancellation?: { cancelForGoal: (...args: never[]) => Promise<readonly never[]> };
-}) {
+}): Promise<IntegrationFixture> {
   const database = new SqliteDatabase(':memory:');
   const workspaces = new SqliteWorkspaceRepository(database);
   await workspaces.insert({
     id: 'workspace-a', displayName: 'Workspace A', rootPath: 'C:\\workspace-a', realRootPath: 'C:\\workspace-a', createdAt: now,
   });
   const goals = new GoalContinuationService(workspaces, new SqliteGoalRepository(database), {
-    now: () => new Date(now),
+    now: (): Date => new Date(now),
     ...(input.taskCancellation === undefined ? {} : { taskCancellation: input.taskCancellation }),
   });
   const started = await goals.runGoal(actor, {
@@ -159,7 +168,7 @@ async function fixture(input: {
   };
   const repository = new SqliteAutomationRepository(database);
   const service = new AutomationService(repository, goals, dispatch, verifier, {
-    now: () => new Date(now), idFactory: () => 'run-a',
+    now: (): Date => new Date(now), idFactory: (): string => 'run-a',
   });
   const created = await service.createRun(actor, {
     workspaceId: 'workspace-a', goalId: started.value.goalId, leaseToken: started.value.leaseToken,
@@ -176,13 +185,13 @@ async function fixture(input: {
   };
 }
 
-function mutation(f: Awaited<ReturnType<typeof fixture>>, expectedRevision: number) {
+function mutation(f: IntegrationFixture, expectedRevision: number): MutateAutomationRunRequest {
   return {
     workspaceId: 'workspace-a', runId: f.runId, leaseToken: f.leaseToken, expectedRevision, userConfirmed: true,
   } as const;
 }
 
-function milestone(id: string, goalStepId: string, role: 'blocking_job' | 'supporting_service', cancelWithGoal: boolean) {
+function milestone(id: string, goalStepId: string, role: 'blocking_job' | 'supporting_service', cancelWithGoal: boolean): AutomationMilestoneDefinition {
   return {
     id,
     title: id,

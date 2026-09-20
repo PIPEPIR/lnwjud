@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import process from 'node:process';
 import { DurableShellTaskIndex } from '../packages/capabilities/dist/durable-shell-task-index.js';
 
 const HISTORY_SIZES = [603, 13_355];
@@ -27,7 +28,7 @@ const report = {
   accepted: p95Ratio <= 1.5 && results.every((entry) => entry.warmMetadataReads === 0),
 };
 
-console.log(JSON.stringify(report, null, 2));
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 if (!report.accepted) process.exitCode = 1;
 
 async function benchmarkHistory(historySize) {

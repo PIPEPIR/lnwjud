@@ -18,6 +18,15 @@ import {
 const roots: string[] = [];
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
 
+interface ScheduledAutomationFixture {
+  readonly database: SqliteDatabase;
+  readonly clock: { readonly now: () => Date; readonly set: (value: string) => void };
+  readonly goalId: string;
+  readonly leaseToken: string;
+  readonly goalRevision: number;
+  readonly scheduled: ScheduledContinuationService;
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -92,7 +101,7 @@ describe('scheduled automation resume hint', () => {
   });
 });
 
-async function fixture(findActiveForGoal: AutomationResumeLookupPort['findActiveForGoal']) {
+async function fixture(findActiveForGoal: AutomationResumeLookupPort['findActiveForGoal']): Promise<ScheduledAutomationFixture> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-automation-resume-'));
   roots.push(root);
   const database = new SqliteDatabase(path.join(root, 'state.sqlite'));
@@ -103,7 +112,7 @@ async function fixture(findActiveForGoal: AutomationResumeLookupPort['findActive
   });
   const repository = new SqliteGoalRepository(database);
   let now = new Date('2026-09-20T10:00:00.000Z');
-  const clock = { now: () => now, set: (value: string) => { now = new Date(value); } };
+  const clock = { now: (): Date => now, set: (value: string): void => { now = new Date(value); } };
   const goals = new GoalContinuationService(workspaces, repository, {
     now: clock.now, scheduledContinuations: repository,
   });
@@ -126,7 +135,7 @@ async function fixture(findActiveForGoal: AutomationResumeLookupPort['findActive
   };
 }
 
-function prepareRequest(f: Awaited<ReturnType<typeof fixture>>): PrepareScheduledContinuationRequest {
+function prepareRequest(f: ScheduledAutomationFixture): PrepareScheduledContinuationRequest {
   return {
     goalId: f.goalId,
     leaseToken: f.leaseToken,

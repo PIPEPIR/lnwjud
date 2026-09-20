@@ -164,8 +164,8 @@ describe('DesktopRuntime persistence', () => {
       leaseGeneration: started.value.leaseGeneration,
     };
     const registry = new ToolRegistry(first.mcpServices, first.mcpActor, {
-      authorizationModeProvider: () => 'full_bypass',
-      activeWorkspaceScopeProvider: async () => ({ workspaceId: workspace.id, rootPath: workspaceRoot }),
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId: workspace.id, rootPath: workspaceRoot }),
     });
     const created = await registry.invoke('automation_create', {
       workspaceId: workspace.id,

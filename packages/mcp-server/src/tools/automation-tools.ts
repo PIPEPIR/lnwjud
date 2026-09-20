@@ -1,3 +1,4 @@
+import type { MutateAutomationRunRequest } from '@lnwjud/application';
 import {
   automationControlSchema,
   automationCreateSchema,
@@ -100,7 +101,7 @@ function mutationRequest(input: {
   readonly leaseToken: string;
   readonly expectedRevision: number;
   readonly userConfirmed?: boolean | undefined;
-}) {
+}): MutateAutomationRunRequest {
   return {
     workspaceId: input.workspaceId,
     goalId: input.goalId,

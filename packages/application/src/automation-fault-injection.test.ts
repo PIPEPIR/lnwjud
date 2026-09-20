@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type AutomationPlan, type Result } from '@lnwjud/domain';
 import { SqliteAutomationRepository } from '../../storage/src/automation-repository.js';
 import { SqliteDatabase } from '../../storage/src/database.js';
 import { SqliteGoalRepository } from '../../storage/src/goal-repository.js';
@@ -12,6 +12,7 @@ import {
   type AutomationDispatchObservation,
   type AutomationDispatchPort,
   type AutomationDispatchRequest,
+  type MutateAutomationRunRequest,
 } from './automation-service.js';
 import type { AutomationVerificationPort } from './automation-verifier.js';
 import type { FileActor } from './file-service.js';
@@ -224,7 +225,7 @@ describe('AutomationService fault injection', () => {
     const gate = new Promise<void>((resolve) => { releaseLaunch = resolve; });
     const entered = new Promise<void>((resolve) => { enteredLaunch = resolve; });
     const originalLaunch = harness.dispatch.launch.bind(harness.dispatch);
-    harness.dispatch.launch = async (requestActor, request) => {
+    harness.dispatch.launch = async (requestActor, request): ReturnType<AutomationDispatchPort['launch']> => {
       enteredLaunch();
       await gate;
       return originalLaunch(requestActor, request);
@@ -321,14 +322,14 @@ async function createHarness(label: string): Promise<Harness> {
     dispatch,
     started: started.value,
     runId: created.value.run.id,
-    reopen() { return openHarness(databaseFilename, dispatch, `run-${label}`); },
+    reopen(): OpenHarness { return openHarness(databaseFilename, dispatch, `run-${label}`); },
   };
 }
 
 function openHarness(databaseFilename: string, dispatch: FaultBoundaryDispatch, runId: string): OpenHarness {
   const database = new SqliteDatabase(databaseFilename);
   const workspaces = new SqliteWorkspaceRepository(database);
-  const goals = new GoalContinuationService(workspaces, new SqliteGoalRepository(database), { now: () => now });
+  const goals = new GoalContinuationService(workspaces, new SqliteGoalRepository(database), { now: (): Date => now });
   const repository = new SqliteAutomationRepository(database);
   const verifier: AutomationVerificationPort = {
     async verify(_actor, request) {
@@ -352,11 +353,11 @@ function openHarness(databaseFilename: string, dispatch: FaultBoundaryDispatch, 
     repository,
     goals,
     service: new AutomationService(repository, goals, dispatch, verifier, { now: () => now, idFactory: () => runId }),
-    close() { database.close(); },
+    close(): void { database.close(); },
   };
 }
 
-function automationPlan(root: string) {
+function automationPlan(root: string): AutomationPlan {
   return {
     milestones: [{
       id: 'build', title: 'Build', goalStepId: 'build', dependsOn: [], provider: 'shell', role: 'blocking_job', cancelWithGoal: true,
@@ -374,7 +375,7 @@ function automationPlan(root: string) {
   } as const;
 }
 
-function mutation(harness: Pick<Harness, 'started' | 'runId'>, expectedRevision: number) {
+function mutation(harness: Pick<Harness, 'started' | 'runId'>, expectedRevision: number): MutateAutomationRunRequest {
   return {
     workspaceId: 'workspace-a',
     goalId: harness.started.goalId,
@@ -385,7 +386,7 @@ function mutation(harness: Pick<Harness, 'started' | 'runId'>, expectedRevision:
   };
 }
 
-async function advanceCurrent(service: AutomationService, harness: Pick<Harness, 'started' | 'runId'>) {
+async function advanceCurrent(service: AutomationService, harness: Pick<Harness, 'started' | 'runId'>): ReturnType<AutomationService['advance']> {
   const current = await service.status(actor, { workspaceId: 'workspace-a', runId: harness.runId });
   if (!current.ok) throw new Error(current.error.message);
   return service.advance(actor, mutation(harness, current.value.run.revision));

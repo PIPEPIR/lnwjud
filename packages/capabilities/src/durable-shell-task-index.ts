@@ -59,7 +59,7 @@ export class DurableShellTaskIndex {
     this.lockPath = path.join(this.indexDirectory, 'index.lock');
     this.launchesPath = path.join(this.indexDirectory, 'launches.jsonl');
     this.maxConcurrentTasks = normalizeMaximum(options.maxConcurrentTasks);
-    this.now = options.now ?? (() => new Date());
+    this.now = options.now ?? ((): Date => new Date());
   }
 
   public async initialize(): Promise<void> {

@@ -116,7 +116,7 @@ describe('stdio MCP runtime', () => {
     };
     const options = {
       authorizationModeProvider: () => 'full_bypass' as const,
-      activeWorkspaceScopeProvider: async () => ({ workspaceId: durableWorkspace.id, rootPath: workspaceRoot }),
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId: durableWorkspace.id, rootPath: workspaceRoot }),
     };
     const firstRegistry = new ToolRegistry(first.services, first.actor, options);
     const created = await firstRegistry.invoke('automation_create', {

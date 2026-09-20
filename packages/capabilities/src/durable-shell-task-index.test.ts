@@ -103,7 +103,7 @@ describe('DurableShellTaskIndex', () => {
     } as const;
     const first = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 1,
-      inspectTask: async () => 'unknown',
+      inspectTask: async (): Promise<'unknown'> => 'unknown',
     });
     await first.initialize();
     expect(await first.reserve(owner)).toMatchObject({ ok: true });
@@ -138,8 +138,8 @@ describe('DurableShellTaskIndex', () => {
     const now = new Date('2026-09-20T10:00:00.000Z');
     const index = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 1,
-      inspectTask: async () => 'missing',
-      now: () => now,
+      inspectTask: async (): Promise<'missing'> => 'missing',
+      now: (): Date => now,
     });
     await index.initialize();
     const abandonedTaskId = 'abandoned-before-metadata';
@@ -183,7 +183,7 @@ describe('DurableShellTaskIndex', () => {
     const loadLaunchRecord = vi.fn(async (taskId: string) => records.get(taskId));
     const index = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 2,
-      inspectTask: async () => 'terminal',
+      inspectTask: async (): Promise<'terminal'> => 'terminal',
       loadLaunchRecord,
     });
     await index.initialize();
@@ -227,8 +227,8 @@ describe('DurableShellTaskIndex', () => {
     };
     const index = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 1,
-      inspectTask: async () => 'terminal',
-      loadLaunchRecord: async () => record,
+      inspectTask: async (): Promise<'terminal'> => 'terminal',
+      loadLaunchRecord: async (): Promise<typeof record> => record,
     });
     await index.initialize();
     const journalPath = path.join(root, '.index', 'v1', 'launches.jsonl');

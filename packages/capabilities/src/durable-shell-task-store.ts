@@ -106,8 +106,8 @@ export class DurableShellTaskStore {
     this.platform = options.platform ?? process.platform;
     this.activeIndex = new DurableShellTaskIndex(rootDirectory, {
       maxConcurrentTasks: this.maxConcurrentTasks,
-      inspectTask: async (taskId) => this.inspectTaskForIndex(taskId),
-      loadLaunchRecord: async (taskId) => this.loadLaunchRecord(taskId),
+      inspectTask: async (taskId): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId),
+      loadLaunchRecord: async (taskId): Promise<DurableTaskLaunchRecord | undefined> => this.loadLaunchRecord(taskId),
     });
   }
 
