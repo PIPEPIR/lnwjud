@@ -10,6 +10,8 @@ const MAX_LINES_PER_SOURCE = 10_000;
 const MAX_SEEN_KEYS_PER_SOURCE = 20_000;
 const MAX_LINE_BYTES = 8_192;
 const MAX_BYTES_PER_SOURCE = 8 * 1024 * 1024;
+const MAX_TAIL_READ_BYTES_PER_SYNC = 4 * 1024 * 1024;
+const TAIL_READ_CHUNK_BYTES = 64 * 1024;
 
 export interface LogHubOptions {
   readonly tunnelLogPath: string;
@@ -295,7 +297,7 @@ export class LogHub {
       const size = stat.size;
       if (state.fd === null) {
         state.fd = openSync(filePath, 'r');
-        state.offset = state.initialOffset ?? Math.max(0, size - 4 * 1024 * 1024);
+        state.offset = state.initialOffset ?? Math.max(0, size - MAX_TAIL_READ_BYTES_PER_SYNC);
         state.initialOffset = null;
         state.pending = '';
         state.decoder = new StringDecoder('utf8');
@@ -306,17 +308,20 @@ export class LogHub {
         state.decoder = new StringDecoder('utf8');
       }
       if (size === state.offset) return;
-      const chunk = Buffer.alloc(Math.min(size - state.offset, 64 * 1024));
-      const read = readSync(state.fd, chunk, 0, chunk.length, state.offset);
-      state.offset += read;
-      if (read <= 0) return;
-      const text = state.pending + state.decoder.write(chunk.subarray(0, read));
-      const records = text.split(/\r?\n/);
-      state.pending = truncateUtf8(records.pop() ?? '', MAX_LINE_BYTES);
-      for (const raw of records) {
-        const trimmed = raw.trim();
-        if (trimmed.length === 0) continue;
-        onRaw(trimmed);
+      const readEnd = Math.min(size, state.offset + MAX_TAIL_READ_BYTES_PER_SYNC);
+      while (state.offset < readEnd) {
+        const chunk = Buffer.alloc(Math.min(readEnd - state.offset, TAIL_READ_CHUNK_BYTES));
+        const read = readSync(state.fd, chunk, 0, chunk.length, state.offset);
+        state.offset += read;
+        if (read <= 0) return;
+        const text = state.pending + state.decoder.write(chunk.subarray(0, read));
+        const records = text.split(/\r?\n/);
+        state.pending = truncateUtf8(records.pop() ?? '', MAX_LINE_BYTES);
+        for (const raw of records) {
+          const trimmed = raw.trim();
+          if (trimmed.length === 0) continue;
+          onRaw(trimmed);
+        }
       }
     } catch (error: unknown) {
       this.closeFd(state);

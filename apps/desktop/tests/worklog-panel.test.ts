@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { InFlightWorkItem, WorkLogEntry } from '@lnwjud/ipc-contracts';
 import { formatWorkLogCopyText, newestFirstWorkLogRows, WorkLogPanel } from '../src/renderer/features/worklog/WorkLogPanel.js';
 import * as workLogPanelModule from '../src/renderer/features/worklog/WorkLogPanel.js';
+import { retainedHistoricalEntriesAfterClear } from '../src/renderer/features/worklog/WorkLogPage.js';
 
 const mockInFlight: InFlightWorkItem[] = [
   {
@@ -119,6 +120,24 @@ describe('WorkLogPanel', () => {
     expect(markup).toContain('71ms');
     expect(markup).toContain('12ms');
     expect(markup).toContain('Session 19/08/2026 21:00');
+  });
+
+  it('drops cleared historical entries so loaded sessions do not reappear after refresh', () => {
+    const entries: WorkLogEntry[] = [
+      { ...mockEntries[0]!, id: 'session-a', workspaceId: 'workspace-1', sessionId: 'session-a' },
+      { ...mockEntries[0]!, id: 'session-b', workspaceId: 'workspace-1', sessionId: 'session-b' },
+      { ...mockEntries[0]!, id: 'workspace-2', workspaceId: 'workspace-2', sessionId: 'session-c' },
+    ];
+    const workspaces = [
+      { id: 'workspace-1', displayName: 'One', rootPath: 'E:\\one', realRootPath: 'E:\\one', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'workspace-2', displayName: 'Two', rootPath: 'E:\\two', realRootPath: 'E:\\two', createdAt: '2026-08-01T00:00:00.000Z' },
+    ];
+
+    expect(retainedHistoricalEntriesAfterClear(entries, { workspaceId: null, sessionId: 'session-a' }, workspaces).map((entry) => entry.id))
+      .toEqual(['session-b', 'workspace-2']);
+    expect(retainedHistoricalEntriesAfterClear(entries, { workspaceId: 'workspace-1', sessionId: null }, workspaces).map((entry) => entry.id))
+      .toEqual(['workspace-2']);
+    expect(retainedHistoricalEntriesAfterClear(entries, { workspaceId: null, sessionId: null }, workspaces)).toEqual([]);
   });
 
   it('filters by error properly when filter is error', () => {

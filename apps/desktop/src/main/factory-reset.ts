@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 interface FactoryResetMarker {
@@ -60,11 +60,80 @@ export function applyPendingFactoryResetSync(dataPath: string, tunnelProfileDire
 
   rmSync(safeDataPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   if (!isSamePath(safeTunnelProfileDirectory, safeDataPath)) {
-    rmSync(safeTunnelProfileDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    clearLnwjudTunnelArtifactsSync(safeTunnelProfileDirectory);
   }
   mkdirSync(safeDataPath, { recursive: true });
   rmSync(markerPath, { force: true });
   return true;
+}
+
+const LNWJUD_TUNNEL_ROOT_ARTIFACTS = new Set([
+  'lnwjud.yaml',
+  'lnwjud.runtime.secret',
+  'lnwjud.oauth.session.secret',
+  'lnwjud-tunnel.log',
+  'lnwjud.tunnel.lock',
+  'lnwjud.tunnel.mutex',
+  'lnwjud.tunnel.stop',
+]);
+
+function clearLnwjudTunnelArtifactsSync(profileDirectory: string): void {
+  const healthUrlPath = resolveProfileHealthUrlPath(profileDirectory);
+  let entries: string[];
+  try {
+    entries = readdirSync(profileDirectory, { encoding: 'utf8' });
+  } catch (error: unknown) {
+    if (isMissingFile(error)) return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!isLnwjudTunnelRootArtifactName(entry)) continue;
+    rmSync(path.join(profileDirectory, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+  if (healthUrlPath !== null) rmSync(healthUrlPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}
+
+function isLnwjudTunnelRootArtifactName(name: string): boolean {
+  const normalized = process.platform === 'win32' ? name.toLowerCase() : name;
+  return LNWJUD_TUNNEL_ROOT_ARTIFACTS.has(normalized) || normalized.startsWith('lnwjud.tunnel.lock.');
+}
+
+function resolveProfileHealthUrlPath(profileDirectory: string): string | null {
+  const profilePath = path.join(profileDirectory, 'lnwjud.yaml');
+  let raw: string;
+  try {
+    raw = readFileSync(profilePath, 'utf8');
+  } catch (error: unknown) {
+    if (isMissingFile(error)) return null;
+    throw error;
+  }
+  const configured = extractHealthUrlFile(raw);
+  if (configured === null) return null;
+  const candidate = path.isAbsolute(configured) ? path.resolve(configured) : path.resolve(profileDirectory, configured);
+  return isPathInsideDirectory(profileDirectory, candidate) ? candidate : null;
+}
+
+function extractHealthUrlFile(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const health = (parsed as Record<string, unknown>).health;
+      if (typeof health === 'object' && health !== null && !Array.isArray(health)) {
+        const value = (health as Record<string, unknown>).url_file;
+        if (typeof value === 'string' && value.trim().length > 0 && !value.includes('\0')) return value.trim();
+      }
+    }
+  } catch {
+    // Fall through to the small YAML scalar parser used by tunnel-client profiles.
+  }
+  const match = /^\s*url_file\s*:\s*["']?([^"'#\r\n]+?)["']?\s*(?:#.*)?$/m.exec(raw);
+  const value = match?.[1]?.trim();
+  return value === undefined || value.length === 0 || value.includes('\0') ? null : value;
+}
+
+function isPathInsideDirectory(directory: string, candidate: string): boolean {
+  const relative = path.relative(directory, candidate);
+  return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function parseFactoryResetMarker(raw: string): FactoryResetMarker {

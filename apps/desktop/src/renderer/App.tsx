@@ -527,6 +527,7 @@ export function App(): ReactElement {
       await refresh();
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.workLogClear')));
+      throw cause;
     }
   }
 

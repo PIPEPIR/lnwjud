@@ -133,7 +133,6 @@ import {
   type InFlightWorkItem,
   type LoadLogSessionHistoryRequest,
   type LoadLogSessionHistoryResult,
-  type LogSessionSummary,
   type LogSnapshot,
   type ManagedBrowserStatus,
   type PdfProviderInstallResult,
@@ -171,6 +170,7 @@ import {
 import type { DesktopIpcServices } from './main.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
 import { AsyncTtlCache } from './async-ttl-cache.js';
+import { ActivitySessionCatalog } from './activity-session-catalog.js';
 import type { ElectronNativeCapabilityApi } from './electron-native-capability-backend.js';
 import { RequirementRegistry, type RequirementDefinition, type RequirementProbeResult } from './tool-catalog/requirement-registry.js';
 import { RemediationRegistry } from './tool-catalog/remediation-registry.js';
@@ -330,6 +330,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const workLogViewState = new WorkLogViewState(settingsRepository);
   if (options.previousLogSessionStartedAt !== undefined) workLogViewState.migrateAutomaticStartupClear(options.previousLogSessionStartedAt);
   const auditRepository = new SqliteAuditRepository(database);
+  const activitySessionCatalog = new ActivitySessionCatalog(auditRepository, workLogViewState);
   const auditService = new AuditService(auditRepository);
   const checkpointEncryptionKey = options.checkpointEncryptionKey ?? resolveTestCheckpointEncryptionKey();
   if (checkpointEncryptionKey === undefined) {
@@ -566,6 +567,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           durationMs: event.durationMs,
           timestamp: event.timestamp,
         });
+        activitySessionCatalog.record(loggedEvent);
       },
     },
   );
@@ -1196,7 +1198,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const capabilities = await capabilitySummaryCache.get(() => buildCapabilitySummary(capabilityRuntime.health));
       const mcp = mcpLifecycle.status();
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
-      const workLogSessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      const workLogSessions = await activitySessionCatalog.list();
       const inFlight = activityTracker.listInFlight().map((entry) => toInFlightItem(entry, logSessionId));
       const tunnel = await observedTunnelStatus();
       const remoteMcp = await remoteMcpController.status();
@@ -1489,13 +1491,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         logSummary: summary.logSummary,
       })));
       const snapshot = logHub.snapshot();
-      const sessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      const sessions = await activitySessionCatalog.list();
       return { ...snapshot, sessions, tunnelAuth: await tunnelController.authStatus() };
     },
     loadLogSessionHistory: async (request: LoadLogSessionHistoryRequest): Promise<LoadLogSessionHistoryResult> => {
       const workLog = await buildWorkLogHistory(auditRepository, workLogViewState, request);
       logHub.syncWorkLog(workLog, []);
-      const sessions = await listVisibleMcpSessions(auditRepository, workLogViewState);
+      const sessions = await activitySessionCatalog.list();
       return {
         workLog,
         logSnapshot: { ...logHub.snapshot(), sessions, tunnelAuth: await tunnelController.authStatus() },
@@ -2021,24 +2023,6 @@ async function buildWorkLogHistory(
     ...(request.workspaceId === undefined ? {} : { workspaceId: request.workspaceId }),
     sessionId: request.sessionId,
   })).map(toWorkLogEntry);
-}
-
-async function listVisibleMcpSessions(
-  repository: AuditEventRepository,
-  viewState: WorkLogViewState,
-): Promise<readonly LogSessionSummary[]> {
-  return (await repository.listActivitySessions('mcp_tool:'))
-    .filter((session) => viewState.isVisible({
-      timestamp: session.lastActivityAt,
-      ...(session.workspaceId === undefined ? {} : { workspaceId: session.workspaceId }),
-      sessionId: session.sessionId,
-    }))
-    .map((session) => ({
-      sessionId: session.sessionId,
-      workspaceId: session.workspaceId ?? null,
-      startedAt: session.startedAt,
-      lastActivityAt: session.lastActivityAt,
-    }));
 }
 
 function toWorkLogEntry(event: ActivityAuditEvent): WorkLogEntry {

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, UiLocale, WorkLogEntry, WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { workspaceScopeMatches, type DashboardSnapshot, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { WorkLogPanel, type LogScopeSelection, type WorkLogFilter } from '../worklog/WorkLogPanel.js';
 
@@ -32,6 +32,10 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
     const entries = await props.onLoadSessionHistory(scope);
     if (generation === sessionLoadGeneration.current) setHistoricalEntries(entries);
   };
+  const clearWorkLog = async (scope: LogScopeSelection): Promise<void> => {
+    await props.onClearWorkLog(scope);
+    setHistoricalEntries((entries) => retainedHistoricalEntriesAfterClear(entries, scope, props.workspaces));
+  };
   return (
     <div className="page-content viewport-list-page worklog-page">
       <p className="page-subtitle">{t('workLog.subtitle')}</p>
@@ -46,7 +50,7 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
         clearAllLabel={t('scope.clearAll')}
         filter={filter}
         onFilterChange={setFilter}
-        onClear={props.onClearWorkLog}
+        onClear={clearWorkLog}
         exportLabel={t('live.export')}
         onExport={props.onExportWorkLog}
         onResolveTargetDetail={resolveTargetDetail}
@@ -73,4 +77,15 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
       />
     </div>
   );
+}
+
+export function retainedHistoricalEntriesAfterClear(
+  entries: readonly WorkLogEntry[],
+  scope: LogScopeSelection,
+  workspaces: readonly WorkspaceSummary[] = [],
+): readonly WorkLogEntry[] {
+  if (scope.sessionId !== null) return entries.filter((entry) => entry.sessionId !== scope.sessionId);
+  const workspaceId = scope.workspaceId;
+  if (workspaceId !== null) return entries.filter((entry) => !workspaceScopeMatches(workspaces, entry.workspaceId, workspaceId));
+  return [];
 }
