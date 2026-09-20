@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type Server as HttpServer, type ServerResponse } from 'node:http';
 import {
   createMcpHandler,
   hostHeaderValidationResponse,
@@ -31,6 +31,7 @@ export interface McpHttpServerOptions extends McpServerOptions {
   readonly port: number;
   readonly maxBodyBytes?: number;
   readonly originPolicy?: OriginPolicy;
+  readonly allowedHostnames?: readonly string[];
 }
 
 export interface McpHttpServerAddress {
@@ -41,6 +42,7 @@ export interface McpHttpServerAddress {
 export interface McpHttpServerHandle {
   readonly address: McpHttpServerAddress;
   readonly endpoint: URL;
+  readonly ipv6Endpoint?: URL | null;
   close(): Promise<void>;
 }
 
@@ -405,6 +407,7 @@ async function handleRequest(
   response: ServerResponse,
   handler: McpHttpHandler,
   originPolicy: OriginPolicy,
+  allowedHostnames: string[],
   maxBodyBytes: number,
 ): Promise<void> {
   const requestedPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
@@ -420,7 +423,7 @@ async function handleRequest(
   }
 
   const fetchRequest = toFetchRequest(request, read.body);
-  const rejected = hostHeaderValidationResponse(fetchRequest, localhostAllowedHostnames())
+  const rejected = hostHeaderValidationResponse(fetchRequest, allowedHostnames)
     ?? originPolicy.validate(fetchRequest);
   if (rejected !== undefined) {
     await writeFetchResponse(response, rejected);
@@ -449,7 +452,9 @@ async function handleRequest(
   await writeFetchResponse(response, await handler.fetch(fetchRequest));
 }
 
-function listen(server: HttpServer, port: number): Promise<McpHttpServerAddress> {
+type LoopbackHost = '127.0.0.1' | '::1';
+
+function listen(server: HttpServer, host: LoopbackHost, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const onError = (error: Error): void => {
       server.off('listening', onListening);
@@ -458,16 +463,66 @@ function listen(server: HttpServer, port: number): Promise<McpHttpServerAddress>
     const onListening = (): void => {
       server.off('error', onError);
       const address = server.address();
-      if (address === null || typeof address === 'string' || address.address !== '127.0.0.1') {
-        reject(new Error('MCP HTTP server did not bind to loopback'));
+      if (address === null || typeof address === 'string' || address.address !== host) {
+        reject(new Error(`MCP HTTP server did not bind to ${host}`));
         return;
       }
-      resolve({ host: '127.0.0.1', port: address.port });
+      resolve(address.port);
     };
     server.once('error', onError);
     server.once('listening', onListening);
-    server.listen({ host: '127.0.0.1', port });
+    server.listen({ host, port });
   });
+}
+
+async function closeHttpServer(server: HttpServer): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error?: Error) => error === undefined ? resolve() : reject(error));
+  });
+}
+
+function isIpv6Unavailable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  const code = (error as { readonly code?: unknown }).code;
+  return code === 'EAFNOSUPPORT' || code === 'EADDRNOTAVAIL';
+}
+
+async function bindLoopbackServers(listener: RequestListener, preferredPort: number): Promise<{
+  readonly ipv4: HttpServer;
+  readonly ipv6: HttpServer | null;
+  readonly port: number;
+}> {
+  let requestedPort = preferredPort;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const ipv4 = createServer(listener);
+    let port: number;
+    try {
+      port = await listen(ipv4, '127.0.0.1', requestedPort);
+    } catch (error: unknown) {
+      if (requestedPort !== 0 && isAddressInUse(error)) {
+        requestedPort = 0;
+        continue;
+      }
+      throw error;
+    }
+
+    const ipv6 = createServer(listener);
+    try {
+      await listen(ipv6, '::1', port);
+      return { ipv4, ipv6, port };
+    } catch (error: unknown) {
+      await closeHttpServer(ipv6).catch(() => undefined);
+      if (isIpv6Unavailable(error)) return { ipv4, ipv6: null, port };
+      await closeHttpServer(ipv4);
+      if (isAddressInUse(error)) {
+        requestedPort = 0;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('MCP HTTP server could not reserve a shared IPv4/IPv6 loopback port');
 }
 
 export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHttpServerHandle> {
@@ -477,34 +532,29 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
 
   const handler = createSessionfulMcpHandler(options);
   const originPolicy = options.originPolicy ?? createOriginPolicy();
-  const server = createServer((request, response) => {
-    void handleRequest(request, response, handler, originPolicy, maxBodyBytes).catch((error: unknown) => {
+  const allowedHostnames = [...new Set([...localhostAllowedHostnames(), ...(options.allowedHostnames ?? [])])];
+  const listener: RequestListener = (request, response) => {
+    void handleRequest(request, response, handler, originPolicy, allowedHostnames, maxBodyBytes).catch((error: unknown) => {
       writeDiagnostic(error instanceof Error ? error : new Error('Unhandled MCP HTTP request error'));
       if (!response.headersSent) sendStatus(response, 500, 'Internal server error');
       else response.destroy();
     });
-  });
-  let address: McpHttpServerAddress;
-  try {
-    address = await listen(server, options.port);
-  } catch (error: unknown) {
-    // Preferred fixed ports (e.g. 18765) may already be taken — fall back to ephemeral.
-    if (options.port !== 0 && isAddressInUse(error)) {
-      address = await listen(server, 0);
-    } else {
-      throw error;
-    }
-  }
+  };
+  const servers = await bindLoopbackServers(listener, options.port);
+  const address: McpHttpServerAddress = { host: '127.0.0.1', port: servers.port };
   const endpoint = new URL(`http://${address.host}:${address.port}/mcp`);
+  const ipv6Endpoint = servers.ipv6 === null ? null : new URL(`http://[::1]:${address.port}/mcp`);
 
   return {
     address,
     endpoint,
+    ipv6Endpoint,
     async close(): Promise<void> {
       await handler.close();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error?: Error) => error === undefined ? resolve() : reject(error));
-      });
+      await Promise.all([
+        closeHttpServer(servers.ipv4),
+        servers.ipv6 === null ? Promise.resolve() : closeHttpServer(servers.ipv6),
+      ]);
     },
   };
 }

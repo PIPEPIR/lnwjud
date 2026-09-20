@@ -13,6 +13,7 @@ export const USER_SETTING_KEYS = Object.freeze({
   pdfProviderPath: 'pdf_provider_path',
   lspCommands: 'lsp_commands',
   mcpHttpPort: 'mcp_http_port',
+  mcpAllowedHostnames: 'mcp_allowed_hostnames',
   codexToolsEnabled: 'codex_tools_enabled',
   eccEnabled: 'ecc_enabled',
   ponytailMode: 'ponytail_mode',
@@ -77,6 +78,28 @@ export function parsePathList(value: string | null | undefined): readonly string
 
 export function serializePathList(values: readonly string[]): string {
   return parsePathList(values.join(';')).join(';');
+}
+
+export function normalizeMcpAllowedHostname(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.length === 0 || trimmed.includes('*') || trimmed.includes('/') || trimmed.includes('?') || trimmed.includes('#') || trimmed.includes('@')) return null;
+  try {
+    const url = new URL(`http://${trimmed}`);
+    if (url.username.length > 0 || url.password.length > 0 || url.port.length > 0 || url.pathname !== '/' || url.search.length > 0 || url.hash.length > 0) return null;
+    return url.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function parseMcpAllowedHostnames(value: string | null | undefined): readonly string[] {
+  return [...new Set(parseDelimitedList(value, { caseInsensitive: true })
+    .map(normalizeMcpAllowedHostname)
+    .filter((hostname): hostname is string => hostname !== null))];
+}
+
+export function serializeMcpAllowedHostnames(values: readonly string[]): string {
+  return parseMcpAllowedHostnames(values.join(';')).join(';');
 }
 
 export function parseStringRecordSetting(value: string | null | undefined): Readonly<Record<string, string>> {

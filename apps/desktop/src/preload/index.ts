@@ -365,6 +365,7 @@ function userSettings(value: unknown): UserSettings {
     pdfProviderPath: stringField(value, 'pdfProviderPath'),
     lspCommands: stringRecordResponse(value.lspCommands),
     mcpHttpPort: integerField(value, 'mcpHttpPort'),
+    mcpAllowedHostnames: stringList(value.mcpAllowedHostnames),
     codexToolsEnabled: booleanField(value, 'codexToolsEnabled'),
     eccEnabled: value.eccEnabled === undefined ? false : booleanField(value, 'eccEnabled'),
     ponytailMode: ponytailModeResponse(value.ponytailMode),

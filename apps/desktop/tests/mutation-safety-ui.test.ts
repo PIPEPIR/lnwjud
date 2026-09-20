@@ -42,7 +42,7 @@ const dashboard: DashboardSnapshot = {
     desktopFullBypassAll: false,
     stdioFullBypassAll: false,
     mcpCallTimeoutMs: 60_000, mcpIdleTimeoutMs: 300_000, processTimeoutMs: 3_600_000, mcpPollWaitSeconds: 5, shellSynchronousWaitSeconds: 60,
-    capabilityRoots: [], pdfProviderPath: '', lspCommands: {}, mcpHttpPort: 18_765, codexToolsEnabled: false, ponytailMode: 'off',
+    capabilityRoots: [], pdfProviderPath: '', lspCommands: {}, mcpHttpPort: 18_765, mcpAllowedHostnames: [], codexToolsEnabled: false, ponytailMode: 'off',
     updateAutoCheck: true, updateCheckOnStartup: true, updateIntervalMinutes: 30, updateAutoDownload: true,
     closeBehavior: 'tray', launchAtStartup: false, startMinimized: false, tunnelAutoReconnect: true, tunnelMaxAutoRestarts: 5, recoveryRetentionDays: 0,
     extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
@@ -111,13 +111,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 5.4.0 application version', () => {
-    expect(APP_VERSION).toBe('5.4.0');
+  it('renders the actual 5.4.1 application version', () => {
+    expect(APP_VERSION).toBe('5.4.1');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, hostPlatform: 'win32', mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v5.4.0');
+    expect(markup).toContain('v5.4.1');
     expect(markup).toContain('data-host-platform="win32"');
   });
 

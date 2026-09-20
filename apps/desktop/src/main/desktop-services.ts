@@ -82,6 +82,7 @@ import {
   parseCloseBehavior,
   parseCustomPermissionSettings,
   parseIntegerSetting,
+  parseMcpAllowedHostnames,
   parsePathList,
   parsePonytailMode,
   normalizeProjectProfile,
@@ -95,6 +96,7 @@ import {
   serializeAllowedRoots,
   serializeCustomPermissionSettings,
   serializeDestructiveAutoApprovalPolicy,
+  serializeMcpAllowedHostnames,
   serializePathList,
   serializeStringRecordSetting,
   currentPlatformProfile,
@@ -588,9 +590,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
   );
   const mcpPort = readMcpPort(process.env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined);
+  const mcpAllowedHostnames = parseMcpAllowedHostnames(process.env.LNWJUD_MCP_ALLOWED_HOSTNAMES ?? settingsRepository.get(USER_SETTING_KEYS.mcpAllowedHostnames) ?? undefined);
   const mcpLifecycle = new DesktopMcpLifecycle({
     createServerOptions: (): McpHttpServerOptions => ({
       port: mcpPort,
+      allowedHostnames: mcpAllowedHostnames,
       services: mcpServices,
       actor: mcpActor,
       activityTracker,
@@ -2149,6 +2153,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     pdfProviderPath: settingsRepository.get(USER_SETTING_KEYS.pdfProviderPath)?.trim() ?? '',
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
+    mcpAllowedHostnames: parseMcpAllowedHostnames(env.LNWJUD_MCP_ALLOWED_HOSTNAMES ?? settingsRepository.get(USER_SETTING_KEYS.mcpAllowedHostnames) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
     eccEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.eccEnabled), DEFAULT_ECC_ENABLED),
     ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
@@ -2179,6 +2184,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, settings.pdfProviderPath.trim());
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
+  settingsRepository.set(USER_SETTING_KEYS.mcpAllowedHostnames, serializeMcpAllowedHostnames(settings.mcpAllowedHostnames));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.eccEnabled, settings.eccEnabled === true ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
@@ -2242,6 +2248,7 @@ function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boo
     || previous.mcpCallTimeoutMs !== next.mcpCallTimeoutMs
     || previous.mcpIdleTimeoutMs !== next.mcpIdleTimeoutMs
     || previous.mcpHttpPort !== next.mcpHttpPort
+    || JSON.stringify(previous.mcpAllowedHostnames) !== JSON.stringify(next.mcpAllowedHostnames)
     || previous.codexToolsEnabled !== next.codexToolsEnabled
     || previous.ponytailMode !== next.ponytailMode
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)

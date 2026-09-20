@@ -53,7 +53,7 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.4.0
 
-## Current source version: v5.4.0
+## Current source version: v5.4.1
 
 Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
 
@@ -853,8 +853,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.4.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.4.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -939,9 +939,7 @@ selected workspace. In the dashboard:
 4. Use **Stop Connection** when you intentionally want to stop the listener.
 5. Use **Start Connection** to start it again after a manual stop.
 
-The endpoint binds to 127.0.0.1, validates origin/host, and uses the same
-application services and permission checks as the dashboard. Do not expose the
-loopback URL through a generic port forward.
+The endpoint listens only on loopback: `127.0.0.1` and, when IPv6 loopback is available, `::1` on the same port. Host validation allows localhost values by default; any reverse-proxy/tunnel hostname must be explicitly allow-listed. Origin validation and the same application permission checks used by the dashboard remain enforced. Do not expose the raw loopback URL through a generic port forward.
 
 If dom_cdp is available, the dashboard can launch managed Chrome. Browser
 automation remains loopback-bound and separate from the file guard.
@@ -1822,9 +1820,7 @@ run with `corepack pnpm@10.15.0 test:acceptance`.
 
 ### Transport
 
-The local HTTP MCP endpoint binds to 127.0.0.1. Stdio is a child-process
-transport. Secure MCP Tunnel is an outbound HTTPS bridge, not an inbound public
-listener.
+The local HTTP MCP endpoint binds only to IPv4/IPv6 loopback (`127.0.0.1` and `::1` when available), never a wildcard interface. Stdio is a child-process transport. Secure MCP Tunnel is an outbound HTTPS bridge, not an inbound public listener.
 
 ### Filesystem
 

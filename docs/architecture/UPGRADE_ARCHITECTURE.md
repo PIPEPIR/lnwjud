@@ -1,6 +1,6 @@
 # lnwjud upgrade architecture contract
 
-Status: God-Tier local-first implementation checkpoint synchronized for `v5.4.0`.
+Status: God-Tier local-first implementation checkpoint synchronized for `v5.4.1`.
 
 This document is the architectural boundary for the upgrade roadmap. It describes
 the existing runtime before Phase 01 and the invariants every later phase must
@@ -154,10 +154,8 @@ continuation rather than lowering an existing limit silently.
 ### loopback Streamable HTTP
 
 - Endpoint is `/mcp`.
-- Default bind is `127.0.0.1`; an ephemeral port is used when the preferred
-  port is unavailable.
-- Host and Origin policy rejects non-local origins; body size, method, and
-  header validation remain enabled.
+- The server binds loopback-only on `127.0.0.1` and, when IPv6 loopback is available, `::1` on the same port; an ephemeral port is used when the preferred port is unavailable.
+- Host validation allows localhost loopback names by default and only explicitly configured reverse-proxy/tunnel hostnames beyond them. Origin, body size, method, and header validation remain enabled.
 - The HTTP server and stdio server share the same `ToolRegistry` and
   application services.
 

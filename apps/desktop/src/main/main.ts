@@ -76,7 +76,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type EccRuntimeOptions, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
+import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, normalizeMcpAllowedHostname, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -226,6 +226,7 @@ const defaultUserSettings: UserSettings = {
   pdfProviderPath: '',
   lspCommands: {},
   mcpHttpPort: 18_765,
+  mcpAllowedHostnames: [],
   codexToolsEnabled: false,
   eccEnabled: false,
   ponytailMode: 'off',
@@ -1237,6 +1238,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     pdfProviderPath: typeof record.pdfProviderPath === 'string' ? record.pdfProviderPath.trim() : invalidField('pdfProviderPath'),
     lspCommands: stringRecord(record.lspCommands, 'lspCommands', 32),
     mcpHttpPort: boundedInteger(record.mcpHttpPort, 'mcpHttpPort', 0, 65_535),
+    mcpAllowedHostnames: stringArray(record.mcpAllowedHostnames, 'mcpAllowedHostnames', 64).map((hostname, index) => normalizeMcpAllowedHostname(hostname) ?? invalidField(`mcpAllowedHostnames[${index}]`)),
     codexToolsEnabled: booleanField(record.codexToolsEnabled, 'codexToolsEnabled'),
     eccEnabled: record.eccEnabled === undefined ? false : booleanField(record.eccEnabled, 'eccEnabled'),
     ponytailMode: ponytailModeField(record.ponytailMode),

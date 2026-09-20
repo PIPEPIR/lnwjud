@@ -53,7 +53,7 @@
 
 ## Current published version: v5.4.0
 
-## Current source version: v5.4.0
+## Current source version: v5.4.1
 
 Latest published release: **v5.4.0**. The download buttons above point directly to the published v5.4.0 assets.
 

@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.4.0';
+export const APP_VERSION = '5.4.1';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -288,6 +288,7 @@ export interface UserSettings {
   readonly pdfProviderPath: string;
   readonly lspCommands: Readonly<Record<string, string>>;
   readonly mcpHttpPort: number;
+  readonly mcpAllowedHostnames: readonly string[];
   readonly codexToolsEnabled: boolean;
   /** Host-owned ECC consent gate. Missing/false means ECC stays disabled. */
   readonly eccEnabled?: boolean;
