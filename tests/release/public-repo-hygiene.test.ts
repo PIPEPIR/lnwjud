@@ -147,8 +147,10 @@ describe('public repository hygiene', () => {
       path.join(repositoryRoot, 'apps', 'desktop', 'src', 'renderer', 'features', 'settings', 'SettingsPage.tsx'),
       'utf8',
     );
-    expect(settingsPage).toContain('Bundled v0.0.14 is used automatically');
-    expect(settingsPage).toContain('Use bundled');
+    expect(settings).toContain("'settingsPage.tunnelClientBundledPlaceholder': 'Bundled v0.0.14 is used automatically'");
+    expect(settings).toContain("'settingsPage.useBundled': 'Use bundled'");
+    expect(settingsPage).toContain("t('settingsPage.tunnelClientBundledPlaceholder')");
+    expect(settingsPage).toContain("t('settingsPage.useBundled')");
     expect(settingsPage).not.toContain('placeholder="C:\\tools\\tunnel-client.exe"');
   });
 
