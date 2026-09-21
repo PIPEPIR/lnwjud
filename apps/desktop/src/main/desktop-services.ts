@@ -292,6 +292,21 @@ interface StartupTunnelController {
  * desired-running runtime is never stopped merely because a local prerequisite
  * is temporarily unavailable during an update or reinstall.
  */
+export interface ConfiguredTunnelRuntimePolicy {
+  readonly desiredState: 'running' | 'stopped';
+  readonly autoStart: boolean;
+}
+
+export function configuredTunnelRuntimePolicy(
+  autoReconnect: boolean,
+  desiredState: 'running' | 'stopped' | null,
+): ConfiguredTunnelRuntimePolicy {
+  return {
+    desiredState: desiredState ?? 'stopped',
+    autoStart: autoReconnect && desiredState === 'running',
+  };
+}
+
 export async function autoStartPersistentTunnel(
   tunnelController: StartupTunnelController,
   autoReconnect: boolean,
@@ -1502,7 +1517,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => {
       const profilePath = await tunnelController.configureProfile(request.tunnelId);
-      if (readSettings().tunnelAutoReconnect) await tunnelController.startAutomatically();
+      const rawDesiredState = settingsRepository.get(tunnelRuntimeDesiredStateSettingKey);
+      const currentDesiredState = rawDesiredState === 'running' || rawDesiredState === 'stopped' ? rawDesiredState : null;
+      const runtimePolicy = configuredTunnelRuntimePolicy(readSettings().tunnelAutoReconnect, currentDesiredState);
+      if (currentDesiredState === null) settingsRepository.set(tunnelRuntimeDesiredStateSettingKey, runtimePolicy.desiredState);
+      if (runtimePolicy.autoStart) await tunnelController.startAutomatically();
       return { configured: true, profilePath };
     },
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {

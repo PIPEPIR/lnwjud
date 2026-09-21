@@ -14,7 +14,7 @@ Choosing **Set up later / ไว้ทีหลัง** only dismisses the autom
 
 1. เปิดหน้า OpenAI Tunnel Settings เลือกองค์กรที่ใช้กับ ChatGPT สร้าง tunnel แล้วคัดลอกค่า `tunnel_...` มาวางใน lnwjud หากสร้างไม่ได้ ให้ตรวจสิทธิ์ Tunnels Read + Manage.
 2. เปิดหน้า API Keys สร้าง Runtime API key ที่มีสิทธิ์ Tunnels Read + Use แล้ววางใน lnwjud. คีย์เต็มจะแสดงจาก OpenAI เพียงครั้งเดียว.
-3. กด **ตั้งค่าและตรวจสอบ** ให้ lnwjud ใช้ `tunnel-client` ที่มากับโปรแกรมเพื่อสร้าง local profile และตรวจสอบการเชื่อมต่อ.
+3. กด **ตั้งค่าและตรวจสอบ** ให้ lnwjud ใช้ `tunnel-client` ที่มากับโปรแกรมเพื่อสร้าง local profile และตรวจสอบการเชื่อมต่อ. สำหรับการตั้งค่าครั้งแรก ขั้นตอนนี้จะเตรียม Persistent Tunnel Runtime ไว้แต่ยังไม่สั่งเริ่มทำงาน จึงไม่ชนกับปุ่ม **Start Tunnel** ในขั้นตอนถัดไป.
 4. กด **Start Tunnel**. lnwjud จะถือว่าขั้นตอนฝั่งเครื่องเสร็จเมื่อสถานะจริงกลับมาเป็น Running เท่านั้น และจะ reconnect Tunnel ID เดิมอัตโนมัติเมื่อจำเป็น.
 5. เปิด ChatGPT Plugins. หากยังไม่เปิด Developer mode ให้ไปที่ **Settings > Security and login > Developer mode**, เพิ่ม connection, เลือก **Tunnel**, แล้วเลือกหรือวาง Tunnel ID.
 
@@ -22,7 +22,7 @@ Choosing **Set up later / ไว้ทีหลัง** only dismisses the autom
 
 1. Open OpenAI Tunnel Settings, choose the organization used with ChatGPT, create a tunnel, and paste the `tunnel_...` value into lnwjud. If tunnel creation is unavailable, verify Tunnels Read + Manage permissions.
 2. Open API Keys, create a Runtime API key with Tunnels Read + Use, and paste it into lnwjud. OpenAI displays the full secret only once.
-3. Select **Configure and check**. lnwjud uses the bundled `tunnel-client` to create the local profile and validate the connection.
+3. Select **Configure and check**. lnwjud uses the bundled `tunnel-client` to create the local profile and validate the connection. On first-time setup this arms the Persistent Tunnel Runtime but leaves it stopped, so it cannot race or conflict with the explicit **Start Tunnel** action in the next step.
 4. Select **Start Tunnel**. Local setup is considered complete only after the real status returns Running. lnwjud reconnects the same Tunnel ID automatically when required.
 5. Open ChatGPT Plugins. If Developer mode is off, go to **Settings > Security and login > Developer mode**, add a connection, choose **Tunnel**, then select or paste the Tunnel ID.
 

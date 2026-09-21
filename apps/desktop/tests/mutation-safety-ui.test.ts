@@ -111,13 +111,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 5.4.1 application version', () => {
-    expect(APP_VERSION).toBe('5.4.1');
+  it('renders the actual 5.4.2 application version', () => {
+    expect(APP_VERSION).toBe('5.4.2');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, hostPlatform: 'win32', mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v5.4.1');
+    expect(markup).toContain('v5.4.2');
     expect(markup).toContain('data-host-platform="win32"');
   });
 

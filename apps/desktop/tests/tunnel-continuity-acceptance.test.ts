@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { autoStartPersistentTunnel } from '../src/main/desktop-services.js';
+import { autoStartPersistentTunnel, configuredTunnelRuntimePolicy } from '../src/main/desktop-services.js';
 import { TunnelRuntimeReconciler, type TunnelRuntimeDesiredState, type TunnelRuntimeReconcilerAdapter } from '../src/main/tunnel-runtime-reconciler.js';
 import { TunnelRuntimeSupervisor, TRANSIENT_BACKOFF_MS } from '../src/main/tunnel-runtime-supervisor.js';
 import type { NativeRuntimeConnectRequest } from '../src/main/tunnel-runtime-adapter.js';
@@ -69,6 +69,12 @@ function runtime(overrides: Partial<NativeTunnelRuntimeStatus> = {}): NativeTunn
 }
 
 describe('v4.11 persistent tunnel continuity acceptance', () => {
+  it('keeps first-time profile configuration stopped until the operator explicitly starts the tunnel', () => {
+    expect(configuredTunnelRuntimePolicy(true, null)).toEqual({ desiredState: 'stopped', autoStart: false });
+    expect(configuredTunnelRuntimePolicy(true, 'stopped')).toEqual({ desiredState: 'stopped', autoStart: false });
+    expect(configuredTunnelRuntimePolicy(true, 'running')).toEqual({ desiredState: 'running', autoStart: true });
+    expect(configuredTunnelRuntimePolicy(false, 'running')).toEqual({ desiredState: 'running', autoStart: false });
+  });
   it('keeps one immutable tunnel identity through runtime death, Desktop restart, and local MCP port rebinding', async () => {
     const adapter = new MutableRuntimeAdapter();
     let desiredMcp = MCP_A;
