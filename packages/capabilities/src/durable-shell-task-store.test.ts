@@ -143,6 +143,51 @@ describe('durable shell background tasks', () => {
     expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0 } });
   }, 15_000);
 
+  it('does not overwrite a concurrent completion when worker identity probing is unverifiable', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-probe-race-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const taskId = 'probe-unverifiable-finalizing';
+    const taskDirectory = path.join(taskStateDirectory, taskId);
+    await mkdir(taskDirectory, { recursive: true });
+    const metadataPath = path.join(taskDirectory, 'task.json');
+    const runningMetadata = {
+      version: 1,
+      task_id: taskId,
+      state: 'running',
+      started_at: new Date(Date.now() - 20_000).toISOString(),
+      include_stdout: false,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+      // Invalid for an OS process probe, which deterministically models an
+      // unverifiable worker identity without depending on the host platform.
+      worker_pid: 2_147_483_648,
+      worker_started_at: '2000-01-01T00:00:00.000Z',
+    } as const;
+    await writeFile(metadataPath, JSON.stringify(runningMetadata), 'utf8');
+
+    const finalized = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        void writeFile(metadataPath, JSON.stringify({
+          ...runningMetadata,
+          state: 'completed',
+          exit_code: 0,
+          finished_at: new Date().toISOString(),
+        }), 'utf8').then(() => resolve(), reject);
+      }, 100);
+    });
+
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const result = await store.snapshot(taskId);
+    await finalized;
+    expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0 } });
+    await expect(readFile(metadataPath, 'utf8').then((value) => JSON.parse(value))).resolves.toMatchObject({
+      state: 'completed',
+      exit_code: 0,
+    });
+  }, 15_000);
+
   it('does not overwrite a very fast durable completion back to running', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);
