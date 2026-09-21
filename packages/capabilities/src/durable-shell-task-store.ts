@@ -487,11 +487,15 @@ export class DurableShellTaskStore {
       if (isTrackedProcessLive(workerProbe, metadata.worker_started_at)) return metadata;
       if (identityCapturePendingForProbe(workerProbe, metadata.worker_started_at, metadata.started_at)) return metadata;
       if (isUnverifiableTrackedProbe(workerProbe, metadata.worker_started_at)) {
-        metadata.state = 'termination_unverified';
-        metadata.error = metadata.error ?? describeTrackedProbe('worker', workerProbe);
-        delete metadata.finished_at;
-        await this.writeMetadata(metadata);
-        return metadata;
+        const finalized = await this.awaitTerminalMetadata(metadata.task_id);
+        if (finalized !== undefined) return finalized;
+        // An unverifiable probe does not prove the worker is gone. Keep the
+        // worker-owned task.json untouched so a later terminal write cannot be
+        // overwritten by a stale host-side downgrade.
+        const uncertain = { ...metadata, state: 'termination_unverified' as const };
+        uncertain.error = uncertain.error ?? describeTrackedProbe('worker', workerProbe);
+        delete uncertain.finished_at;
+        return uncertain;
       }
     }
     await delay(PROCESS_EXIT_RECONCILE_DELAY_MS);
@@ -503,11 +507,12 @@ export class DurableShellTaskStore {
       if (isTrackedProcessLive(refreshedWorkerProbe, current.worker_started_at)) return current;
       if (identityCapturePendingForProbe(refreshedWorkerProbe, current.worker_started_at, current.started_at)) return current;
       if (isUnverifiableTrackedProbe(refreshedWorkerProbe, current.worker_started_at)) {
-        current.state = 'termination_unverified';
-        current.error = current.error ?? describeTrackedProbe('worker', refreshedWorkerProbe);
-        delete current.finished_at;
-        await this.writeMetadata(current);
-        return current;
+        const finalized = await this.awaitTerminalMetadata(current.task_id);
+        if (finalized !== undefined) return finalized;
+        const uncertain = { ...current, state: 'termination_unverified' as const };
+        uncertain.error = uncertain.error ?? describeTrackedProbe('worker', refreshedWorkerProbe);
+        delete uncertain.finished_at;
+        return uncertain;
       }
     }
     if (current.child_pid !== undefined) {
@@ -532,15 +537,9 @@ export class DurableShellTaskStore {
 
     // Once both tracked processes are gone, the worker may still be completing its
     // final atomic metadata rename. This window is observable on busy Windows CI:
-    // declaring failure after a single 75 ms refresh can overwrite a legitimate
-    // completion that is already being persisted. Poll only for terminal metadata
-    // for a short bounded grace period; a genuinely crashed worker still fails closed.
-    const finalizationDeadline = Date.now() + PROCESS_EXIT_FINALIZATION_GRACE_MS;
-    while (Date.now() < finalizationDeadline) {
-      await delay(Math.min(PROCESS_EXIT_RECONCILE_DELAY_MS, Math.max(1, finalizationDeadline - Date.now())));
-      const finalizationRefresh = await this.readMetadata(current.task_id);
-      if (finalizationRefresh.ok && isTerminal(finalizationRefresh.value.state)) return finalizationRefresh.value;
-    }
+    // declaring failure after a single refresh can overwrite a legitimate completion.
+    const finalized = await this.awaitTerminalMetadata(current.task_id);
+    if (finalized !== undefined) return finalized;
 
     current.state = 'failed';
     current.exit_code = current.exit_code ?? -1;
@@ -548,6 +547,17 @@ export class DurableShellTaskStore {
     current.finished_at = current.finished_at ?? new Date().toISOString();
     await this.writeMetadata(current);
     return current;
+  }
+
+  private async awaitTerminalMetadata(taskId: string): Promise<DurableTaskMetadata | undefined> {
+    const deadline = Date.now() + PROCESS_EXIT_FINALIZATION_GRACE_MS;
+    while (true) {
+      const latest = await this.readMetadata(taskId, false);
+      if (latest.ok && isTerminal(latest.value.state)) return latest.value;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return undefined;
+      await delay(Math.min(PROCESS_EXIT_RECONCILE_DELAY_MS, remainingMs));
+    }
   }
 
   private async snapshotFromMetadata(metadata: DurableTaskMetadata, tailLines?: number, includeOutput = true): Promise<Record<string, unknown>> {
