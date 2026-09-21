@@ -287,10 +287,9 @@ interface StartupTunnelController {
 }
 
 /**
- * Desktop startup is recovery-only: it may start/reconcile the saved tunnel and
- * must enforce an explicit durable stopped intent before all start gates. A
- * desired-running runtime is never stopped merely because a local prerequisite
- * is temporarily unavailable during an update or reinstall.
+ * Profile configuration distinguishes a true first setup from a legacy profile
+ * that predates persisted desired-state intent. Fresh setup stays stopped until
+ * explicit Start; an existing profile preserves the historical running default.
  */
 export interface ConfiguredTunnelRuntimePolicy {
   readonly desiredState: 'running' | 'stopped';
@@ -300,11 +299,24 @@ export interface ConfiguredTunnelRuntimePolicy {
 export function configuredTunnelRuntimePolicy(
   autoReconnect: boolean,
   desiredState: 'running' | 'stopped' | null,
+  hadExistingProfile: boolean,
 ): ConfiguredTunnelRuntimePolicy {
+  const resolvedDesiredState = desiredState ?? (hadExistingProfile ? 'running' : 'stopped');
   return {
-    desiredState: desiredState ?? 'stopped',
-    autoStart: autoReconnect && desiredState === 'running',
+    desiredState: resolvedDesiredState,
+    autoStart: autoReconnect && resolvedDesiredState === 'running',
   };
+}
+
+export async function applyConfiguredTunnelRuntimePolicy(
+  tunnelController: StartupTunnelController,
+  policy: ConfiguredTunnelRuntimePolicy,
+): Promise<void> {
+  if (policy.desiredState === 'stopped') {
+    await tunnelController.reconcileStoppedRuntime();
+    return;
+  }
+  if (policy.autoStart) await tunnelController.startAutomatically();
 }
 
 export async function autoStartPersistentTunnel(
@@ -1516,12 +1528,23 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return buildPonytailPolicyContext(request.workspaceId);
     },
     configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => {
-      const profilePath = await tunnelController.configureProfile(request.tunnelId);
       const rawDesiredState = settingsRepository.get(tunnelRuntimeDesiredStateSettingKey);
       const currentDesiredState = rawDesiredState === 'running' || rawDesiredState === 'stopped' ? rawDesiredState : null;
-      const runtimePolicy = configuredTunnelRuntimePolicy(readSettings().tunnelAutoReconnect, currentDesiredState);
+      const hadExistingProfile = existsSync(tunnelController.profilePath());
+      const runtimePolicy = configuredTunnelRuntimePolicy(readSettings().tunnelAutoReconnect, currentDesiredState, hadExistingProfile);
+
+      // An explicit Stop is authoritative. Reconcile it before profile init can
+      // replace the stored Tunnel ID, otherwise an old surviving runtime may no
+      // longer be safely attributable to the profile that owns it.
+      if (currentDesiredState === 'stopped') await applyConfiguredTunnelRuntimePolicy(tunnelController, runtimePolicy);
+
+      const profilePath = await tunnelController.configureProfile(request.tunnelId);
       if (currentDesiredState === null) settingsRepository.set(tunnelRuntimeDesiredStateSettingKey, runtimePolicy.desiredState);
-      if (runtimePolicy.autoStart) await tunnelController.startAutomatically();
+
+      // Fresh installs initialize to stopped and are reconciled only after the
+      // profile exists; legacy profiles with no saved desired state preserve the
+      // historical running intent and auto-start only when auto reconnect is on.
+      if (currentDesiredState !== 'stopped') await applyConfiguredTunnelRuntimePolicy(tunnelController, runtimePolicy);
       return { configured: true, profilePath };
     },
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
