@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.4.0 release directly.</p>
+<p align="center">Choose your platform and download the current v5.4.1 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.0.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.1.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.0.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.1.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,13 +51,13 @@
 
 ---
 
-## Current published version: v5.4.0
+## Current published version: v5.4.1
 
 ## Current source version: v5.4.1
 
-Latest published release: **v5.4.0**. The download buttons above point directly to the published v5.4.0 assets.
+Latest published release: **v5.4.1**. The download buttons above point directly to the published v5.4.1 assets.
 
-### What's new in v5.4.1 (source / release candidate)
+### What's new in v5.4.1
 
 - **Issue #104 fixed — Windows MCP localhost/tunnel/update hardening:** loopback HTTP handling was hardened for Windows `localhost`/IPv6 behavior, reverse-proxy/tunnel Host validation can use explicitly configured external hostnames instead of requiring ad-hoc Host rewrites, and the Windows updater/installer path was hardened against the silent old-uninstaller stall reported in v5.3.1.
 - **Automatic local MCP ports by default:** ordinary users no longer need to choose or understand a fixed MCP port during setup. lnwjud selects a free local port automatically to avoid collisions, while an advanced/manual port override remains available for users who need a fixed value.
@@ -66,8 +66,10 @@ Latest published release: **v5.4.0**. The download buttons above point directly 
 - **Global install/update progress lock:** application updates, ngrok installation, and the PDF Provider installation now publish one shared install-activity state to Desktop. While an install/update is active, the UI is blocked by a progress modal with phase/status feedback so users do not mistake a real installation for a frozen app or click conflicting actions mid-install.
 - **Cleaner application/storage architecture:** automation and Agent Swarm application services now depend on domain-facing repository contracts instead of importing storage adapters directly, reducing cross-layer coupling and making maintenance/testing boundaries clearer.
 - **Desktop CI builds the real CLI dependency closure:** release verification now builds the dependencies required by the packaged CLI/Desktop path instead of relying on ambient or previously built output.
+- **Transient native-package downloads are retried safely:** target-native packaging retries `electron-builder` only for recognized transient network failures such as connection resets, timeouts, DNS failures, and socket interruptions. Deterministic packaging errors still fail immediately, so CI resilience does not hide real release defects.
+- **Windows release tests are stabilized without relaxing timeouts:** the `@lnwjud/mcp-server` test files run serially in the release gate to avoid Windows filesystem contention. The default 5-second test timeout remains unchanged; the previously flaky ECC/runtime-state tests complete normally when not starved by parallel file I/O.
 - **Chat execution routing is connector-name agnostic:** when the connected lnwjud MCP server exposes the required coding, repository, filesystem, shell, build, test, Git, CI, browser, or local-computer capability, the MCP instructions tell the assistant to use those tools directly in the current conversation instead of suggesting a switch to ChatGPT Work/Codex solely because of task type. The rule is generic and does not depend on a user-specific connector instance name such as `lnwjud_o`.
-- **Release verification expanded across the changed surfaces:** the v5.4.1 candidate has passed the canonical local release verifier, 14/14 Electron E2E tests, 79/79 packaging tests, 23/23 release-gate tests, and the exact-SHA multi-platform dev CI run before release preparation.
+- **Published from verified cross-platform evidence:** final main CI `35584627254` passed on commit `e8d26d45953dd13a77559ab0303ad7b7ee022653`, including Windows authoritative release verification, macOS x64/arm64 and Linux x64/arm64 native package verification, packaged Electron smoke tests, and macOS 26 compatibility checks. Release workflow `35586799494` then re-verified the exact artifacts/provenance and published the v5.4.1 GitHub Release.
 - **Closed in this release:** [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). No other GitHub issue is being claimed as closed specifically by the v5.4.1 cycle; the remaining v5.4.1 work is hardening/refactoring found during review and release preparation.
 
 ### What's new in v5.4.0
