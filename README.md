@@ -72,6 +72,14 @@ Latest published release: **v5.4.1**. The download buttons above point directly 
 - **Published from verified cross-platform evidence:** final main CI `35584627254` passed on commit `e8d26d45953dd13a77559ab0303ad7b7ee022653`, including Windows authoritative release verification, macOS x64/arm64 and Linux x64/arm64 native package verification, packaged Electron smoke tests, and macOS 26 compatibility checks. Release workflow `35586799494` then re-verified the exact artifacts/provenance and published the v5.4.1 GitHub Release.
 - **Closed in this release:** [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). No other GitHub issue is being claimed as closed specifically by the v5.4.1 cycle; the remaining v5.4.1 work is hardening/refactoring found during review and release preparation.
 
+### Post-release hardening on `main` after v5.4.1
+
+These changes were found while validating post-release `main` CI and are **not part of the already-published v5.4.1 binaries**. They will ship in the next release unless superseded by later changes.
+
+- **Windows live-log projection CI fixture bounded:** main CI `35589209261` exposed a 15-second timeout in the 500-row / 500-maximum-length-path projection regression. The test still exercises the same 500×4096-character storage/projection case and full-detail resolution, but no longer routes the already-sanitized ~2 MB fixture through `AuditService` a second time. The exact Windows shard then dropped the case from 17.75s to sub-second execution without increasing the timeout.
+- **Durable shell PID-reuse reconciliation fixed:** main CI `35591858761` exposed a real Windows race where a stale `running` snapshot could observe a quickly reused PID and overwrite an already-finalizing `completed` task with `termination_unverified`. Reconciliation now treats a live PID with a different captured start time as a replaced process, preserves kill/cancel identity safety, and continues through the bounded finalization grace. A deterministic PID-reuse regression plus repeated Desktop MCP shell tests and the exact Windows shard cover the fix.
+- **Issue accounting remains unchanged:** no additional GitHub issue is claimed closed by these post-release fixes; v5.4.1 still closes Issue #104 only.
+
 ### What's new in v5.4.0
 
 - **Crash-safe native Goal automation:** v5.4.0 adds persisted automation runs, milestone dispatch/verification, Goal-owned lifecycle control, scheduled resume, exact durable-shell recovery, and cross-restart reconciliation.
