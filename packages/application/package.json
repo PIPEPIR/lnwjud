@@ -26,7 +26,7 @@
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   },
