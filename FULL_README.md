@@ -57,6 +57,19 @@ and returns the response without opening a public inbound port on the host.
 
 Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
 
+### What's new in v5.4.1 (source / release candidate)
+
+- **Issue #104 — Windows MCP localhost, reverse-proxy Host handling, and silent update path:** the loopback HTTP server was hardened for Windows localhost/IPv6 behavior; external hostnames can be explicitly allowed for reverse-proxy/tunnel scenarios instead of depending on manual Host rewriting; and the Windows installer/updater path was hardened against the silent `old-uninstaller.exe` stall reported against v5.3.1.
+- **Automatic MCP port selection:** the default local MCP port is now automatic so end users are not asked to understand or manually choose a port during normal setup. lnwjud selects a free port to avoid collisions and preserves an advanced/manual fixed-port override for integrations that require one.
+- **Managed browser lifecycle:** browser/CDP support is lazy-started on first use instead of launching Chrome as part of ordinary Desktop startup. Runtime readiness/Doctor state follows that lazy model, so an unused browser dependency does not block unrelated tools while navigation remains available when requested.
+- **Shared browser-start cancellation isolation:** concurrent `ensureStarted` callers retain single-flight launch behavior, but each caller owns only its own wait cancellation; aborting one request no longer tears down the shared launch needed by another active request.
+- **Global install/update activity coordinator:** app updates, ngrok install/update, and PDF Provider installation feed a shared install-activity coordinator with preparing/downloading/verifying/installing/finalizing phases. Desktop renders a blocking progress modal while these operations are active, preventing conflicting clicks and making long install steps visibly distinct from an application hang.
+- **Application/storage seam cleanup:** automation and Agent Swarm services were moved onto domain-owned repository contracts so application code no longer imports concrete storage adapters. Packaging coverage now guards this dependency direction.
+- **Release/CI dependency correctness:** Desktop CI builds the actual CLI dependency closure used by the packaged runtime, strengthening release verification against stale prebuilt workspace output.
+- **Current-chat lnwjud routing:** MCP server instructions now state that supported coding/repository/filesystem/shell/build/test/Git/CI/browser/local-computer work should continue through the exposed lnwjud tools in the current conversation. The contract is capability-based and connector-name agnostic; a regression explicitly prevents hardcoding the local instance name `lnwjud_o`.
+- **Verification evidence:** before release preparation the candidate passed standalone lint/typecheck, the canonical `verify-release.ps1 -SkipWindowsPackaging` gate, all 14 Electron E2E cases, 79 packaging tests, 23 release-gate tests, and exact-SHA Linux/macOS/Windows dev CI. The PR Windows release-verification job also completed successfully; an auxiliary GitHub Advanced Security AI-review run failed before analyzing repository code because GitHub requested an unsupported hosted model, not because it reported a security finding.
+- **Issue closure accounting:** v5.4.1 closes [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). Issues #100, #98, and #94 belong to earlier published release lines and are intentionally not re-counted as v5.4.1 closures.
+
 ### What's new in v5.4.0
 
 - Native Goal automation is now durable across restart: automation plans, runs, attempts, milestone verification evidence, scheduled wake hints, and exact shell-dispatch recovery are persisted and bound to the owning Goal/workspace/lease.

@@ -57,6 +57,19 @@
 
 Latest published release: **v5.4.0**. The download buttons above point directly to the published v5.4.0 assets.
 
+### What's new in v5.4.1 (source / release candidate)
+
+- **Issue #104 fixed — Windows MCP localhost/tunnel/update hardening:** loopback HTTP handling was hardened for Windows `localhost`/IPv6 behavior, reverse-proxy/tunnel Host validation can use explicitly configured external hostnames instead of requiring ad-hoc Host rewrites, and the Windows updater/installer path was hardened against the silent old-uninstaller stall reported in v5.3.1.
+- **Automatic local MCP ports by default:** ordinary users no longer need to choose or understand a fixed MCP port during setup. lnwjud selects a free local port automatically to avoid collisions, while an advanced/manual port override remains available for users who need a fixed value.
+- **Browser tools start only when needed:** managed browser/CDP readiness now follows lazy startup instead of opening Chrome during normal app startup. Browser navigation stays available when requested without making an unused browser dependency block the rest of lnwjud.
+- **Concurrent browser startup is cancellation-safe:** multiple callers still share one browser launch, but cancellation from one caller no longer cancels the shared startup for another caller that is still waiting.
+- **Global install/update progress lock:** application updates, ngrok installation, and the PDF Provider installation now publish one shared install-activity state to Desktop. While an install/update is active, the UI is blocked by a progress modal with phase/status feedback so users do not mistake a real installation for a frozen app or click conflicting actions mid-install.
+- **Cleaner application/storage architecture:** automation and Agent Swarm application services now depend on domain-facing repository contracts instead of importing storage adapters directly, reducing cross-layer coupling and making maintenance/testing boundaries clearer.
+- **Desktop CI builds the real CLI dependency closure:** release verification now builds the dependencies required by the packaged CLI/Desktop path instead of relying on ambient or previously built output.
+- **Chat execution routing is connector-name agnostic:** when the connected lnwjud MCP server exposes the required coding, repository, filesystem, shell, build, test, Git, CI, browser, or local-computer capability, the MCP instructions tell the assistant to use those tools directly in the current conversation instead of suggesting a switch to ChatGPT Work/Codex solely because of task type. The rule is generic and does not depend on a user-specific connector instance name such as `lnwjud_o`.
+- **Release verification expanded across the changed surfaces:** the v5.4.1 candidate has passed the canonical local release verifier, 14/14 Electron E2E tests, 79/79 packaging tests, 23/23 release-gate tests, and the exact-SHA multi-platform dev CI run before release preparation.
+- **Closed in this release:** [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). No other GitHub issue is being claimed as closed specifically by the v5.4.1 cycle; the remaining v5.4.1 work is hardening/refactoring found during review and release preparation.
+
 ### What's new in v5.4.0
 
 - **Crash-safe native Goal automation:** v5.4.0 adds persisted automation runs, milestone dispatch/verification, Goal-owned lifecycle control, scheduled resume, exact durable-shell recovery, and cross-restart reconciliation.
