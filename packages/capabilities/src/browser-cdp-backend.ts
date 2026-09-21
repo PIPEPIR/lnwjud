@@ -60,14 +60,16 @@ export class BrowserCdpBackend implements CapabilityBackend {
     const current = await this.protocol.status(signal);
     if (current.ready) return ok({ ready: true, port: current.port, launched: false });
     if (this.launcher === undefined) return err(appError('INTERNAL_ERROR', 'Browser launcher is not configured', true));
-    if (this.startInFlight !== null) return this.startInFlight;
-    const launch = this.launcher(url, signal);
-    this.startInFlight = launch;
-    try {
-      return await launch;
-    } finally {
-      if (this.startInFlight === launch) this.startInFlight = null;
+    let launch = this.startInFlight;
+    if (launch === null) {
+      launch = this.launcher(url);
+      this.startInFlight = launch;
+      void launch.then(
+        () => { if (this.startInFlight === launch) this.startInFlight = null; },
+        () => { if (this.startInFlight === launch) this.startInFlight = null; },
+      );
     }
+    return waitForBrowserStart(launch, signal);
   }
 
   public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -377,6 +379,25 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
       resolve();
     }
     signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function waitForBrowserStart(start: Promise<Result<unknown>>, signal?: AbortSignal): Promise<Result<unknown>> {
+  if (signal === undefined) return start;
+  const cancelled = cancellationResult(signal);
+  if (cancelled !== null) return Promise.resolve(cancelled);
+
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    const onAbort = (): void => {
+      cleanup();
+      resolve(err(appError('PROCESS_TIMEOUT', 'DOM operation was cancelled before the next side effect', true)));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void start.then(
+      (result) => { cleanup(); resolve(result); },
+      (error: unknown) => { cleanup(); reject(error); },
+    );
   });
 }
 
