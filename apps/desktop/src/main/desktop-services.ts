@@ -872,14 +872,18 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     const available = result.value.available !== false;
     const ready = result.value.ready !== false;
     const reason = typeof result.value.reason === 'string' ? result.value.reason : undefined;
+    const readinessReason = typeof result.value.readinessReason === 'string' ? result.value.readinessReason : undefined;
     if (reason === 'unsupported_platform') {
       return { status: 'fail', detail: `${name} is unsupported on ${process.platform} (unsupported_platform)` };
+    }
+    if (name === 'dom_cdp' && available && readinessReason === 'browser_not_running') {
+      return { status: 'pass', detail: 'Managed Browser is installed and will start automatically when a browser tool is used' };
     }
     if (ready) return { status: 'pass', detail: reason ?? `${name} is ready` };
     return {
       status: available ? 'fail' : 'unknown',
       detail: reason ?? (name === 'dom_cdp' && available
-        ? 'Managed Browser is installed but stopped; start Managed Browser to use browser debugging tools'
+        ? 'Managed Browser needs setup before browser debugging tools can run'
         : available ? `${name} needs setup` : `${name} is unavailable`),
     };
   };

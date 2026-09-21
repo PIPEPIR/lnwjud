@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,8 +25,11 @@ describe('Desktop Tool Catalog runtime', () => {
     const root = await realpath(raw);
     const dataRoot = path.join(root, 'data');
     const workspaceRoot = path.join(root, 'workspace');
-    await Promise.all([mkdir(dataRoot, { recursive: true }), mkdir(workspaceRoot, { recursive: true })]);
+    const fakeChrome = path.join(root, process.platform === 'win32' ? 'chrome.exe' : 'chrome');
+    await Promise.all([mkdir(dataRoot, { recursive: true }), mkdir(workspaceRoot, { recursive: true }), writeFile(fakeChrome, '')]);
     vi.stubEnv('APPDATA', dataRoot);
+    vi.stubEnv('LNWJUD_BROWSER_EXECUTABLE', fakeChrome);
+    vi.stubEnv('LNWJUD_BROWSER_CDP_PORT', '65534');
 
     const runtime = createDesktopRuntime(dataRoot);
     try {
@@ -41,6 +44,9 @@ describe('Desktop Tool Catalog runtime', () => {
       expect(catalog.remediations.length).toBeGreaterThan(0);
       expect(() => structuredClone(catalog)).not.toThrow();
       expect(catalog.items.find((item) => item.name === 'run_goal')?.inputSchema).toMatchObject({ type: 'object' });
+      expect(catalog.items.find((item) => item.name === 'browser_debug_context')).toMatchObject({
+        readiness: 'ready', deliveryState: 'operational', available: true,
+      });
 
       const disabled = await runtime.services.setToolAvailability({ locale: 'en', name: 'read_file', enabled: false });
       expect(disabled.item).toMatchObject({ name: 'read_file', userPreference: 'disabled', effectiveExposed: false });
@@ -61,6 +67,7 @@ describe('Desktop Tool Catalog runtime', () => {
         expect(check?.detail).not.toBe('Probe timed out');
         expect(check?.durationMs).toBeLessThan(2_000);
       }
+      expect(doctor.checks.find((candidate) => candidate.id === 'browser_cdp')).toMatchObject({ status: 'pass' });
     } finally {
       await runtime.close();
     }
