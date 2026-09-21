@@ -51,13 +51,13 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.4.0
+## Current published version: v5.4.1
 
 ## Current source version: v5.4.1
 
-Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
+Latest published release: **v5.4.1**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
 
-### What's new in v5.4.1 (source / release candidate)
+### What's new in v5.4.1
 
 - **Issue #104 — Windows MCP localhost, reverse-proxy Host handling, and silent update path:** the loopback HTTP server was hardened for Windows localhost/IPv6 behavior; external hostnames can be explicitly allowed for reverse-proxy/tunnel scenarios instead of depending on manual Host rewriting; and the Windows installer/updater path was hardened against the silent `old-uninstaller.exe` stall reported against v5.3.1.
 - **Automatic MCP port selection:** the default local MCP port is now automatic so end users are not asked to understand or manually choose a port during normal setup. lnwjud selects a free port to avoid collisions and preserves an advanced/manual fixed-port override for integrations that require one.
@@ -66,8 +66,10 @@ Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are pu
 - **Global install/update activity coordinator:** app updates, ngrok install/update, and PDF Provider installation feed a shared install-activity coordinator with preparing/downloading/verifying/installing/finalizing phases. Desktop renders a blocking progress modal while these operations are active, preventing conflicting clicks and making long install steps visibly distinct from an application hang.
 - **Application/storage seam cleanup:** automation and Agent Swarm services were moved onto domain-owned repository contracts so application code no longer imports concrete storage adapters. Packaging coverage now guards this dependency direction.
 - **Release/CI dependency correctness:** Desktop CI builds the actual CLI dependency closure used by the packaged runtime, strengthening release verification against stale prebuilt workspace output.
+- **Transient native package download hardening:** `package-native.mjs` retries `electron-builder` up to three attempts only when recent output matches a bounded set of transient network failures (connection reset, timeout, DNS/socket/network interruption). Deterministic packaging/configuration errors still fail on the first attempt. This directly hardens the GitHub release-asset download path that failed Linux x64 main CI during v5.4.1 release preparation.
+- **Windows release-test contention fix:** the `@lnwjud/mcp-server` Vitest files are executed with file-level parallelism disabled in the package test command. The default per-test timeout remains 5 seconds; no timeout was relaxed. The two filesystem-heavy tests that timed out under Windows runner contention complete in tens/hundreds of milliseconds when the files are not competing for I/O.
 - **Current-chat lnwjud routing:** MCP server instructions now state that supported coding/repository/filesystem/shell/build/test/Git/CI/browser/local-computer work should continue through the exposed lnwjud tools in the current conversation. The contract is capability-based and connector-name agnostic; a regression explicitly prevents hardcoding the local instance name `lnwjud_o`.
-- **Verification evidence:** before release preparation the candidate passed standalone lint/typecheck, the canonical `verify-release.ps1 -SkipWindowsPackaging` gate, all 14 Electron E2E cases, 79 packaging tests, 23 release-gate tests, and exact-SHA Linux/macOS/Windows dev CI. The PR Windows release-verification job also completed successfully; an auxiliary GitHub Advanced Security AI-review run failed before analyzing repository code because GitHub requested an unsupported hosted model, not because it reported a security finding.
+- **Published verification evidence:** local validation passed syntax, targeted packaging regression, lint, typecheck, the full 67-file/1050-test `mcp-server` suite, and the 23-test release gate without increasing test timeouts. PR #108 then passed push CI, required Windows authoritative release verification, and GitHub Advanced Security. Final main CI `35584627254` succeeded on commit `e8d26d45953dd13a77559ab0303ad7b7ee022653`, including macOS x64/arm64, Linux x64/arm64 native package verification and macOS 26 compatibility. Release workflow `35586799494` downloaded those exact successful-CI artifacts, re-verified every provenance bundle, aggregated update feeds/manifests, generated release notes, and published v5.4.1 successfully.
 - **Issue closure accounting:** v5.4.1 closes [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). Issues #100, #98, and #94 belong to earlier published release lines and are intentionally not re-counted as v5.4.1 closures.
 
 ### What's new in v5.4.0
