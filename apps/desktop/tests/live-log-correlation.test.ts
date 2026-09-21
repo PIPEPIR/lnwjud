@@ -19,25 +19,47 @@ describe('live log activity target correlation', () => {
     temporaryRoots.push(root);
     const database = new SqliteDatabase(path.join(root, 'state.db'));
     const repository = new SqliteAuditRepository(database);
-    const audit = new AuditService(repository);
     const maximumLengthPath = `E:\\${'x'.repeat(4_093)}`;
     const detail = redactActivityTargetDetail({ kind: 'files', items: Array.from({ length: 500 }, () => maximumLengthPath) });
     const targetDetail = activityTargetReference('call-large', detail, maximumLengthPath);
 
-    // Keep this regression focused on the dashboard projection. Hundreds of
-    // independent WAL commits make the fixture itself dominate on shared CI disks.
+    // Keep this regression focused on the storage/dashboard projection. The
+    // AuditService redaction path has separate coverage below; running the 2 MB
+    // fixture through it again only benchmarks fixture setup on slower CI disks.
     database.connection.exec('BEGIN;');
     try {
-      await audit.recordMcpTool({
-        actorId: 'test', actorName: 'test', toolName: 'read_files', callId: 'call-large', phase: 'started',
-        targetSummary: maximumLengthPath, targetDetail, activityTargetDetail: detail,
-        resultCode: 'STARTED', durationMs: 0, timestamp: '2026-08-30T00:00:00.000Z',
+      await repository.insert({
+        id: 'event-large',
+        timestamp: '2026-08-30T00:00:00.000Z',
+        actorId: 'test',
+        actorName: 'test',
+        action: 'mcp_tool:read_files',
+        targetSummary: maximumLengthPath,
+        resultCode: 'STARTED',
+        durationMs: 0,
+        metadata: {
+          toolName: 'read_files',
+          callId: 'call-large',
+          phase: 'started',
+          targetDetail,
+          activityTargetDetail: detail,
+        },
       });
       for (let index = 1; index < 500; index += 1) {
-        await audit.recordMcpTool({
-          actorId: 'test', actorName: 'test', toolName: 'git_status', callId: `call-${index}`, phase: 'completed',
-          targetDetail: { detailRef: null, itemCount: 0, preview: [], legacyIncomplete: false },
-          resultCode: 'SUCCESS', durationMs: 1, timestamp: `2026-08-30T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+        await repository.insert({
+          id: `event-${index}`,
+          timestamp: `2026-08-30T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+          actorId: 'test',
+          actorName: 'test',
+          action: 'mcp_tool:git_status',
+          resultCode: 'SUCCESS',
+          durationMs: 1,
+          metadata: {
+            toolName: 'git_status',
+            callId: `call-${index}`,
+            phase: 'completed',
+            targetDetail: { detailRef: null, itemCount: 0, preview: [], legacyIncomplete: false },
+          },
         });
       }
       database.connection.exec('COMMIT;');
