@@ -193,6 +193,9 @@ describe('cross-platform desktop packaging', () => {
     expect(nativePackagingScript).toContain('`--${architecture}`');
     expect(nativePackagingScript).toContain('write-release-evidence.mjs');
     expect(nativePackagingScript).toContain('verify-release-evidence.mjs');
+    expect(nativePackagingScript).toContain('runElectronBuilderWithRetry');
+    expect(nativePackagingScript).toContain('connection reset by peer');
+    expect(nativePackagingScript).toContain('attempt <= 3');
     expect(linuxHostBuildScript).toContain('arch === process.arch');
     expect(linuxHostBuildScript).not.toContain("process.arch === 'x64' ? undefined");
     await access(path.join(desktopRoot, 'build', 'entitlements.mac.plist'));
