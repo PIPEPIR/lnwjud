@@ -850,7 +850,12 @@ function identityCapturePendingForProbe(
 }
 
 function isUnverifiableTrackedProbe(probe: PortableProcessProbe, expectedStartedAt: string | undefined): boolean {
-  return probe.state === 'unverifiable' || (probe.state === 'live' && (expectedStartedAt === undefined || probe.processStartedAt !== expectedStartedAt));
+  // If an expected identity was captured and the PID is now live with a different
+  // start time, the tracked process is gone and Windows has reused the PID. That is
+  // not an unverifiable state: reconciliation must continue to the bounded final
+  // metadata grace instead of allowing a stale running snapshot to overwrite an
+  // already-persisting completed result with termination_unverified.
+  return probe.state === 'unverifiable' || (probe.state === 'live' && expectedStartedAt === undefined);
 }
 
 function describeTrackedProbe(kind: string, probe: PortableProcessProbe): string {

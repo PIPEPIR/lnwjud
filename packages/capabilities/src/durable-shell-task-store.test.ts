@@ -103,6 +103,46 @@ describe('durable shell background tasks', () => {
     });
   }, 15_000);
 
+  it('does not overwrite terminal metadata when Windows-style PID reuse is observed during reconciliation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-pid-reuse-'));
+    temporaryRoots.push(root);
+    const taskStateDirectory = path.join(root, '.tasks');
+    const taskId = 'pid-reused-finalizing';
+    const taskDirectory = path.join(taskStateDirectory, taskId);
+    await mkdir(taskDirectory, { recursive: true });
+    const metadataPath = path.join(taskDirectory, 'task.json');
+    const runningMetadata = {
+      version: 1,
+      task_id: taskId,
+      state: 'running',
+      started_at: new Date(Date.now() - 20_000).toISOString(),
+      include_stdout: false,
+      include_stderr: false,
+      max_output_bytes: 1024,
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+      worker_pid: process.pid,
+      // The live PID belongs to this Vitest process, not the original durable worker.
+      worker_started_at: '2000-01-01T00:00:00.000Z',
+    } as const;
+    await writeFile(metadataPath, JSON.stringify(runningMetadata), 'utf8');
+
+    const finalized = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        void writeFile(metadataPath, JSON.stringify({
+          ...runningMetadata,
+          state: 'completed',
+          exit_code: 0,
+          finished_at: new Date().toISOString(),
+        }), 'utf8').then(() => resolve(), reject);
+      }, 100);
+    });
+
+    const store = new DurableShellTaskStore(taskStateDirectory);
+    const result = await store.snapshot(taskId);
+    await finalized;
+    expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0 } });
+  }, 15_000);
+
   it('does not overwrite a very fast durable completion back to running', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);
