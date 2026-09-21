@@ -17,6 +17,7 @@ import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
 export const MCP_OUTCOME_DRIVEN_INSTRUCTIONS = [
   'Continue using lnwjud tools until the requested outcome is complete.',
   'Do not stop, hand off, or ask the user to say "continue" merely because elapsed time has passed.',
+  'When this lnwjud MCP server exposes tools that can complete the requested coding, repository, filesystem, shell, build, test, Git, CI, browser, or local-computer work, use those tools directly in the current conversation. Do not ask or suggest switching to ChatGPT Work, Codex, or another execution mode solely because the request involves those tasks; use another mode only when the user explicitly asks for it or the required capability is not available through the exposed lnwjud tools.',
   'Stop only when the outcome is complete, a user decision or new authority is required, or an external blocker prevents safe progress.',
   'Before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn, call run_goal with scheduledContinuation=auto and follow the bundled lnwjud-scheduled-continuation skill; if such work is already in progress without an active durable goal, enroll it before the next mutation.',
   'Use durable background tasks for naturally long-running commands, then keep checking them and continue the work while the current run remains active.',
