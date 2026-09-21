@@ -29,7 +29,7 @@
     "@modelcontextprotocol/client": "2.0.0"
   },
   "scripts": {
-    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 --filter @lnwjud/shared build && corepack pnpm@10.15.0 --filter @lnwjud/process build && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && corepack pnpm@10.15.0 --filter @lnwjud/extensions build && corepack pnpm@10.15.0 build && vitest run",
+    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 --filter @lnwjud/shared build && corepack pnpm@10.15.0 --filter @lnwjud/process build && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && corepack pnpm@10.15.0 --filter @lnwjud/extensions build && corepack pnpm@10.15.0 build && vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   },
