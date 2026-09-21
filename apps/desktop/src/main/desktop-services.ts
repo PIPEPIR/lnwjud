@@ -135,6 +135,7 @@ import {
   type ToolCatalogItem,
   type ToolProfileDecision,
   type InFlightWorkItem,
+  type InstallOperationPhase,
   type LoadLogSessionHistoryRequest,
   type LoadLogSessionHistoryResult,
   type LogSnapshot,
@@ -237,6 +238,7 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly onInstallActivity?: (kind: 'ngrok' | 'pdf_provider', update: { readonly phase: InstallOperationPhase; readonly progressPercent: number | null; readonly message: string | null } | null) => void;
   readonly checkpointEncryptionKey?: Buffer;
   readonly decryptTunnelSecret?: (cipherText: string) => Promise<string>;
   /** Enables bounded SQLite polling for long-lived stdio processes that receive writes from another process. */
@@ -676,8 +678,27 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     dataPath,
     getLocalMcpUrl: async (): Promise<string | null> => mcpLifecycle.status().url,
     ensureLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
+    onInstallProgress: (phase): void => { options.onInstallActivity?.('ngrok', { phase, progressPercent: null, message: null }); },
     ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
   });
+  const withInstallActivity = async <T>(
+    kind: 'ngrok' | 'pdf_provider',
+    message: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    options.onInstallActivity?.(kind, { phase: 'preparing', progressPercent: null, message });
+    try {
+      return await operation();
+    } finally {
+      options.onInstallActivity?.(kind, null);
+    }
+  };
+  const withNgrokInstallIfNeeded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const status = await remoteMcpController.status();
+    return status.installed
+      ? operation()
+      : withInstallActivity('ngrok', 'Installing ngrok…', operation);
+  };
   const oauthLoginManager = new TunnelOAuthLoginManager({
     backend: oauthTunnelBackend,
     provider: oauthTunnelAuthProvider,
@@ -1422,10 +1443,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return observedTunnelStatus();
     },
     getRemoteMcpStatus: () => remoteMcpController.status(),
-    installRemoteMcpProvider: async () => { const status = await remoteMcpController.installProvider(); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
+    installRemoteMcpProvider: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.installProvider()); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
     saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
     setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] static domain ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'}`); return status; },
-    startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
+    startRemoteMcp: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.start()); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     resetRemoteMcpOAuth: async () => { const status = await remoteMcpController.resetOAuthTrust(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
     setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {
@@ -1493,7 +1514,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       if (process.platform !== pdfTarget.platform || process.arch !== pdfTarget.arch) {
         throw new Error(`The bundled PDF provider installer supports only ${pdfTarget.platform}/${pdfTarget.arch}; configure a native pdftotext provider on this host.`);
       }
-      const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
+      const installed = await withInstallActivity('pdf_provider', 'Installing PDF Provider…', () => (options.pdfProviderInstaller ?? installPdfProvider)(dataPath));
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
       const next = readSettings();
@@ -1708,7 +1729,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       tunnelController,
       readSettings().tunnelAutoReconnect,
     ),
-    autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
+    autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => {
+      const status = await remoteMcpController.status();
+      if (!status.autoStartEnabled || status.installed) return remoteMcpController.autoStartIfDesired();
+      return withInstallActivity('ngrok', 'Installing ngrok…', () => remoteMcpController.autoStartIfDesired());
+    },
     close: closeRuntime,
   };
 }

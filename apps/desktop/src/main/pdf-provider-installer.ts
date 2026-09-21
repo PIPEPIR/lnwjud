@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import extractZip from 'extract-zip';
+import type { InstallOperationPhase } from '@lnwjud/ipc-contracts';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 
 export interface PdfProviderPackage {
@@ -31,6 +32,7 @@ export interface PdfProviderInstallerOptions {
   readonly package?: PdfProviderPackage;
   readonly fetchImpl?: (url: string) => Promise<DownloadResponse>;
   readonly extractImpl?: (archivePath: string, options: { readonly dir: string }) => Promise<void>;
+  readonly onProgress?: (phase: InstallOperationPhase) => void;
 }
 
 export const DEFAULT_PDF_PROVIDER_PACKAGE: PdfProviderPackage = Object.freeze({
@@ -63,6 +65,7 @@ async function installPdfProviderOnce(dataPath: string, options: PdfProviderInst
   const versionRoot = path.join(providerRoot, packageInfo.version);
   const providerPath = path.join(versionRoot, 'Library', 'bin', 'pdftotext.exe');
 
+  options.onProgress?.('preparing');
   if (await isRegularFile(providerPath)) {
     return { providerPath, version: packageInfo.version, sourceUrl: packageInfo.sourceUrl, archiveSha256: packageInfo.archiveSha256, reused: true };
   }
@@ -70,12 +73,14 @@ async function installPdfProviderOnce(dataPath: string, options: PdfProviderInst
   await mkdir(providerRoot, { recursive: true });
   const stagingRoot = await mkdtemp(path.join(providerRoot, `.install-${packageInfo.version}-`));
   try {
+    options.onProgress?.('downloading');
     const response = await fetchImpl(packageInfo.sourceUrl);
     if (!response.ok) throw new Error(`PDF provider download failed: HTTP ${response.status} ${response.statusText}`.trim());
     const declaredSize = Number(response.headers.get('content-length') ?? '0');
     if (Number.isFinite(declaredSize) && declaredSize > MAX_ARCHIVE_BYTES) throw new Error('PDF provider archive is larger than the allowed download limit');
 
     const archiveBytes = Buffer.from(await response.arrayBuffer());
+    options.onProgress?.('verifying');
     if (archiveBytes.byteLength === 0 || archiveBytes.byteLength > MAX_ARCHIVE_BYTES) throw new Error('PDF provider archive size is invalid');
     const actualSha256 = createHash('sha256').update(archiveBytes).digest('hex');
     if (actualSha256 !== packageInfo.archiveSha256.toLowerCase()) {
@@ -84,6 +89,7 @@ async function installPdfProviderOnce(dataPath: string, options: PdfProviderInst
 
     const archivePath = path.join(stagingRoot, `poppler-${packageInfo.version}.zip`);
     const extractRoot = path.join(stagingRoot, 'extracted');
+    options.onProgress?.('installing');
     await writeFile(archivePath, archiveBytes);
     await mkdir(extractRoot, { recursive: true });
     await extractImpl(archivePath, { dir: extractRoot });
@@ -92,6 +98,7 @@ async function installPdfProviderOnce(dataPath: string, options: PdfProviderInst
     const extractedProvider = path.join(extractedRoot, 'Library', 'bin', 'pdftotext.exe');
     if (!await isRegularFile(extractedProvider)) throw new Error('Downloaded Poppler archive does not contain Library\\bin\\pdftotext.exe');
 
+    options.onProgress?.('finalizing');
     await rm(versionRoot, { recursive: true, force: true });
     await rename(extractedRoot, versionRoot);
     await writeFile(path.join(versionRoot, '.lnwjud-provider.json'), `${JSON.stringify({

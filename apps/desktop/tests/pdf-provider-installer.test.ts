@@ -19,8 +19,10 @@ describe('PDF provider installer', () => {
     const packageInfo = testPackage(archive);
     let downloads = 0;
     let extracts = 0;
+    const phases: string[] = [];
     const options = {
       package: packageInfo,
+      onProgress: (phase: string): void => { phases.push(phase); },
       fetchImpl: async (): Promise<ReturnType<typeof response>> => {
         downloads += 1;
         return response(archive);
@@ -35,6 +37,7 @@ describe('PDF provider installer', () => {
 
     const first = await installPdfProvider(dataPath, options);
     expect(first.reused).toBe(false);
+    expect(phases).toEqual(['preparing', 'downloading', 'verifying', 'installing', 'finalizing']);
     expect(first.providerPath).toBe(path.join(dataPath, 'runtime-tools', 'pdf-provider', packageInfo.version, 'Library', 'bin', 'pdftotext.exe'));
     expect(await readFile(first.providerPath, 'utf8')).toBe('fixture');
     expect(await readPdfProviderInstallEvidence(first.providerPath)).toMatchObject({ provider: 'pdftotext', version: packageInfo.version, archiveSha256: packageInfo.archiveSha256 });

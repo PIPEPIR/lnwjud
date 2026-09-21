@@ -117,6 +117,7 @@ import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
 import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
+import { InstallActivityCoordinator } from './install-activity.js';
 
 const ECC_UPSTREAM_VERSION = '2.2.1';
 
@@ -765,6 +766,11 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return currentUpdateStatus;
   });
+  registerHandler(ipcChannels.getInstallActivity, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return installActivity.snapshot();
+  });
   registerHandler(ipcChannels.factoryReset, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
@@ -1366,6 +1372,8 @@ let runtimeDiagnosticsHistory: RuntimeDiagnosticsHistoryRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
 const rendererRecoveryBarrier = new RendererRecoveryBarrier();
 let crashRecoveryConfigured = false;
+const installActivity = new InstallActivityCoordinator((snapshot) => broadcastToAllWindows(pushChannels.installActivity, snapshot));
+
 let currentUpdateStatus: UpdateStatus = {
   phase: app.isPackaged ? 'idle' : 'unavailable',
   currentVersion: APP_VERSION,
@@ -1435,9 +1443,22 @@ function revealMainWindow(): void {
 
 function publishUpdateStatus(next: UpdateStatus): UpdateStatus {
   currentUpdateStatus = next;
+  syncUpdateInstallActivity(next);
   broadcastToAllWindows(pushChannels.updateStatus, next);
   refreshDesktopTrayMenu();
   return next;
+}
+
+function syncUpdateInstallActivity(status: UpdateStatus): void {
+  if (status.phase === 'downloading') {
+    installActivity.set({ kind: 'app_update', phase: 'downloading', progressPercent: status.progressPercent, message: status.message });
+    return;
+  }
+  if (status.phase === 'installing') {
+    installActivity.set({ kind: 'app_update', phase: 'installing', progressPercent: null, message: status.message });
+    return;
+  }
+  installActivity.clear('app_update');
 }
 
 function patchUpdateStatus(patch: Partial<UpdateStatus>): UpdateStatus {
@@ -2211,7 +2232,12 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
+      onProgress: (phase) => installActivity.set({ kind: 'pdf_provider', phase, progressPercent: null, message: null }),
     }),
+    onInstallActivity: (kind, update) => {
+      if (update === null) installActivity.clear(kind);
+      else installActivity.set({ kind, ...update });
+    },
     watchToolAvailability: true,
   });
   recordDesktopStartup('runtime-create:end');

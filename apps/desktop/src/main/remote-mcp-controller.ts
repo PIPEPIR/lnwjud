@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { RemoteMcpStatus } from '@lnwjud/ipc-contracts';
+import type { InstallOperationPhase, RemoteMcpStatus } from '@lnwjud/ipc-contracts';
 import type { SecretProtector } from '@lnwjud/shared';
 
 export type TokenEndpointAuthMethod = 'none' | 'client_secret_post';
@@ -74,6 +74,7 @@ export interface RemoteMcpControllerOptions {
   readonly now?: () => number;
   readonly persistence?: RemoteMcpStatePersistence;
   readonly secretProtector?: SecretProtector;
+  readonly onInstallProgress?: (phase: InstallOperationPhase) => void;
 }
 
 const NGROK_API = 'http://127.0.0.1:4040/api/tunnels';
@@ -92,6 +93,7 @@ export class RemoteMcpController {
   private readonly now: () => number;
   private readonly persistence: RemoteMcpStatePersistence;
   private readonly secretProtector?: SecretProtector;
+  private readonly onInstallProgress?: (phase: InstallOperationPhase) => void;
   private persistenceLoaded = false;
   private persistenceLoad: Promise<void> | null = null;
   private desiredRunning = false;
@@ -117,6 +119,7 @@ export class RemoteMcpController {
     this.ensureLocalMcpUrl = options.ensureLocalMcpUrl ?? options.getLocalMcpUrl;
     this.now = options.now ?? Date.now;
     if (options.secretProtector !== undefined) this.secretProtector = options.secretProtector;
+    if (options.onInstallProgress !== undefined) this.onInstallProgress = options.onInstallProgress;
     this.persistence = options.persistence ?? createRemoteMcpStatePersistence(options.dataPath, options.secretProtector);
   }
 
@@ -151,6 +154,7 @@ export class RemoteMcpController {
   }
 
   public async installProvider(): Promise<RemoteMcpStatus> {
+    this.onInstallProgress?.('preparing');
     const existing = await resolveNgrokExecutable();
     if (existing !== null) {
       this.ngrokPath = existing;
@@ -166,11 +170,13 @@ export class RemoteMcpController {
           : 'Automatic ngrok installation is unavailable on this host. Install ngrok from the official ngrok download page, then retry.');
     }
     this.runState = 'installing';
+    this.onInstallProgress?.('installing');
     this.message = installer.method === 'windows_store'
       ? 'Installing ngrok from Microsoft Store via WinGet…'
       : 'Installing ngrok with Homebrew…';
     try {
       await runCommand(installer.executable, installer.args, 180_000);
+      this.onInstallProgress?.('finalizing');
       const installed = await resolveNgrokExecutable();
       if (installed === null) throw new Error('ngrok installation completed but no runnable target-native ngrok executable could be resolved');
       this.ngrokPath = installed;

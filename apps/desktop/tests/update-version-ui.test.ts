@@ -22,12 +22,41 @@ describe('titlebar update notification', () => {
     expect(main).toContain('confirmTunnelStopForUpdate');
     expect(main).toContain('runtime.services.stopTunnel()');
     expect(main).toContain('updaterTunnelStopConfirm');
-    expect(main.indexOf('await stopTunnelForUpdateInstall(runtime)')).toBeLessThan(main.indexOf("phase: 'installing'"));
+    const tunnelStopIndex = main.indexOf('await stopTunnelForUpdateInstall(runtime)');
+    expect(tunnelStopIndex).toBeGreaterThanOrEqual(0);
+    expect(tunnelStopIndex).toBeLessThan(main.indexOf("phase: 'installing'", tunnelStopIndex));
     expect(main).toContain('maxWaitMs: 5_000');
     expect(main).toContain('usesElectronUpdaterInstall(updaterDistribution)');
     expect(main).toContain("currentUpdateStatus.phase === 'installing'");
     expect(main).toContain("phase: 'ready'");
     expect(styles).toContain('.titlebar-version.update-ready');
     expect(styles).toContain('@keyframes update-ready-pulse');
+  });
+
+  it('blocks the whole app behind one installation/update progress surface for every lnwjud-owned machine installer', async () => {
+    const root = path.resolve(import.meta.dirname, '..');
+    const app = await readFile(path.join(root, 'src', 'renderer', 'App.tsx'), 'utf8');
+    const preload = await readFile(path.join(root, 'src', 'preload', 'index.ts'), 'utf8');
+    const main = await readFile(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
+    const desktopServices = await readFile(path.join(root, 'src', 'main', 'desktop-services.ts'), 'utf8');
+    const styles = await readFile(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
+    const contracts = await readFile(path.resolve(root, '..', '..', 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
+
+    expect(contracts).toContain("getInstallActivity: 'lnwjud:get-install-activity'");
+    expect(contracts).toContain("installActivity: 'lnwjud:event:install-activity'");
+    expect(contracts).toContain("'app_update' | 'ngrok' | 'pdf_provider'");
+    expect(preload).toContain('onInstallActivity');
+    expect(app).toContain('window.lnwjud.onInstallActivity');
+    expect(app).toContain('let eventSeen = false');
+    expect(app).toContain('if (!disposed && !eventSeen) setInstallActivity(snapshot)');
+    expect(app).toContain('eventSeen = true');
+    expect(app).toContain('<GlobalInstallProgressModal');
+    expect(app).toContain('inert={installBusy ? true : undefined}');
+    expect(desktopServices).toContain("phase: 'preparing', progressPercent: null, message");
+    expect(desktopServices).toContain("withInstallActivity('ngrok'");
+    expect(desktopServices).toContain("withInstallActivity('pdf_provider'");
+    expect(main).toContain("kind: 'app_update'");
+    expect(styles).toContain('.install-progress-backdrop');
+    expect(styles).toContain('.install-progress-bar.is-indeterminate');
   });
 });

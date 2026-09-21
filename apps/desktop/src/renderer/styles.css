@@ -295,6 +295,21 @@ button.titlebar-version:hover {
   50% { box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.28), 0 0 22px rgba(245, 158, 11, 0.46); }
 }
 
+.app-interaction-root { min-height: 100vh; min-height: 100dvh; }
+.install-progress-backdrop { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.82); backdrop-filter: blur(9px); cursor: wait; }
+.install-progress-modal { width: min(560px, calc(100vw - 32px)); display: grid; gap: 18px; padding: 28px; border: 1px solid rgba(250,204,21,.34); border-radius: 18px; background: var(--surface-raised, #111720); box-shadow: 0 28px 90px rgba(0,0,0,.72); outline: none; }
+.install-progress-spinner { width: 42px; height: 42px; border: 4px solid rgba(255,255,255,.12); border-top-color: #facc15; border-radius: 50%; animation: install-progress-spin .9s linear infinite; }
+.install-progress-copy { display: grid; gap: 6px; }
+.install-progress-copy h2, .install-progress-copy p { margin: 0; }
+.install-progress-track { position: relative; height: 12px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.09); }
+.install-progress-bar { height: 100%; min-width: 2px; border-radius: inherit; background: linear-gradient(90deg, #d4a617, #facc15); transition: width .2s ease; }
+.install-progress-bar.is-indeterminate { width: 42%; animation: install-progress-indeterminate 1.25s ease-in-out infinite; }
+.install-progress-meta { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 13px; }
+.install-progress-meta strong { color: var(--text); }
+.install-progress-lock-hint { margin: 0; color: var(--muted); line-height: 1.55; }
+@keyframes install-progress-spin { to { transform: rotate(360deg); } }
+@keyframes install-progress-indeterminate { 0% { transform: translateX(-120%); } 55% { transform: translateX(100%); } 100% { transform: translateX(250%); } }
+
 .titlebar-center {
   display: flex;
   align-items: center;
