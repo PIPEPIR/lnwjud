@@ -13,6 +13,7 @@ export const USER_SETTING_KEYS = Object.freeze({
   pdfProviderPath: 'pdf_provider_path',
   lspCommands: 'lsp_commands',
   mcpHttpPort: 'mcp_http_port',
+  mcpHttpPortAutoMigrationV1: 'mcp_http_port_auto_migration_v1',
   mcpAllowedHostnames: 'mcp_allowed_hostnames',
   codexToolsEnabled: 'codex_tools_enabled',
   eccEnabled: 'ecc_enabled',

@@ -225,7 +225,7 @@ const defaultUserSettings: UserSettings = {
   capabilityRoots: [],
   pdfProviderPath: '',
   lspCommands: {},
-  mcpHttpPort: 18_765,
+  mcpHttpPort: 0,
   mcpAllowedHostnames: [],
   codexToolsEnabled: false,
   eccEnabled: false,

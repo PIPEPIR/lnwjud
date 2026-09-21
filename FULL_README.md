@@ -301,7 +301,7 @@ historical compatibility baselines rather than the current release contract.
 
 #### Remote MCP OAuth + clearer connection hierarchy
 
-- Adds **Remote MCP via ngrok + OAuth** as the recommended easy ChatGPT connection path: lnwjud keeps its local Streamable HTTP MCP on loopback (normally `http://127.0.0.1:18765/mcp`), runs a separate OAuth-protected loopback gateway, and lets ngrok expose only that protected gateway as a public HTTPS `/mcp` URL.
+- Adds **Remote MCP via ngrok + OAuth** as the recommended easy ChatGPT connection path: lnwjud keeps its local Streamable HTTP MCP on loopback (a free loopback port is selected automatically by default), runs a separate OAuth-protected loopback gateway, and lets ngrok expose only that protected gateway as a public HTTPS `/mcp` URL.
 - Adds one-click **official ngrok installation through Microsoft Store/WinGet** instead of redistributing `ngrok.exe`; lnwjud verifies readiness by actually running `ngrok version`, shows a distinct READY state/path, disables redundant reinstall when healthy, and exposes repair only when the runtime is missing or unusable. Users paste their ngrok authtoken once, lnwjud stores it with Windows DPAPI, injects it only through the child-process environment, starts/stops ngrok automatically, detects the public URL, and provides Copy MCP URL controls.
 - Implements MCP OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, bearer-token protection, refresh tokens, and a one-time random Desktop handoff on an ephemeral `127.0.0.1` listener for exact supported ChatGPT callbacks. Discovering the public ngrok URL alone is not enough to authorize access; unsupported or spoofed redirects fail closed with `403 access_denied`.
 - Renames the Settings navigation to **Remote MCP & Tunnel — OAuth, ngrok, API Key, Client**, shows Remote MCP state/public URL and remembered authorization state on Home, adds an optional Doctor check, and records Remote MCP lifecycle events in Live Logs without logging OAuth/ngrok secrets.
@@ -438,14 +438,13 @@ full scans can still inspect paths allowed by the active workspace/policy.
 | ChatGPT Business custom app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: an Admin/Owner configures and publishes the public HTTPS `/mcp` once; members press Connect. Recognized ChatGPT callbacks—including `/connector/oauth/<redirect_id>` used by newly created Plugins/Apps—authorize through the local Desktop handoff. Unrecognized OAuth clients are rejected instead of falling back to a legacy manual-consent flow. |
 | ChatGPT web developer-mode app | OpenAI Secure MCP Tunnel | `tunnel-client` + lnwjud Desktop | Private outbound-only path to the Desktop loopback HTTP MCP; no public MCP port |
 | Codex CLI or another local MCP host | Local stdio MCP | `lnwjud-mcp-stdio.cmd` | Lowest-overhead local MCP path |
-| Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Defaults to `http://127.0.0.1:18765/mcp`; actual URL is shown in the UI |
+| Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Uses an automatically assigned free loopback port by default; actual URL is shown in the UI |
 | Supported OpenAI API/Codex surface | Secure MCP Tunnel | `tunnel-client` + local MCP target | Tunnel association and Platform permissions apply |
 
 For most ChatGPT web users, choose **one primary remote connection method**: Remote MCP via ngrok + OAuth is the recommended path, while OpenAI Secure MCP Tunnel is the alternative/advanced path. They are independent transports/authentication surfaces, so enabling one does not remove the other; power users can deliberately keep both online. In Desktop Settings, each method is grouped in its own collapsible section with independent ONLINE/READY/SETUP state, and Secure Tunnel auto-collapses while Remote MCP OAuth is online to keep the normal setup path focused.
 
 The desktop HTTP server starts automatically; adding a project is required before workspace-scoped work, but Doctor and Projects remain available when no project is registered yet.
-If the preferred port `18765` is busy, the server can fall back to an ephemeral
-loopback port; always use the endpoint shown in the dashboard. The **Start
+By default the server asks the OS for a free loopback port, so normal users do not need to configure a port or resolve collisions. Advanced users can pin a non-zero port in Settings or `LNWJUD_MCP_PORT`; if that explicit port is unavailable, lnwjud can fall back and reports the actual endpoint. Always use the endpoint shown in the dashboard. The **Start
 Connection** button is useful after a manual stop, while **Stop Connection**
 stops the current local HTTP listener.
 
@@ -934,7 +933,7 @@ The desktop runtime auto-starts the loopback MCP server after resolving the
 selected workspace. In the dashboard:
 
 1. Select a registered workspace.
-2. Copy the displayed endpoint, normally `http://127.0.0.1:18765/mcp`.
+2. Copy the displayed loopback endpoint; the port is assigned automatically unless you explicitly pin one.
 3. Add it to a compatible local Streamable HTTP MCP client.
 4. Use **Stop Connection** when you intentionally want to stop the listener.
 5. Use **Start Connection** to start it again after a manual stop.

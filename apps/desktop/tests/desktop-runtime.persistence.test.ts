@@ -4,7 +4,8 @@ import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { CodexDiscovery } from '@lnwjud/codex';
 import { ToolRegistry } from '@lnwjud/mcp-server';
-import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
+import { USER_SETTING_KEYS } from '@lnwjud/shared';
+import { SqliteAuditRepository, SqliteDatabase, SqliteSettingsRepository } from '@lnwjud/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
 
@@ -30,6 +31,46 @@ afterEach(async () => {
 });
 
 describe('DesktopRuntime persistence', () => {
+  it('defaults Local MCP HTTP to an automatically assigned free port', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-auto-mcp-port-'));
+    temporaryRoots.push(rawDataRoot);
+    const runtime = createDesktopRuntime(await realpath(rawDataRoot));
+    try {
+      expect(runtime.getUserSettings().mcpHttpPort).toBe(0);
+      const status = await runtime.autoStartMcp();
+      expect(status.running).toBe(true);
+      expect(new URL(status.url ?? '').port).not.toBe('0');
+    } finally {
+      await runtime.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
+  it('migrates the legacy 18765 default to Auto once and preserves a later explicit 18765 pin', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-mcp-port-migration-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const database = new SqliteDatabase(path.join(dataRoot, 'lnwjud.sqlite'));
+    const settings = new SqliteSettingsRepository(database);
+    settings.set(USER_SETTING_KEYS.mcpHttpPort, '18765');
+    database.close();
+
+    const migrated = createDesktopRuntime(dataRoot);
+    try {
+      expect(migrated.getUserSettings().mcpHttpPort).toBe(0);
+      const next = { ...migrated.getUserSettings(), mcpHttpPort: 18_765 };
+      await migrated.services.setUserSettings({ settings: next });
+    } finally {
+      await migrated.close();
+    }
+
+    const restarted = createDesktopRuntime(dataRoot);
+    try {
+      expect(restarted.getUserSettings().mcpHttpPort).toBe(18_765);
+    } finally {
+      await restarted.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
   it('defaults unset recovery retention to 30 days while preserving an explicit Never choice', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-recovery-retention-'));
     temporaryRoots.push(rawDataRoot);

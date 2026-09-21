@@ -328,6 +328,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const automationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
+  migrateLegacyMcpHttpPort(settingsRepository, process.env);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
   const stopToolAvailabilityWatch = options.watchToolAvailability === true
     ? toolAvailabilityService.watch(250)
@@ -2261,7 +2262,18 @@ function readLocale(settingsRepository: SqliteSettingsRepository): UiLocale {
   return value === 'en' ? 'en' : 'th';
 }
 
-export const DEFAULT_MCP_HTTP_PORT = 18_765;
+export const DEFAULT_MCP_HTTP_PORT = 0;
+const LEGACY_DEFAULT_MCP_HTTP_PORT = 18_765;
+
+function migrateLegacyMcpHttpPort(settingsRepository: SqliteSettingsRepository, env: NodeJS.ProcessEnv): void {
+  if ((env.LNWJUD_MCP_PORT ?? '').trim().length > 0) return;
+  if (settingsRepository.get(USER_SETTING_KEYS.mcpHttpPortAutoMigrationV1) === '1') return;
+  const stored = settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort)?.trim();
+  if (stored === undefined || stored.length === 0 || stored === String(LEGACY_DEFAULT_MCP_HTTP_PORT) || stored === '5000') {
+    settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(DEFAULT_MCP_HTTP_PORT));
+  }
+  settingsRepository.set(USER_SETTING_KEYS.mcpHttpPortAutoMigrationV1, '1');
+}
 
 function readMcpPort(value: string | undefined): number {
   if (value === undefined || value.trim().length === 0) return DEFAULT_MCP_HTTP_PORT;
