@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   capabilityToolNames,
   createPlatformCapabilitySet,
+  type BrowserCdpBackend,
   type HealthCapabilityBackend,
   type LocalCapabilityService,
   type PlatformWindowsCapabilityOptions,
@@ -23,6 +24,7 @@ export interface LocalCapabilityRuntime {
   readonly service: LocalCapabilityService;
   readonly health: HealthCapabilityBackend;
   readonly shell: ShellCapabilityBackend;
+  readonly domCdp: BrowserCdpBackend;
 }
 
 export function createLocalCapabilityRuntime(
@@ -55,7 +57,7 @@ export function createLocalCapabilityRuntime(
     ...(windows === undefined ? {} : { windows }),
     ...(nativeHost === undefined ? {} : { nativeHost }),
   });
-  return { service: runtime.service, health: runtime.health, shell: runtime.shell };
+  return { service: runtime.service, health: runtime.health, shell: runtime.shell, domCdp: runtime.domCdp };
 }
 
 function nativeHostBridge(): NativeHostProcessBridge | undefined {

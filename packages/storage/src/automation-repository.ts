@@ -14,75 +14,37 @@ import {
   type AutomationEventRecord,
   type AutomationMilestoneRecord,
   type AutomationMilestoneStatus,
-  type AutomationPlan,
-  type AutomationRunRecord,
   type AutomationRunStatus,
   type AutomationVerificationEvidence,
+  type AutomationEventInput,
+  type CreateAutomationRunRequest,
+  type ReserveAutomationAttemptRequest,
+  type RecordAutomationVerificationRequest,
+  type StoredAutomationRun,
+  type TransitionAutomationMilestoneRequest,
+  type TransitionAutomationRunRequest,
+  type UpdateAutomationAttemptRequest,
   type Result,
 } from '@lnwjud/domain';
 import type { SqliteDatabase } from './database.js';
 
-export interface StoredAutomationRun {
-  readonly run: AutomationRunRecord;
-  readonly milestones: readonly AutomationMilestoneRecord[];
-  readonly attempts: readonly AutomationAttemptRecord[];
-}
+type MutationScope =
+  | TransitionAutomationRunRequest
+  | TransitionAutomationMilestoneRequest
+  | ReserveAutomationAttemptRequest
+  | UpdateAutomationAttemptRequest
+  | RecordAutomationVerificationRequest;
 
-export interface CreateAutomationRunRequest {
-  readonly id: string;
-  readonly goalId: string;
-  readonly workspaceId: string;
-  readonly ownerClientId: string;
-  readonly plan: AutomationPlan;
-  readonly createdAt: string;
-}
-
-export interface AutomationEventInput {
-  readonly kind: string;
-  readonly milestoneId?: string;
-  readonly attemptId?: string;
-  readonly payload: Readonly<Record<string, unknown>>;
-}
-
-interface MutationScope {
-  readonly runId: string;
-  readonly ownerClientId: string;
-  readonly workspaceId: string;
-  readonly expectedRevision: number;
-  readonly updatedAt: string;
-  readonly event: AutomationEventInput;
-}
-
-export interface TransitionAutomationRunRequest extends MutationScope {
-  readonly status: AutomationRunStatus;
-}
-
-export interface TransitionAutomationMilestoneRequest extends MutationScope {
-  readonly milestoneId: string;
-  readonly status: AutomationMilestoneStatus;
-}
-
-export interface ReserveAutomationAttemptRequest extends MutationScope {
-  readonly milestoneId: string;
-  readonly attemptId: string;
-  readonly ordinal: number;
-  readonly taskId: string;
-  readonly requestDigest: string;
-}
-
-export interface UpdateAutomationAttemptRequest extends MutationScope {
-  readonly attemptId: string;
-  readonly dispatchStatus: AutomationDispatchStatus;
-  readonly milestoneStatus?: AutomationMilestoneStatus;
-  readonly evidence?: readonly AutomationVerificationEvidence[];
-  readonly terminalState?: string | null;
-}
-
-export interface RecordAutomationVerificationRequest extends MutationScope {
-  readonly attemptId: string;
-  readonly evidence: readonly AutomationVerificationEvidence[];
-  readonly milestoneStatus?: Extract<AutomationMilestoneStatus, 'completed' | 'blocked' | 'failed'>;
-}
+export type {
+  AutomationEventInput,
+  CreateAutomationRunRequest,
+  ReserveAutomationAttemptRequest,
+  RecordAutomationVerificationRequest,
+  StoredAutomationRun,
+  TransitionAutomationMilestoneRequest,
+  TransitionAutomationRunRequest,
+  UpdateAutomationAttemptRequest,
+} from '@lnwjud/domain';
 
 interface RunRow {
   readonly id: string;

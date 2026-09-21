@@ -1,5 +1,6 @@
-export type AgentSwarmState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'termination_unverified';
-export type AgentSwarmTaskState = 'blocked' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'termination_unverified';
+import type { AgentSwarmState, AgentSwarmTaskState } from '@lnwjud/domain';
+
+export type { AgentSwarmState, AgentSwarmTaskState } from '@lnwjud/domain';
 
 export interface AgentSwarmTaskRequest {
   readonly id: string;

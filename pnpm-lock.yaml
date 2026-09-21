@@ -217,9 +217,6 @@ importers:
       '@lnwjud/shared':
         specifier: workspace:*
         version: link:../shared
-      '@lnwjud/storage':
-        specifier: workspace:*
-        version: link:../storage
       '@lnwjud/workspace':
         specifier: workspace:*
         version: link:../workspace

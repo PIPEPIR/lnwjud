@@ -8,6 +8,10 @@ describe('MCP Ponytail instructions', () => {
     expect(buildMcpInstructions('off')).not.toContain(BUNDLED_PONYTAIL_SKILL_ID);
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('use checkpoint_goal and session_handoff only');
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('Never invoke generic handoff skills');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('use those tools directly in the current conversation');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('Do not ask or suggest switching to ChatGPT Work, Codex');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('the required capability is not available through the exposed lnwjud tools');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).not.toContain('lnwjud_o');
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('USER_INSTRUCTIONS');
   });
 

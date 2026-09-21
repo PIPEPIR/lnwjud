@@ -35,6 +35,7 @@ import {
   type ExportWorkLogRequest,
   type IncidentExportResult,
   type InFlightWorkItem,
+  type InstallActivitySnapshot,
   type LnwjudApi,
   type LoadLogSessionHistoryRequest,
   type LoadLogSessionHistoryResult,
@@ -365,6 +366,7 @@ function userSettings(value: unknown): UserSettings {
     pdfProviderPath: stringField(value, 'pdfProviderPath'),
     lspCommands: stringRecordResponse(value.lspCommands),
     mcpHttpPort: integerField(value, 'mcpHttpPort'),
+    mcpAllowedHostnames: stringList(value.mcpAllowedHostnames),
     codexToolsEnabled: booleanField(value, 'codexToolsEnabled'),
     eccEnabled: value.eccEnabled === undefined ? false : booleanField(value, 'eccEnabled'),
     ponytailMode: ponytailModeResponse(value.ponytailMode),
@@ -664,6 +666,29 @@ function updateStatus(value: unknown): UpdateStatus {
     lastCheckedAt: nullableString(value.lastCheckedAt),
     message: nullableString(value.message),
     canInstall: booleanField(value, 'canInstall'),
+  };
+}
+
+function installActivitySnapshot(value: unknown): InstallActivitySnapshot {
+  if (!isRecord(value) || !Array.isArray(value.operations)) throw new Error('Invalid IPC response');
+  return {
+    operations: value.operations.map((entry) => {
+      if (!isRecord(entry)) throw new Error('Invalid IPC response');
+      const kind = entry.kind;
+      const phase = entry.phase;
+      if (kind !== 'app_update' && kind !== 'ngrok' && kind !== 'pdf_provider') throw new Error('Invalid IPC response');
+      if (phase !== 'preparing' && phase !== 'downloading' && phase !== 'verifying' && phase !== 'installing' && phase !== 'finalizing') throw new Error('Invalid IPC response');
+      const progress = entry.progressPercent;
+      if (progress !== null && (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0 || progress > 100)) throw new Error('Invalid IPC response');
+      return {
+        kind,
+        phase,
+        progressPercent: progress,
+        message: nullableString(entry.message),
+        startedAt: stringField(entry, 'startedAt'),
+        updatedAt: stringField(entry, 'updatedAt'),
+      };
+    }),
   };
 }
 
@@ -1341,6 +1366,20 @@ function onUpdateStatus(callback: (status: UpdateStatus) => void): () => void {
   };
 }
 
+function onInstallActivity(callback: (snapshot: InstallActivitySnapshot) => void): () => void {
+  const listener = (_event: unknown, payload: unknown): void => {
+    try {
+      callback(installActivitySnapshot(payload));
+    } catch {
+      // Ignore malformed push events.
+    }
+  };
+  ipcRenderer.on(pushChannels.installActivity, listener);
+  return (): void => {
+    ipcRenderer.removeListener(pushChannels.installActivity, listener);
+  };
+}
+
 function onLogEvent(callback: (line: LogLine) => void): () => void {
   const listener = (_event: unknown, payload: unknown): void => {
     try {
@@ -1425,6 +1464,7 @@ const api: LnwjudApi = {
     return { opened: booleanField(value, 'opened') };
   }),
   getUpdateStatus: () => invoke(ipcChannels.getUpdateStatus).then(updateStatus),
+  getInstallActivity: () => invoke(ipcChannels.getInstallActivity).then(installActivitySnapshot),
   factoryReset: () => invoke(ipcChannels.factoryReset).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { accepted: booleanField(value, 'accepted') };
@@ -1449,6 +1489,7 @@ const api: LnwjudApi = {
     }),
   onLogEvent,
   onUpdateStatus,
+  onInstallActivity,
 };
 
 contextBridge.exposeInMainWorld('lnwjud', api);

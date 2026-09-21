@@ -1,5 +1,6 @@
 export * from './command.js';
 export * from './automation.js';
+export * from './agent-swarm.js';
 export * from './errors.js';
 export * from './goal-continuation.js';
 export * from './invocation-authorization.js';

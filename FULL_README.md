@@ -53,9 +53,22 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.4.0
 
-## Current source version: v5.4.0
+## Current source version: v5.4.1
 
 Latest published release: **v5.4.0**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
+
+### What's new in v5.4.1 (source / release candidate)
+
+- **Issue #104 — Windows MCP localhost, reverse-proxy Host handling, and silent update path:** the loopback HTTP server was hardened for Windows localhost/IPv6 behavior; external hostnames can be explicitly allowed for reverse-proxy/tunnel scenarios instead of depending on manual Host rewriting; and the Windows installer/updater path was hardened against the silent `old-uninstaller.exe` stall reported against v5.3.1.
+- **Automatic MCP port selection:** the default local MCP port is now automatic so end users are not asked to understand or manually choose a port during normal setup. lnwjud selects a free port to avoid collisions and preserves an advanced/manual fixed-port override for integrations that require one.
+- **Managed browser lifecycle:** browser/CDP support is lazy-started on first use instead of launching Chrome as part of ordinary Desktop startup. Runtime readiness/Doctor state follows that lazy model, so an unused browser dependency does not block unrelated tools while navigation remains available when requested.
+- **Shared browser-start cancellation isolation:** concurrent `ensureStarted` callers retain single-flight launch behavior, but each caller owns only its own wait cancellation; aborting one request no longer tears down the shared launch needed by another active request.
+- **Global install/update activity coordinator:** app updates, ngrok install/update, and PDF Provider installation feed a shared install-activity coordinator with preparing/downloading/verifying/installing/finalizing phases. Desktop renders a blocking progress modal while these operations are active, preventing conflicting clicks and making long install steps visibly distinct from an application hang.
+- **Application/storage seam cleanup:** automation and Agent Swarm services were moved onto domain-owned repository contracts so application code no longer imports concrete storage adapters. Packaging coverage now guards this dependency direction.
+- **Release/CI dependency correctness:** Desktop CI builds the actual CLI dependency closure used by the packaged runtime, strengthening release verification against stale prebuilt workspace output.
+- **Current-chat lnwjud routing:** MCP server instructions now state that supported coding/repository/filesystem/shell/build/test/Git/CI/browser/local-computer work should continue through the exposed lnwjud tools in the current conversation. The contract is capability-based and connector-name agnostic; a regression explicitly prevents hardcoding the local instance name `lnwjud_o`.
+- **Verification evidence:** before release preparation the candidate passed standalone lint/typecheck, the canonical `verify-release.ps1 -SkipWindowsPackaging` gate, all 14 Electron E2E cases, 79 packaging tests, 23 release-gate tests, and exact-SHA Linux/macOS/Windows dev CI. The PR Windows release-verification job also completed successfully; an auxiliary GitHub Advanced Security AI-review run failed before analyzing repository code because GitHub requested an unsupported hosted model, not because it reported a security finding.
+- **Issue closure accounting:** v5.4.1 closes [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). Issues #100, #98, and #94 belong to earlier published release lines and are intentionally not re-counted as v5.4.1 closures.
 
 ### What's new in v5.4.0
 
@@ -301,7 +314,7 @@ historical compatibility baselines rather than the current release contract.
 
 #### Remote MCP OAuth + clearer connection hierarchy
 
-- Adds **Remote MCP via ngrok + OAuth** as the recommended easy ChatGPT connection path: lnwjud keeps its local Streamable HTTP MCP on loopback (normally `http://127.0.0.1:18765/mcp`), runs a separate OAuth-protected loopback gateway, and lets ngrok expose only that protected gateway as a public HTTPS `/mcp` URL.
+- Adds **Remote MCP via ngrok + OAuth** as the recommended easy ChatGPT connection path: lnwjud keeps its local Streamable HTTP MCP on loopback (a free loopback port is selected automatically by default), runs a separate OAuth-protected loopback gateway, and lets ngrok expose only that protected gateway as a public HTTPS `/mcp` URL.
 - Adds one-click **official ngrok installation through Microsoft Store/WinGet** instead of redistributing `ngrok.exe`; lnwjud verifies readiness by actually running `ngrok version`, shows a distinct READY state/path, disables redundant reinstall when healthy, and exposes repair only when the runtime is missing or unusable. Users paste their ngrok authtoken once, lnwjud stores it with Windows DPAPI, injects it only through the child-process environment, starts/stops ngrok automatically, detects the public URL, and provides Copy MCP URL controls.
 - Implements MCP OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, bearer-token protection, refresh tokens, and a one-time random Desktop handoff on an ephemeral `127.0.0.1` listener for exact supported ChatGPT callbacks. Discovering the public ngrok URL alone is not enough to authorize access; unsupported or spoofed redirects fail closed with `403 access_denied`.
 - Renames the Settings navigation to **Remote MCP & Tunnel — OAuth, ngrok, API Key, Client**, shows Remote MCP state/public URL and remembered authorization state on Home, adds an optional Doctor check, and records Remote MCP lifecycle events in Live Logs without logging OAuth/ngrok secrets.
@@ -438,14 +451,13 @@ full scans can still inspect paths allowed by the active workspace/policy.
 | ChatGPT Business custom app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: an Admin/Owner configures and publishes the public HTTPS `/mcp` once; members press Connect. Recognized ChatGPT callbacks—including `/connector/oauth/<redirect_id>` used by newly created Plugins/Apps—authorize through the local Desktop handoff. Unrecognized OAuth clients are rejected instead of falling back to a legacy manual-consent flow. |
 | ChatGPT web developer-mode app | OpenAI Secure MCP Tunnel | `tunnel-client` + lnwjud Desktop | Private outbound-only path to the Desktop loopback HTTP MCP; no public MCP port |
 | Codex CLI or another local MCP host | Local stdio MCP | `lnwjud-mcp-stdio.cmd` | Lowest-overhead local MCP path |
-| Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Defaults to `http://127.0.0.1:18765/mcp`; actual URL is shown in the UI |
+| Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Uses an automatically assigned free loopback port by default; actual URL is shown in the UI |
 | Supported OpenAI API/Codex surface | Secure MCP Tunnel | `tunnel-client` + local MCP target | Tunnel association and Platform permissions apply |
 
 For most ChatGPT web users, choose **one primary remote connection method**: Remote MCP via ngrok + OAuth is the recommended path, while OpenAI Secure MCP Tunnel is the alternative/advanced path. They are independent transports/authentication surfaces, so enabling one does not remove the other; power users can deliberately keep both online. In Desktop Settings, each method is grouped in its own collapsible section with independent ONLINE/READY/SETUP state, and Secure Tunnel auto-collapses while Remote MCP OAuth is online to keep the normal setup path focused.
 
 The desktop HTTP server starts automatically; adding a project is required before workspace-scoped work, but Doctor and Projects remain available when no project is registered yet.
-If the preferred port `18765` is busy, the server can fall back to an ephemeral
-loopback port; always use the endpoint shown in the dashboard. The **Start
+By default the server asks the OS for a free loopback port, so normal users do not need to configure a port or resolve collisions. Advanced users can pin a non-zero port in Settings or `LNWJUD_MCP_PORT`; if that explicit port is unavailable, lnwjud can fall back and reports the actual endpoint. Always use the endpoint shown in the dashboard. The **Start
 Connection** button is useful after a manual stop, while **Stop Connection**
 stops the current local HTTP listener.
 
@@ -853,8 +865,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.4.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.4.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -934,14 +946,12 @@ The desktop runtime auto-starts the loopback MCP server after resolving the
 selected workspace. In the dashboard:
 
 1. Select a registered workspace.
-2. Copy the displayed endpoint, normally `http://127.0.0.1:18765/mcp`.
+2. Copy the displayed loopback endpoint; the port is assigned automatically unless you explicitly pin one.
 3. Add it to a compatible local Streamable HTTP MCP client.
 4. Use **Stop Connection** when you intentionally want to stop the listener.
 5. Use **Start Connection** to start it again after a manual stop.
 
-The endpoint binds to 127.0.0.1, validates origin/host, and uses the same
-application services and permission checks as the dashboard. Do not expose the
-loopback URL through a generic port forward.
+The endpoint listens only on loopback: `127.0.0.1` and, when IPv6 loopback is available, `::1` on the same port. Host validation allows localhost values by default; any reverse-proxy/tunnel hostname must be explicitly allow-listed. Origin validation and the same application permission checks used by the dashboard remain enforced. Do not expose the raw loopback URL through a generic port forward.
 
 If dom_cdp is available, the dashboard can launch managed Chrome. Browser
 automation remains loopback-bound and separate from the file guard.
@@ -1822,9 +1832,7 @@ run with `corepack pnpm@10.15.0 test:acceptance`.
 
 ### Transport
 
-The local HTTP MCP endpoint binds to 127.0.0.1. Stdio is a child-process
-transport. Secure MCP Tunnel is an outbound HTTPS bridge, not an inbound public
-listener.
+The local HTTP MCP endpoint binds only to IPv4/IPv6 loopback (`127.0.0.1` and `::1` when available), never a wildcard interface. Stdio is a child-process transport. Secure MCP Tunnel is an outbound HTTPS bridge, not an inbound public listener.
 
 ### Filesystem
 

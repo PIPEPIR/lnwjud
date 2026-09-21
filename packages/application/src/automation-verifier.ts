@@ -14,8 +14,8 @@ import {
   type GoalLeaseProof,
   type Result,
   type WorkspaceId,
+  type StoredAutomationRun,
 } from '@lnwjud/domain';
-import type { StoredAutomationRun } from '@lnwjud/storage';
 import { WorkspacePathGuard, type Workspace } from '@lnwjud/workspace';
 import type { AutomationDispatchRequest } from './automation-service.js';
 import type { FileActor } from './file-service.js';

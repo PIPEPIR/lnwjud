@@ -46,12 +46,13 @@ describe('desktop packaged startup regression contract', () => {
     expect(migration).not.toContain('unprotectTunnelSecret');
   });
 
-  it('creates the desktop window before background MCP auto-start', () => {
+  it('creates the desktop window before background MCP without launching Managed Browser', () => {
     const desktop = section('function bootstrapDesktop', 'function bootstrapLogViewerOnly');
     const windowIndex = desktop.indexOf('createDesktopWindow();');
     const mcpIndex = desktop.indexOf('void runtime.autoStartMcp().catch');
     expect(windowIndex).toBeGreaterThanOrEqual(0);
     expect(mcpIndex).toBeGreaterThan(windowIndex);
+    expect(desktop).not.toContain('autoStartManagedBrowser');
   });
 
   it('replays persisted Live Log history on normal and standalone log-viewer startup', () => {

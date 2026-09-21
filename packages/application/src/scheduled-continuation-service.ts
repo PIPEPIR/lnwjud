@@ -23,8 +23,8 @@ import {
   type ScheduledContinuationSnapshot,
   type ScheduledContinuationWorkerLivenessPort,
   type ScheduledTaskCancellationInstruction,
+  type StoredAutomationRun,
 } from '@lnwjud/domain';
-import type { StoredAutomationRun } from '@lnwjud/storage';
 import type { FileActor } from './file-service.js';
 import type { GoalSnapshot, RunGoalResult } from './goal-continuation-service.js';
 

@@ -1,52 +1,18 @@
+import type {
+  AgentSwarmRecord,
+  AgentSwarmState,
+  AgentSwarmTaskRecord,
+  AgentSwarmTaskState,
+  AgentSwarmTaskUpdate,
+  CreateAgentSwarmRecord,
+} from '@lnwjud/domain';
 import type { SqliteDatabase } from './database.js';
 
-export type StoredAgentSwarmState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'termination_unverified';
-export type StoredAgentSwarmTaskState = 'blocked' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'termination_unverified';
-
-export interface StoredAgentSwarmTask {
-  readonly id: string;
-  readonly promptDigest: string;
-  readonly promptLength: number;
-  readonly dependsOn: readonly string[];
-  readonly state: StoredAgentSwarmTaskState;
-  readonly codexTaskId?: string;
-  readonly resultText: string;
-  readonly outputTruncated: boolean;
-  readonly error?: string;
-  readonly createdAt: string;
-  readonly startedAt?: string;
-  readonly finishedAt?: string;
-}
-
-export interface StoredAgentSwarm {
-  readonly id: string;
-  readonly ownerClientId: string;
-  readonly ownerSessionId: string;
-  readonly workspaceId: string;
-  readonly idempotencyKey: string;
-  readonly maxConcurrency: number;
-  readonly state: StoredAgentSwarmState;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly tasks: readonly StoredAgentSwarmTask[];
-}
-
-export interface CreateStoredAgentSwarm {
-  readonly id: string;
-  readonly ownerClientId: string;
-  readonly ownerSessionId: string;
-  readonly workspaceId: string;
-  readonly idempotencyKey: string;
-  readonly maxConcurrency: number;
-  readonly createdAt: string;
-  readonly tasks: readonly {
-    id: string;
-    promptDigest: string;
-    promptLength: number;
-    dependsOn: readonly string[];
-    state: StoredAgentSwarmTaskState;
-  }[];
-}
+export type StoredAgentSwarmState = AgentSwarmState;
+export type StoredAgentSwarmTaskState = AgentSwarmTaskState;
+export type StoredAgentSwarmTask = AgentSwarmTaskRecord;
+export type StoredAgentSwarm = AgentSwarmRecord;
+export type CreateStoredAgentSwarm = CreateAgentSwarmRecord;
 
 interface SwarmRow {
   id: string; owner_client_id: string; owner_session_id: string; workspace_id: string; idempotency_key: string;
@@ -104,10 +70,7 @@ export class SqliteAgentSwarmRepository {
     this.database.connection.prepare('UPDATE agent_swarms SET state = ?, updated_at = ? WHERE id = ?').run(state, updatedAt, id);
   }
 
-  public updateTask(id: string, taskId: string, patch: {
-    state?: StoredAgentSwarmTaskState; codexTaskId?: string | null; resultText?: string; outputTruncated?: boolean;
-    error?: string | null; startedAt?: string | null; finishedAt?: string | null;
-  }, updatedAt: string): void {
+  public updateTask(id: string, taskId: string, patch: AgentSwarmTaskUpdate, updatedAt: string): void {
     const current = this.database.connection.prepare('SELECT * FROM agent_swarm_tasks WHERE swarm_id = ? AND task_id = ?').get(id, taskId) as TaskRow | undefined;
     if (current === undefined) return;
     this.database.connection.prepare(`UPDATE agent_swarm_tasks SET state = ?, codex_task_id = ?, result_text = ?, output_truncated = ?, error = ?, started_at = ?, finished_at = ? WHERE swarm_id = ? AND task_id = ?`)

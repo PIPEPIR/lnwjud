@@ -687,7 +687,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="setting-grid two-col">
                   <div className="setting-field">
                     <span className="field-label">{t('settingsPage.localMcp')}</span>
-                    <code className="settings-path-display">{remoteMcp.localMcpUrl ?? props.dashboard.mcp.url ?? 'http://127.0.0.1:18765/mcp'}</code>
+                    <code className="settings-path-display">{remoteMcp.localMcpUrl ?? props.dashboard.mcp.url ?? t('settingsPage.localMcpAutoPending')}</code>
                     <p className="hint">{t('settingsPage.remoteLoopbackHint')}</p>
                   </div>
                   <div className="setting-field">

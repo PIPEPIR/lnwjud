@@ -76,7 +76,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type EccRuntimeOptions, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
+import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, normalizeMcpAllowedHostname, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -117,6 +117,7 @@ import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
 import { shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
+import { InstallActivityCoordinator } from './install-activity.js';
 
 const ECC_UPSTREAM_VERSION = '2.2.1';
 
@@ -225,7 +226,8 @@ const defaultUserSettings: UserSettings = {
   capabilityRoots: [],
   pdfProviderPath: '',
   lspCommands: {},
-  mcpHttpPort: 18_765,
+  mcpHttpPort: 0,
+  mcpAllowedHostnames: [],
   codexToolsEnabled: false,
   eccEnabled: false,
   ponytailMode: 'off',
@@ -764,6 +766,11 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return currentUpdateStatus;
   });
+  registerHandler(ipcChannels.getInstallActivity, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return installActivity.snapshot();
+  });
   registerHandler(ipcChannels.factoryReset, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
@@ -1237,6 +1244,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     pdfProviderPath: typeof record.pdfProviderPath === 'string' ? record.pdfProviderPath.trim() : invalidField('pdfProviderPath'),
     lspCommands: stringRecord(record.lspCommands, 'lspCommands', 32),
     mcpHttpPort: boundedInteger(record.mcpHttpPort, 'mcpHttpPort', 0, 65_535),
+    mcpAllowedHostnames: stringArray(record.mcpAllowedHostnames, 'mcpAllowedHostnames', 64).map((hostname, index) => normalizeMcpAllowedHostname(hostname) ?? invalidField(`mcpAllowedHostnames[${index}]`)),
     codexToolsEnabled: booleanField(record.codexToolsEnabled, 'codexToolsEnabled'),
     eccEnabled: record.eccEnabled === undefined ? false : booleanField(record.eccEnabled, 'eccEnabled'),
     ponytailMode: ponytailModeField(record.ponytailMode),
@@ -1364,6 +1372,8 @@ let runtimeDiagnosticsHistory: RuntimeDiagnosticsHistoryRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
 const rendererRecoveryBarrier = new RendererRecoveryBarrier();
 let crashRecoveryConfigured = false;
+const installActivity = new InstallActivityCoordinator((snapshot) => broadcastToAllWindows(pushChannels.installActivity, snapshot));
+
 let currentUpdateStatus: UpdateStatus = {
   phase: app.isPackaged ? 'idle' : 'unavailable',
   currentVersion: APP_VERSION,
@@ -1433,9 +1443,22 @@ function revealMainWindow(): void {
 
 function publishUpdateStatus(next: UpdateStatus): UpdateStatus {
   currentUpdateStatus = next;
+  syncUpdateInstallActivity(next);
   broadcastToAllWindows(pushChannels.updateStatus, next);
   refreshDesktopTrayMenu();
   return next;
+}
+
+function syncUpdateInstallActivity(status: UpdateStatus): void {
+  if (status.phase === 'downloading') {
+    installActivity.set({ kind: 'app_update', phase: 'downloading', progressPercent: status.progressPercent, message: status.message });
+    return;
+  }
+  if (status.phase === 'installing') {
+    installActivity.set({ kind: 'app_update', phase: 'installing', progressPercent: null, message: status.message });
+    return;
+  }
+  installActivity.clear('app_update');
 }
 
 function patchUpdateStatus(patch: Partial<UpdateStatus>): UpdateStatus {
@@ -2209,7 +2232,12 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
+      onProgress: (phase) => installActivity.set({ kind: 'pdf_provider', phase, progressPercent: null, message: null }),
     }),
+    onInstallActivity: (kind, update) => {
+      if (update === null) installActivity.clear(kind);
+      else installActivity.set({ kind, ...update });
+    },
     watchToolAvailability: true,
   });
   recordDesktopStartup('runtime-create:end');

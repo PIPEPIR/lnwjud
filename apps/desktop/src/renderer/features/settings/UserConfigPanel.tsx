@@ -41,7 +41,8 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   capabilityRoots: [],
   pdfProviderPath: '',
   lspCommands: {},
-  mcpHttpPort: 18_765,
+  mcpHttpPort: 0,
+  mcpAllowedHostnames: [],
   codexToolsEnabled: false,
   ponytailMode: 'off',
   updateAutoCheck: true,
@@ -286,6 +287,16 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
               <NumberField label={t('userConfig.shellWait')} value={draft.shellSynchronousWaitSeconds} min={5} max={60} onChange={(value) => patch({ shellSynchronousWaitSeconds: value })} />
               <NumberField label={t('userConfig.localMcpHttpPort')} value={draft.mcpHttpPort} min={0} max={65535} onChange={(value) => patch({ mcpHttpPort: value })} />
             </div>
+            <p className="hint">{t('userConfig.localMcpHttpPortHint')}</p>
+            <TextList
+              id="mcp-allowed-hostnames"
+              label={t('userConfig.mcpAllowedHostnames')}
+              value={draft.mcpAllowedHostnames}
+              rows={3}
+              placeholder="example.ngrok-free.dev"
+              onChange={(value) => patch({ mcpAllowedHostnames: value })}
+            />
+            <p className="hint">{t('userConfig.mcpAllowedHostnamesHint')}</p>
             <p className="hint">{t('userConfig.waitRangeHint')}</p>
           </section>
 

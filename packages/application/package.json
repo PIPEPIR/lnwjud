@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/application",
-  "version": "5.4.0",
+  "version": "5.4.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -23,7 +23,6 @@
     "@lnwjud/project": "workspace:*",
     "@lnwjud/search": "workspace:*",
     "@lnwjud/shared": "workspace:*",
-    "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {

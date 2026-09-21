@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.4.0';
+export const APP_VERSION = '5.4.1';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -68,6 +68,7 @@ export const ipcChannels = {
   captureIncident: 'lnwjud:capture-incident',
   openLogViewer: 'lnwjud:open-log-viewer',
   getUpdateStatus: 'lnwjud:get-update-status',
+  getInstallActivity: 'lnwjud:get-install-activity',
   factoryReset: 'lnwjud:factory-reset',
   checkForUpdates: 'lnwjud:check-for-updates',
   installUpdate: 'lnwjud:install-update',
@@ -77,6 +78,7 @@ export const ipcChannels = {
 export const pushChannels = {
   logEvent: 'lnwjud:event:log',
   updateStatus: 'lnwjud:event:update-status',
+  installActivity: 'lnwjud:event:install-activity',
 } as const;
 
 export type IpcChannel = typeof ipcChannels[keyof typeof ipcChannels];
@@ -252,6 +254,21 @@ export interface UpdateStatus {
   readonly canInstall: boolean;
 }
 
+export type InstallOperationKind = 'app_update' | 'ngrok' | 'pdf_provider';
+export type InstallOperationPhase = 'preparing' | 'downloading' | 'verifying' | 'installing' | 'finalizing';
+export interface InstallOperationStatus {
+  readonly kind: InstallOperationKind;
+  readonly phase: InstallOperationPhase;
+  readonly progressPercent: number | null;
+  readonly message: string | null;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+}
+export interface InstallActivitySnapshot {
+  readonly operations: readonly InstallOperationStatus[];
+}
+export const EMPTY_INSTALL_ACTIVITY: InstallActivitySnapshot = Object.freeze({ operations: [] });
+
 export type CloseBehavior = 'tray' | 'quit';
 export type PermissionDecisionSetting = 'ALLOW' | 'ASK' | 'DENY';
 export type ExtensionMode = 'enable_all' | 'allowlist';
@@ -288,6 +305,7 @@ export interface UserSettings {
   readonly pdfProviderPath: string;
   readonly lspCommands: Readonly<Record<string, string>>;
   readonly mcpHttpPort: number;
+  readonly mcpAllowedHostnames: readonly string[];
   readonly codexToolsEnabled: boolean;
   /** Host-owned ECC consent gate. Missing/false means ECC stays disabled. */
   readonly eccEnabled?: boolean;
@@ -1082,6 +1100,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.captureIncident]: undefined;
   readonly [ipcChannels.openLogViewer]: undefined;
   readonly [ipcChannels.getUpdateStatus]: undefined;
+  readonly [ipcChannels.getInstallActivity]: undefined;
   readonly [ipcChannels.factoryReset]: undefined;
   readonly [ipcChannels.checkForUpdates]: undefined;
   readonly [ipcChannels.installUpdate]: undefined;
@@ -1155,6 +1174,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.captureIncident]: IncidentExportResult;
   readonly [ipcChannels.openLogViewer]: { readonly opened: boolean };
   readonly [ipcChannels.getUpdateStatus]: UpdateStatus;
+  readonly [ipcChannels.getInstallActivity]: InstallActivitySnapshot;
   readonly [ipcChannels.factoryReset]: { readonly accepted: boolean };
   readonly [ipcChannels.checkForUpdates]: UpdateStatus;
   readonly [ipcChannels.installUpdate]: { readonly accepted: boolean; readonly status: UpdateStatus };
@@ -1228,10 +1248,12 @@ export interface LnwjudApi {
   captureIncident(): Promise<IpcResponseMap[typeof ipcChannels.captureIncident]>;
   openLogViewer(): Promise<IpcResponseMap[typeof ipcChannels.openLogViewer]>;
   getUpdateStatus(): Promise<IpcResponseMap[typeof ipcChannels.getUpdateStatus]>;
+  getInstallActivity(): Promise<IpcResponseMap[typeof ipcChannels.getInstallActivity]>;
   factoryReset(): Promise<IpcResponseMap[typeof ipcChannels.factoryReset]>;
   checkForUpdates(): Promise<IpcResponseMap[typeof ipcChannels.checkForUpdates]>;
   installUpdate(): Promise<IpcResponseMap[typeof ipcChannels.installUpdate]>;
   getGitDiff(request: GetGitDiffRequest): Promise<IpcResponseMap[typeof ipcChannels.getGitDiff]>;
   onLogEvent(callback: (line: LogLine) => void): () => void;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
+  onInstallActivity(callback: (snapshot: InstallActivitySnapshot) => void): () => void;
 }

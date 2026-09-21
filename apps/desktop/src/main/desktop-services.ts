@@ -82,6 +82,7 @@ import {
   parseCloseBehavior,
   parseCustomPermissionSettings,
   parseIntegerSetting,
+  parseMcpAllowedHostnames,
   parsePathList,
   parsePonytailMode,
   normalizeProjectProfile,
@@ -95,6 +96,7 @@ import {
   serializeAllowedRoots,
   serializeCustomPermissionSettings,
   serializeDestructiveAutoApprovalPolicy,
+  serializeMcpAllowedHostnames,
   serializePathList,
   serializeStringRecordSetting,
   currentPlatformProfile,
@@ -133,6 +135,7 @@ import {
   type ToolCatalogItem,
   type ToolProfileDecision,
   type InFlightWorkItem,
+  type InstallOperationPhase,
   type LoadLogSessionHistoryRequest,
   type LoadLogSessionHistoryResult,
   type LogSnapshot,
@@ -235,6 +238,7 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly onInstallActivity?: (kind: 'ngrok' | 'pdf_provider', update: { readonly phase: InstallOperationPhase; readonly progressPercent: number | null; readonly message: string | null } | null) => void;
   readonly checkpointEncryptionKey?: Buffer;
   readonly decryptTunnelSecret?: (cipherText: string) => Promise<string>;
   /** Enables bounded SQLite polling for long-lived stdio processes that receive writes from another process. */
@@ -326,6 +330,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const automationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
+  migrateLegacyMcpHttpPort(settingsRepository, process.env);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
   const stopToolAvailabilityWatch = options.watchToolAvailability === true
     ? toolAvailabilityService.watch(250)
@@ -588,9 +593,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
   );
   const mcpPort = readMcpPort(process.env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined);
+  const mcpAllowedHostnames = parseMcpAllowedHostnames(process.env.LNWJUD_MCP_ALLOWED_HOSTNAMES ?? settingsRepository.get(USER_SETTING_KEYS.mcpAllowedHostnames) ?? undefined);
   const mcpLifecycle = new DesktopMcpLifecycle({
     createServerOptions: (): McpHttpServerOptions => ({
       port: mcpPort,
+      allowedHostnames: mcpAllowedHostnames,
       services: mcpServices,
       actor: mcpActor,
       activityTracker,
@@ -671,8 +678,27 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     dataPath,
     getLocalMcpUrl: async (): Promise<string | null> => mcpLifecycle.status().url,
     ensureLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
+    onInstallProgress: (phase): void => { options.onInstallActivity?.('ngrok', { phase, progressPercent: null, message: null }); },
     ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
   });
+  const withInstallActivity = async <T>(
+    kind: 'ngrok' | 'pdf_provider',
+    message: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    options.onInstallActivity?.(kind, { phase: 'preparing', progressPercent: null, message });
+    try {
+      return await operation();
+    } finally {
+      options.onInstallActivity?.(kind, null);
+    }
+  };
+  const withNgrokInstallIfNeeded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const status = await remoteMcpController.status();
+    return status.installed
+      ? operation()
+      : withInstallActivity('ngrok', 'Installing ngrok…', operation);
+  };
   const oauthLoginManager = new TunnelOAuthLoginManager({
     backend: oauthTunnelBackend,
     provider: oauthTunnelAuthProvider,
@@ -867,14 +893,18 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     const available = result.value.available !== false;
     const ready = result.value.ready !== false;
     const reason = typeof result.value.reason === 'string' ? result.value.reason : undefined;
+    const readinessReason = typeof result.value.readinessReason === 'string' ? result.value.readinessReason : undefined;
     if (reason === 'unsupported_platform') {
       return { status: 'fail', detail: `${name} is unsupported on ${process.platform} (unsupported_platform)` };
+    }
+    if (name === 'dom_cdp' && available && readinessReason === 'browser_not_running') {
+      return { status: 'pass', detail: 'Managed Browser is installed and will start automatically when a browser tool is used' };
     }
     if (ready) return { status: 'pass', detail: reason ?? `${name} is ready` };
     return {
       status: available ? 'fail' : 'unknown',
       detail: reason ?? (name === 'dom_cdp' && available
-        ? 'Managed Browser is installed but stopped; start Managed Browser to use browser debugging tools'
+        ? 'Managed Browser needs setup before browser debugging tools can run'
         : available ? `${name} needs setup` : `${name} is unavailable`),
     };
   };
@@ -1413,10 +1443,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return observedTunnelStatus();
     },
     getRemoteMcpStatus: () => remoteMcpController.status(),
-    installRemoteMcpProvider: async () => { const status = await remoteMcpController.installProvider(); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
+    installRemoteMcpProvider: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.installProvider()); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
     saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
     setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] static domain ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'}`); return status; },
-    startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
+    startRemoteMcp: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.start()); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     resetRemoteMcpOAuth: async () => { const status = await remoteMcpController.resetOAuthTrust(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
     setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {
@@ -1476,10 +1506,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { configured: true, profilePath };
     },
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
-      // This path is invoked only by the user clicking the desktop UI action.
-      // Preserve the normal MCP authorization boundary while carrying that explicit click
-      // through to the capability backend so launch is not rejected as unconfirmed.
-      const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch', userConfirmed: true });
+      const result = await capabilityRuntime.domCdp.ensureStarted();
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
@@ -1487,7 +1514,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       if (process.platform !== pdfTarget.platform || process.arch !== pdfTarget.arch) {
         throw new Error(`The bundled PDF provider installer supports only ${pdfTarget.platform}/${pdfTarget.arch}; configure a native pdftotext provider on this host.`);
       }
-      const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
+      const installed = await withInstallActivity('pdf_provider', 'Installing PDF Provider…', () => (options.pdfProviderInstaller ?? installPdfProvider)(dataPath));
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
       const next = readSettings();
@@ -1702,7 +1729,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       tunnelController,
       readSettings().tunnelAutoReconnect,
     ),
-    autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
+    autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => {
+      const status = await remoteMcpController.status();
+      if (!status.autoStartEnabled || status.installed) return remoteMcpController.autoStartIfDesired();
+      return withInstallActivity('ngrok', 'Installing ngrok…', () => remoteMcpController.autoStartIfDesired());
+    },
     close: closeRuntime,
   };
 }
@@ -2149,6 +2180,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     pdfProviderPath: settingsRepository.get(USER_SETTING_KEYS.pdfProviderPath)?.trim() ?? '',
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
+    mcpAllowedHostnames: parseMcpAllowedHostnames(env.LNWJUD_MCP_ALLOWED_HOSTNAMES ?? settingsRepository.get(USER_SETTING_KEYS.mcpAllowedHostnames) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
     eccEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.eccEnabled), DEFAULT_ECC_ENABLED),
     ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
@@ -2179,6 +2211,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, settings.pdfProviderPath.trim());
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
+  settingsRepository.set(USER_SETTING_KEYS.mcpAllowedHostnames, serializeMcpAllowedHostnames(settings.mcpAllowedHostnames));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.eccEnabled, settings.eccEnabled === true ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
@@ -2242,6 +2275,7 @@ function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boo
     || previous.mcpCallTimeoutMs !== next.mcpCallTimeoutMs
     || previous.mcpIdleTimeoutMs !== next.mcpIdleTimeoutMs
     || previous.mcpHttpPort !== next.mcpHttpPort
+    || JSON.stringify(previous.mcpAllowedHostnames) !== JSON.stringify(next.mcpAllowedHostnames)
     || previous.codexToolsEnabled !== next.codexToolsEnabled
     || previous.ponytailMode !== next.ponytailMode
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)
@@ -2257,7 +2291,18 @@ function readLocale(settingsRepository: SqliteSettingsRepository): UiLocale {
   return value === 'en' ? 'en' : 'th';
 }
 
-export const DEFAULT_MCP_HTTP_PORT = 18_765;
+export const DEFAULT_MCP_HTTP_PORT = 0;
+const LEGACY_DEFAULT_MCP_HTTP_PORT = 18_765;
+
+function migrateLegacyMcpHttpPort(settingsRepository: SqliteSettingsRepository, env: NodeJS.ProcessEnv): void {
+  if ((env.LNWJUD_MCP_PORT ?? '').trim().length > 0) return;
+  if (settingsRepository.get(USER_SETTING_KEYS.mcpHttpPortAutoMigrationV1) === '1') return;
+  const stored = settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort)?.trim();
+  if (stored === undefined || stored.length === 0 || stored === String(LEGACY_DEFAULT_MCP_HTTP_PORT) || stored === '5000') {
+    settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(DEFAULT_MCP_HTTP_PORT));
+  }
+  settingsRepository.set(USER_SETTING_KEYS.mcpHttpPortAutoMigrationV1, '1');
+}
 
 function readMcpPort(value: string | undefined): number {
   if (value === undefined || value.trim().length === 0) return DEFAULT_MCP_HTTP_PORT;

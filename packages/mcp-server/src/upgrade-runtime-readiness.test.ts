@@ -228,15 +228,19 @@ describe('upgrade runtime readiness facades', () => {
     expect(missingTargetCalls.some((call) => ['query', 'screenshot'].includes(String(call.input.action)))).toBe(false);
   });
 
-  it('reports a stopped managed browser as start-required without making doomed page calls', async () => {
+  it('recovers a stopped managed browser before running browser diagnostics', async () => {
     const calls: string[] = [];
+    let ready = false;
     const services = {
       capabilities: {
         async execute(_tool: string, input: unknown) {
           const action = String((input as { action?: unknown }).action ?? '');
           calls.push(action);
-          if (action === 'status') return ok({ ready: false, browserRunning: false, debugPort: 9222 });
-          throw new Error(`Unexpected browser action while stopped: ${action}`);
+          if (action === 'status') return ok({ ready, browserRunning: ready, debugPort: 9222 });
+          if (action === 'list_tabs') { ready = true; return ok({ tabs: [{ id: 'tab-1' }] }); }
+          if (action === 'query') return ok({ ok: true, text: 'body' });
+          if (action === 'screenshot') return ok({ format: 'png', data_base64: 'aGVsbG8=' });
+          throw new Error(`Unexpected browser action: ${action}`);
         },
       },
     } as unknown as McpApplicationServices;
@@ -246,16 +250,13 @@ describe('upgrade runtime readiness facades', () => {
       ok: true,
       value: {
         tool: 'browser_debug_context',
-        status: 'needs_setup',
-        readinessReason: 'runtime_not_ready',
-        deliveryState: 'operational',
+        status: 'ready',
         available: true,
-        ready: false,
-        executed: false,
-        requirements: [expect.stringContaining('managed browser')],
+        ready: true,
+        executed: true,
       },
     });
-    expect(calls).toEqual(['status']);
+    expect(calls).toEqual(['status', 'list_tabs', 'status', 'list_tabs', 'query', 'screenshot']);
   });
 
   it('does not fake browser console/network history when the backend has no retained event stream', async () => {

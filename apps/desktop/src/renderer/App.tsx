@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { workspaceScopeMatches } from '@lnwjud/ipc-contracts';
+import { EMPTY_INSTALL_ACTIVITY, workspaceScopeMatches } from '@lnwjud/ipc-contracts';
 import type {
   DashboardSnapshot,
   DestructiveDeletePolicy,
@@ -10,6 +10,7 @@ import type {
   LogSessionSummary,
   LiveLogExportReference,
   LogSource,
+  InstallActivitySnapshot,
   PermissionProfileName,
   PdfProviderInstallResult,
   PonytailModeOverride,
@@ -25,6 +26,7 @@ import type {
   WorkLogEntry,
 } from '@lnwjud/ipc-contracts';
 import { AppShell, type Screen } from './features/shell/AppShell.js';
+import { GlobalInstallProgressModal } from './features/shell/GlobalInstallProgressModal.js';
 import { ControlCenterPage } from './features/home/ControlCenterPage.js';
 import { ProjectsPage } from './features/projects/ProjectsPage.js';
 import { GitPage } from './features/git/GitPage.js';
@@ -72,6 +74,7 @@ export function App(): ReactElement {
   const [incidentNotice, setIncidentNotice] = useState<string | null>(null);
   const [incidentBusy, setIncidentBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [installActivity, setInstallActivity] = useState<InstallActivitySnapshot>(EMPTY_INSTALL_ACTIVITY);
   const updateInstallTransitionRef = useRef(false);
   const [firstRunTunnelTipOpen, setFirstRunTunnelTipOpen] = useState(false);
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
@@ -124,6 +127,22 @@ export function App(): ReactElement {
         updateInstallTransitionRef.current = status.phase === 'installing';
         setUpdateStatus(status);
       }
+    });
+    return (): void => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let eventSeen = false;
+    void window.lnwjud.getInstallActivity().then((snapshot) => {
+      if (!disposed && !eventSeen) setInstallActivity(snapshot);
+    }).catch(() => undefined);
+    const unsubscribe = window.lnwjud.onInstallActivity((snapshot) => {
+      eventSeen = true;
+      if (!disposed) setInstallActivity(snapshot);
     });
     return (): void => {
       disposed = true;
@@ -849,25 +868,34 @@ export function App(): ReactElement {
     }
   }
 
+  const installBusy = installActivity.operations.length > 0;
+
   if (dashboard === null) {
     return (
-      <div className="boot-screen">
-        {bootError === null ? t('app.loading') : (
-          <div className="boot-recovery" role="alert">
-            <strong>{t('app.bootFailed')}</strong>
-            <p>{bootError}</p>
-            <div className="inline-actions">
-              <button type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</button>
-              <button type="button" onClick={() => { void popOutLogViewer(); }}>{t('app.openLogs')}</button>
-            </div>
+      <>
+        <div className="app-interaction-root" inert={installBusy ? true : undefined} aria-hidden={installBusy ? true : undefined}>
+          <div className="boot-screen">
+            {bootError === null ? t('app.loading') : (
+              <div className="boot-recovery" role="alert">
+                <strong>{t('app.bootFailed')}</strong>
+                <p>{bootError}</p>
+                <div className="inline-actions">
+                  <button type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</button>
+                  <button type="button" onClick={() => { void popOutLogViewer(); }}>{t('app.openLogs')}</button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+        <GlobalInstallProgressModal locale={locale} activity={installActivity} />
+      </>
     );
   }
 
   return (
-    <AppShell
+    <>
+      <div className="app-interaction-root" inert={installBusy ? true : undefined} aria-hidden={installBusy ? true : undefined}>
+        <AppShell
       locale={locale}
       appVersion={dashboard.appVersion}
       hostPlatform={dashboard.hostPlatform}
@@ -1041,7 +1069,10 @@ export function App(): ReactElement {
           }}
         />
       ) : null}
-    </AppShell>
+        </AppShell>
+      </div>
+      <GlobalInstallProgressModal locale={locale} activity={installActivity} />
+    </>
   );
 }
 

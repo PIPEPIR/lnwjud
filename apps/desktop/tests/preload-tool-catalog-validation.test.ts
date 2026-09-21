@@ -41,7 +41,7 @@ const userSettingsFixture: UserSettings = {
   capabilityRoots: [],
   pdfProviderPath: '',
   lspCommands: {},
-  mcpHttpPort: 18_765,
+  mcpHttpPort: 18_765, mcpAllowedHostnames: [],
   codexToolsEnabled: false,
   eccEnabled: false,
   ponytailMode: 'off',

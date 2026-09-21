@@ -140,7 +140,7 @@ jobs:
 
       - name: Build workspace packages used by desktop acceptance tests
         shell: bash
-        run: corepack pnpm@10.15.0 --filter '@lnwjud/mcp-server...' build
+        run: corepack pnpm@10.15.0 --filter '@lnwjud/cli...' build
 
       - name: Run isolated desktop test shard
         shell: bash

@@ -1,14 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Redactor } from '@lnwjud/audit';
-import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
-import type { ManagedProcess, ProcessLogResult } from '@lnwjud/process';
 import {
-  SqliteAgentSwarmRepository,
-  type StoredAgentSwarm,
-  type StoredAgentSwarmState,
-  type StoredAgentSwarmTask,
-  type StoredAgentSwarmTaskState,
-} from '@lnwjud/storage';
+  appError,
+  err,
+  isApplicationAuthorized,
+  ok,
+  type AgentSwarmRecord,
+  type AgentSwarmState,
+  type AgentSwarmTaskRecord,
+  type AgentSwarmTaskState,
+  type AgentSwarmTaskUpdate,
+  type CreateAgentSwarmRecord,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
+import type { ManagedProcess, ProcessLogResult } from '@lnwjud/process';
 import type { FileActor } from './file-service.js';
 import type {
   AgentSwarmListPage,
@@ -33,6 +39,16 @@ export interface AgentSwarmCodexPort {
   stop(actor: FileActor, workspaceId: string, codexTaskId: string, userConfirmed?: boolean, authorization?: InvocationAuthorization): Promise<Result<void>>;
 }
 
+export interface AgentSwarmRepositoryPort {
+  create(input: CreateAgentSwarmRecord): AgentSwarmRecord;
+  getOwned(id: string, ownerClientId: string, ownerSessionId: string, workspaceId: string): AgentSwarmRecord | undefined;
+  findByIdempotency(ownerClientId: string, ownerSessionId: string, workspaceId: string, idempotencyKey: string): AgentSwarmRecord | undefined;
+  listOwned(ownerClientId: string, ownerSessionId: string, workspaceId: string, limit: number, offset: number): readonly AgentSwarmRecord[];
+  updateSwarmState(id: string, state: AgentSwarmState, updatedAt: string): void;
+  updateTask(id: string, taskId: string, patch: AgentSwarmTaskUpdate, updatedAt: string): void;
+  markLiveTasksTerminationUnverified(): number;
+}
+
 interface LiveSwarm {
   readonly actor: FileActor;
   readonly workspaceId: string;
@@ -46,7 +62,7 @@ export class AgentSwarmService {
   private readonly live = new Map<string, LiveSwarm>();
 
   public constructor(
-    private readonly repository: SqliteAgentSwarmRepository,
+    private readonly repository: AgentSwarmRepositoryPort,
     private readonly codex: AgentSwarmCodexPort,
     private readonly now: () => Date = () => new Date(),
     private readonly idFactory: () => string = randomUUID,
@@ -245,7 +261,7 @@ export class AgentSwarmService {
 
   private refreshSwarmState(swarmId: string, actor: FileActor, workspaceId: string): void {
     const swarm = this.requireOwned(actor, workspaceId, swarmId);
-    let state: StoredAgentSwarmState = 'running';
+    let state: AgentSwarmState = 'running';
     if (swarm.tasks.some((task) => task.state === 'termination_unverified')) state = 'termination_unverified';
     else if (swarm.tasks.every((task) => task.state === 'cancelled')) state = 'cancelled';
     else if (swarm.tasks.every((task) => isTerminalTask(task.state))) state = swarm.tasks.every((task) => task.state === 'completed') ? 'completed' : 'failed';
@@ -253,7 +269,7 @@ export class AgentSwarmService {
     this.repository.updateSwarmState(swarmId, state, this.now().toISOString());
   }
 
-  private requireOwned(actor: FileActor, workspaceId: string, swarmId: string): StoredAgentSwarm {
+  private requireOwned(actor: FileActor, workspaceId: string, swarmId: string): AgentSwarmRecord {
     const swarm = this.repository.getOwned(swarmId, actor.clientId, actorSessionId(actor), workspaceId);
     if (swarm === undefined) throw new Error('Agent swarm ownership changed unexpectedly');
     return swarm;
@@ -261,7 +277,7 @@ export class AgentSwarmService {
 }
 
 function validateStart(request: AgentSwarmStartRequest): Result<void> {
-  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v5.4.0 supports read_only access only'));
+  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v5.4.1 supports read_only access only'));
   if (!Array.isArray(request.tasks) || request.tasks.length < 1 || request.tasks.length > MAX_TASKS) return err(appError('INVALID_INPUT', 'Agent swarm requires 1 to 4 tasks'));
   const ids = new Set<string>();
   for (const task of request.tasks) {
@@ -295,7 +311,7 @@ function hasCycle(tasks: readonly AgentSwarmTaskRequest[]): boolean {
   return tasks.some((task) => visit(task.id));
 }
 
-function toSnapshot(swarm: StoredAgentSwarm): AgentSwarmSnapshot {
+function toSnapshot(swarm: AgentSwarmRecord): AgentSwarmSnapshot {
   return {
     swarmId: swarm.id,
     workspaceId: swarm.workspaceId,
@@ -307,7 +323,7 @@ function toSnapshot(swarm: StoredAgentSwarm): AgentSwarmSnapshot {
   };
 }
 
-function toTaskSnapshot(task: StoredAgentSwarmTask): AgentSwarmTaskSnapshot {
+function toTaskSnapshot(task: AgentSwarmTaskRecord): AgentSwarmTaskSnapshot {
   return {
     id: task.id,
     dependsOn: task.dependsOn,
@@ -325,8 +341,8 @@ function sha256(value: string): string { return createHash('sha256').update(valu
 function actorSessionId(actor: FileActor): string { return actor.sessionId?.trim() || actor.clientId; }
 function boundedError(value: string): string { return REDACTOR.redactText(value).slice(0, MAX_ERROR_CHARS); }
 function isTerminalProcess(state: ManagedProcess['state']): boolean { return ['exited', 'failed', 'stopped', 'timed_out'].includes(state); }
-function isTerminalTask(state: StoredAgentSwarmTaskState): boolean { return ['completed', 'failed', 'cancelled', 'termination_unverified'].includes(state); }
-function isTerminalSwarm(state: StoredAgentSwarmState): boolean { return ['completed', 'failed', 'cancelled', 'termination_unverified'].includes(state); }
+function isTerminalTask(state: AgentSwarmTaskState): boolean { return ['completed', 'failed', 'cancelled', 'termination_unverified'].includes(state); }
+function isTerminalSwarm(state: AgentSwarmState): boolean { return ['completed', 'failed', 'cancelled', 'termination_unverified'].includes(state); }
 function delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function parseCursor(value: string): number | undefined { return /^\d{1,12}$/.test(value) ? Number.parseInt(value, 10) : undefined; }
 
