@@ -606,9 +606,12 @@ function providerMissing(tool: OfficeSemanticToolName, app: OfficeLocalApp): Res
 }
 
 function localProviderUnavailable(tool: OfficeSemanticToolName, app: OfficeLocalApp, platform: NodeJS.Platform): Result<unknown> {
+  let requirement = `Verified native Office automation provider for ${app} on ${platform}`;
+  if (platform === 'darwin') requirement = `Verified native macOS Office automation provider for ${app}`;
+  if (platform === 'linux') requirement = `Verified LibreOffice UNO or equivalent native provider for ${app}`;
   return ok({
     tool, status: 'unsupported', available: false, ready: false, executed: false,
-    provider: providerName(platform), app,
+    provider: providerName(platform), app, requirements: [requirement],
     reason: `No verified ${app} action provider is production-ready on ${platform}; UI automation was not used as a substitute`,
   });
 }

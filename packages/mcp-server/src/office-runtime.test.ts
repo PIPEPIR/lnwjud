@@ -31,6 +31,27 @@ function servicesWithOffice(calls: Array<{ tool: string; input: Record<string, u
 }
 
 describe('OfficeRuntimeService provider truthfulness', () => {
+  it.each([
+    ['linux', 'office_word', { action: 'read_text', file_path: 'package.json' }, 'Verified LibreOffice UNO or equivalent native provider for word'],
+    ['darwin', 'office_outlook', { action: 'list_folders' }, 'Verified native macOS Office automation provider for outlook'],
+  ] as const)('reports actionable non-Windows provider requirements on %s', async (platform, tool, input, requirement) => {
+    const runtime = new OfficeRuntimeService({ platform } as unknown as McpApplicationServices, actor);
+
+    const result = await runtime.execute(tool, input);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        tool,
+        status: 'unsupported',
+        available: false,
+        ready: false,
+        executed: false,
+        requirements: [requirement],
+      },
+    });
+  });
+
   it('does not report unsupported Windows actions as ready merely because they default to dry run', async () => {
     const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
     const runtime = new OfficeRuntimeService(servicesWithOffice(calls), actor);
