@@ -134,6 +134,8 @@ export interface ToolRegistryOptions {
   readonly ponytailActivationLedger?: PonytailActivationLedger;
   /** Current persisted per-tool user availability snapshot. Read dynamically so one registry instance observes live changes. */
   readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
+  /** Transport-scoped hard exposure boundary. Returning false makes the tool system-ineligible even if user settings enable it. */
+  readonly toolExposurePredicate?: (tool: McpToolDefinition) => boolean;
   readonly incrementalVerifier?: IncrementalVerifier;
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   readonly maxToolDurationMs?: number;
@@ -258,7 +260,9 @@ export class ToolRegistry {
       ...upgradeTools(context, incrementalVerifier, this.activity),
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
+    const toolExposurePredicate = options.toolExposurePredicate ?? (() => true);
     const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
+      if (!toolExposurePredicate(tool)) return false;
       if (isCodexDelegationTool(tool.name) && options.codexToolsEnabled !== true) return false;
       if (tool.name === 'agent_swarm_run' && services.agentSwarm === undefined) return false;
       const catalogEntry = upgradeCatalogEntry(tool.name);
@@ -274,9 +278,11 @@ export class ToolRegistry {
       isAllowed: (name) => !AUTOMATION_TOOL_NAMES.includes(name as typeof AUTOMATION_TOOL_NAMES[number]),
     }).map((tool) => withToolEnvelopes(tool));
     const exposedAutomationTools = automationTools(context).map((tool) => withToolEnvelopes(tool));
+    const systemEligibleBatchTools = exposedBatchTools.filter(toolExposurePredicate);
+    const systemEligibleAutomationTools = exposedAutomationTools.filter(toolExposurePredicate);
     this.allTools = [...exposedAllBaseTools, ...exposedBatchTools, ...exposedAutomationTools];
-    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
-    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools, ...exposedAutomationTools].map((tool) => tool.name));
+    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...systemEligibleBatchTools, ...systemEligibleAutomationTools].map((tool) => tool.name));
+    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...systemEligibleBatchTools, ...systemEligibleAutomationTools].map((tool) => tool.name));
     this.toolAvailabilitySnapshotProvider = options.toolAvailabilitySnapshotProvider ?? ((): ToolAvailabilitySnapshot => DEFAULT_TOOL_AVAILABILITY_SNAPSHOT);
     this.schemaRegistry = new ToolSchemaRegistry();
     for (const tool of this.allTools) this.schemaRegistry.register(tool);
