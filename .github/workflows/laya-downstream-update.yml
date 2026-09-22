@@ -48,9 +48,15 @@ jobs:
 
           if ($currentVersion -ne $upstreamVersion) {
             Write-Host "Upstream changed: $currentVersion -> $upstreamVersion"
+            $nativePreference = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
             git rebase upstream/main
-            if ($LASTEXITCODE -ne 0) {
+            $rebaseExit = $LASTEXITCODE
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            if ($rebaseExit -ne 0) {
+              $PSNativeCommandUseErrorActionPreference = $false
               git rebase --abort
+              $PSNativeCommandUseErrorActionPreference = $nativePreference
               "conflict=true" >> $env:GITHUB_OUTPUT
               "needs_build=false" >> $env:GITHUB_OUTPUT
               exit 0
@@ -64,8 +70,12 @@ jobs:
           }
 
           $tag = "laya-v$currentVersion"
+          $nativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
           gh release view $tag --repo $env:DOWNSTREAM_REPO *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+          $PSNativeCommandUseErrorActionPreference = $nativePreference
+          if ($releaseExists) {
             Write-Host "Downstream release $tag already exists; nothing to do."
             "version=$currentVersion" >> $env:GITHUB_OUTPUT
             "rebased=false" >> $env:GITHUB_OUTPUT
@@ -160,8 +170,12 @@ jobs:
           $tag = "laya-v$version"
           $dir = "apps/desktop/dist/installers"
 
+          $nativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
           gh release view $tag --repo $env:DOWNSTREAM_REPO *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+          $PSNativeCommandUseErrorActionPreference = $nativePreference
+          if ($releaseExists) {
             Write-Host "Release $tag already exists; keeping the existing validated release."
             exit 0
           }
