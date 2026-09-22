@@ -109,6 +109,57 @@ describe('RipgrepAdapter', () => {
     expect(receivedArgs).not.toContain(receivedArgs.join(' '));
   });
 
+  it('uses an explicit text-search target instead of searching the whole cwd', async () => {
+    let receivedArgs: readonly string[] = [];
+    let receivedCwd = '';
+    const runner: ProcessRunner = {
+      async run(_command, args, cwd): Promise<ProcessRunResult> {
+        receivedArgs = args;
+        receivedCwd = cwd;
+        return { exitCode: 1, stdout: '', stderr: '' };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', targetPath: 'fixture.ts', query: 'needle' })).resolves.toEqual({
+      ok: true,
+      value: { matches: [], truncated: false },
+    });
+    expect(receivedCwd).toBe('C:\\workspace');
+    expect(receivedArgs.slice(-3)).toEqual(['--', 'needle', 'fixture.ts']);
+  });
+
+  it('reports access-denied ripgrep failures as recoverable PERMISSION_DENIED', async () => {
+    const runner: ProcessRunner = {
+      async run(): Promise<ProcessRunResult> {
+        return { exitCode: 2, stdout: '', stderr: 'rg: ./Local\\Temp\\WinSAT: Access is denied. (os error 5)' };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    await expect(adapter.searchFiles({ rootPath: 'C:\\workspace' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'PERMISSION_DENIED', recoverable: true },
+    });
+  });
+
+  it('reports unrecognized ripgrep exit-code 2 failures as recoverable INTERNAL_ERROR', async () => {
+    const runner: ProcessRunner = {
+      async run(): Promise<ProcessRunResult> {
+        return { exitCode: 2, stdout: '', stderr: 'rg: unexpected process failure' };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'needle' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL_ERROR', recoverable: true },
+    });
+  });
+
   it('reports malformed ripgrep arguments as INVALID_INPUT with bounded diagnostics', async () => {
     const runner: ProcessRunner = { async run(): Promise<ProcessRunResult> { return { exitCode: 2, stdout: '', stderr: 'regex parse error: unclosed group\n' }; } };
     const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };

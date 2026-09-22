@@ -673,8 +673,18 @@ export class ToolRegistry {
     } catch (error: unknown) {
       await fencedMutationEnd?.().catch(() => undefined);
       fencedMutationEnd = undefined;
-      const response = mapError(sanitizeException(error, this.diagnostic));
-      await this.activity.end(callId, 'INTERNAL_ERROR', Date.now() - started, 'Operation failed');
+      let sanitizedDiagnostic: unknown;
+      const response = mapError(sanitizeException(error, (event) => {
+        sanitizedDiagnostic = event;
+        this.diagnostic?.(event);
+      }));
+      await this.activity.end(
+        callId,
+        'INTERNAL_ERROR',
+        Date.now() - started,
+        'Operation failed',
+        describeStructuredResultDetail(sanitizedDiagnostic),
+      );
       return response;
     }
   }

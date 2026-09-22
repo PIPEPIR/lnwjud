@@ -8,7 +8,7 @@ import { appError, err, ok } from '@lnwjud/domain';
 import { LocalCapabilityService, ShellCapabilityBackend } from '@lnwjud/capabilities';
 import { permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
-import type { ActivitySinkEvent } from './activity-tracker.js';
+import { ActivityTracker, type ActivitySinkEvent } from './activity-tracker.js';
 import { CODEX_DELEGATION_TOOL_NAMES, isCodexDelegationTool, ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
 import { GoalRequestCancellationService } from '@lnwjud/application';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
@@ -506,17 +506,30 @@ describe('MCP tool registry', () => {
     expect(followUp.structuredContent).toMatchObject({ matches: [], truncated: false });
   });
 
-  it('maps thrown application exceptions to INTERNAL_ERROR and sends redacted diagnostics', async () => {
+  it('maps thrown application exceptions to INTERNAL_ERROR and persists redacted diagnostics', async () => {
     const diagnostics: unknown[] = [];
+    const auditDetails: unknown[] = [];
     const services: McpApplicationServices = { search: {
       async searchText(): Promise<never> { throw new Error('Authorization: Bearer secret-token'); },
       async searchFiles() { return ok({ paths: [], truncated: false }); },
     } };
-    const response = await new ToolRegistry(services, actor, { diagnostic: (event: unknown): void => { diagnostics.push(event); } }).invoke('search_text', { workspaceId: 'workspace-1', query: 'needle' });
+    const activityTracker = new ActivityTracker(undefined, undefined, {
+      async record(event, detail): Promise<void> {
+        if (event.phase === 'completed') auditDetails.push(detail);
+      },
+    });
+    const response = await new ToolRegistry(services, actor, {
+      diagnostic: (event: unknown): void => { diagnostics.push(event); },
+      activityTracker,
+    }).invoke('search_text', { workspaceId: 'workspace-1', query: 'needle' });
     expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'INTERNAL_ERROR', message: 'Operation failed' } } });
     expect(response.content[0]?.text).not.toContain('secret-token');
     expect(JSON.stringify(diagnostics)).not.toContain('secret-token');
     expect(diagnostics).toHaveLength(1);
+    expect(auditDetails).toHaveLength(1);
+    expect(JSON.stringify(auditDetails)).not.toContain('secret-token');
+    expect(JSON.stringify(auditDetails)).toContain('[REDACTED]');
+    expect(JSON.stringify(auditDetails)).toContain('name=Error');
   });
 
   it('records activity sink events for successful tool calls', async () => {

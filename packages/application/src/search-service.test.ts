@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -28,6 +28,44 @@ describe('SearchService', () => {
 
     expect(result).toEqual({ ok: true, value: { matches: [], truncated: false } });
     expect(receivedRoot).toBe(workspace.realRootPath);
+  });
+
+  it('uses the parent directory as ripgrep cwd when text search path is a file', async () => {
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-search-file-'));
+    try {
+      const filePath = path.join(workspaceRoot, 'fixture.ts');
+      await writeFile(filePath, 'needle', 'utf8');
+      const canonicalRoot = await realpath(workspaceRoot);
+      const workspace: Workspace = { id: 'workspace-1', displayName: 'Fixture', rootPath: workspaceRoot, realRootPath: canonicalRoot, createdAt: new Date(0).toISOString() };
+      let receivedRoot = '';
+      let receivedTarget: string | undefined;
+      const adapter: SearchAdapter = {
+        async searchText(request) {
+          receivedRoot = request.rootPath;
+          receivedTarget = request.targetPath;
+          return { ok: true, value: { matches: [], truncated: false } };
+        },
+        async searchFiles() { return { ok: true, value: { paths: [], truncated: false } }; },
+      };
+      const repository: WorkspaceRepository = {
+        async list(): Promise<Workspace[]> { return [workspace]; },
+        async get(id: string): Promise<Workspace | null> { return id === workspace.id ? workspace : null; },
+        async insert(): Promise<void> {},
+        async delete(): Promise<void> {},
+      };
+
+      const result = await new SearchService(repository, adapter).searchText(
+        { clientId: 'test', clientName: 'test' },
+        workspace.id,
+        { query: 'needle', path: filePath, discovery: 'explicit' },
+      );
+
+      expect(result).toEqual({ ok: true, value: { matches: [], truncated: false } });
+      expect(receivedRoot).toBe(canonicalRoot);
+      expect(receivedTarget).toBe('fixture.ts');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it('passes automatic versus explicit discovery through to the search adapter', async () => {

@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EMPTY_REMOTE_MCP_STATUS } from '@lnwjud/ipc-contracts';
 import { createExplicitKeySecretProtector } from '@lnwjud/shared';
 import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeConfiguredPublicOrigin, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
@@ -12,6 +13,10 @@ interface RemoteMcpTestAccess {
   publicOrigin: string | null;
   configuredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectAttempts: number;
+  ensurePersistenceLoaded(): Promise<void>;
+  scheduleReconnect(reason: string): void;
   startGateway(localMcpUrl: string): Promise<void>;
 }
 
@@ -267,6 +272,60 @@ describe('Remote MCP OAuth gateway', () => {
       expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('retries a persistent Remote MCP after an unexpected disconnect and manual stop cancels the pending retry', async () => {
+    vi.useFakeTimers();
+    const persisted: RemoteMcpPersistedState = {
+      schemaVersion: 2,
+      desiredRunning: true,
+      configuredPublicOrigin: null,
+      trustedClients: [{
+        clientId: 'chatgpt-client',
+        clientName: 'ChatGPT',
+        redirectUris: ['https://chatgpt.com/connector/oauth/plugin-fixture_123'],
+        tokenEndpointAuthMethod: 'none',
+        clientSecret: null,
+      }],
+      refreshGrants: [],
+    };
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<null> => null,
+      persistence: { load: async () => persisted, save: async () => undefined },
+    });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.ensurePersistenceLoaded();
+    const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: true, autoStartEnabled: true };
+    const statusSpy = vi.spyOn(controller, 'status').mockResolvedValue(runningStatus);
+    const startSpy = vi.spyOn(controller, 'start').mockImplementation(async () => {
+      internal.runState = 'running';
+      return runningStatus;
+    });
+    try {
+      internal.runState = 'error';
+      internal.scheduleReconnect('ngrok exited unexpectedly');
+      expect(internal.reconnectTimer).not.toBeNull();
+      expect(internal.reconnectAttempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(startSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+
+      internal.runState = 'error';
+      internal.scheduleReconnect('ngrok exited again');
+      expect(internal.reconnectTimer).not.toBeNull();
+      await controller.stop();
+      expect(internal.reconnectTimer).toBeNull();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      startSpy.mockRestore();
+      statusSpy.mockRestore();
+      await controller.close();
+      vi.useRealTimers();
     }
   });
 

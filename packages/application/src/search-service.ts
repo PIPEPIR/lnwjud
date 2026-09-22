@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { appError, err, isFullBypassAuthorization, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import { RipgrepAdapter, type ContextDiscoveryMode, type SearchFilesRequest as AdapterFilesRequest, type SearchFilesResult, type SearchTextRequest as AdapterTextRequest, type SearchTextResult } from '@lnwjud/search';
 import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
@@ -40,8 +40,10 @@ export class SearchService {
     if (!workspace.ok) return workspace;
     const searchRoot = await resolveSearchRoot(workspace.value, request.path, authorization);
     if (!searchRoot.ok) return searchRoot;
+    const searchTarget = await resolveSearchTextTarget(searchRoot.value);
     return this.adapter.searchText({
-      rootPath: searchRoot.value,
+      rootPath: searchTarget.rootPath,
+      ...(searchTarget.targetPath === undefined ? {} : { targetPath: searchTarget.targetPath }),
       query: request.query,
       ...(request.glob === undefined ? {} : { glob: request.glob }),
       ...(request.maxResults === undefined ? {} : { maxResults: request.maxResults }),
@@ -72,6 +74,16 @@ export class SearchService {
       ? ok(undefined)
       : err(appError('INVALID_INPUT', 'Search result limit is invalid'));
   }
+}
+
+async function resolveSearchTextTarget(resolvedPath: string): Promise<{ readonly rootPath: string; readonly targetPath?: string }> {
+  try {
+    if (!(await stat(resolvedPath)).isFile()) return { rootPath: resolvedPath };
+  } catch {
+    return { rootPath: resolvedPath };
+  }
+  const api = hostPathApi(process.platform);
+  return { rootPath: api.dirname(resolvedPath), targetPath: api.basename(resolvedPath) };
 }
 
 async function resolveSearchRoot(workspace: Workspace, requestedPath: string | undefined, authorization?: InvocationAuthorization): Promise<Result<string>> {

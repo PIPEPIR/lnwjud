@@ -161,6 +161,7 @@ export class DirectProcessRunner implements ProcessRunner {
 
 export interface SearchTextRequest {
   readonly rootPath: string;
+  readonly targetPath?: string;
   readonly query: string;
   readonly glob?: string;
   readonly maxResults?: number;
@@ -211,7 +212,7 @@ export class RipgrepAdapter {
     const args = ['--json', '--no-heading', '--color', 'never', '--hidden', '--no-ignore'];
     if (discovery === 'automatic') this.appendDefaultGlobs(args);
     if (request.glob !== undefined) args.push('--glob', request.glob);
-    args.push('--', request.query, '.');
+    args.push('--', request.query, request.targetPath ?? '.');
     let observedMatches = 0;
     const processResult = await this.runner.run(executable.value, args, request.rootPath, {
       timeoutMs: SEARCH_PROCESS_TIMEOUT_MS,
@@ -225,8 +226,7 @@ export class RipgrepAdapter {
       },
     });
     if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
-      return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
+      return err(classifySearchError(processResult.exitCode, processResult.stderr));
     }
     const matches: SearchMatch[] = [];
     let hasAdditionalMatch = false;
@@ -267,8 +267,7 @@ export class RipgrepAdapter {
       },
     });
     if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
-      return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
+      return err(classifySearchError(processResult.exitCode, processResult.stderr));
     }
     const discoveredPaths = processResult.stdout
       .split(/\r?\n/)
@@ -300,6 +299,32 @@ export class RipgrepAdapter {
     if (typeof data.line_number !== 'number' || typeof data.lines !== 'object' || data.lines === null || !('text' in data.lines) || typeof data.lines.text !== 'string') return false;
     return true;
   }
+}
+
+function classifySearchError(exitCode: number, stderr: string):
+  | { readonly code: 'PERMISSION_DENIED'; readonly message: string; readonly recoverable: true }
+  | { readonly code: 'INVALID_INPUT'; readonly message: string; readonly recoverable: false }
+  | { readonly code: 'INTERNAL_ERROR'; readonly message: string; readonly recoverable: true } {
+  if (isSearchPermissionError(stderr)) {
+    const detail = boundedSearchError(stderr);
+    return {
+      code: 'PERMISSION_DENIED',
+      message: detail.length === 0 ? 'Search permission denied' : `Search permission denied: ${detail}`,
+      recoverable: true,
+    };
+  }
+  if (exitCode === 2 && isSearchArgumentError(stderr)) {
+    return { code: 'INVALID_INPUT', message: searchArgumentError(stderr), recoverable: false };
+  }
+  return { code: 'INTERNAL_ERROR', message: searchProcessError(stderr), recoverable: true };
+}
+
+function isSearchPermissionError(stderr: string): boolean {
+  return /(?:access (?:is )?denied|permission denied|\bEACCES\b|\bEPERM\b|\bos error (?:5|13)\b)/i.test(stderr);
+}
+
+function isSearchArgumentError(stderr: string): boolean {
+  return /(?:regex|glob) parse error|error parsing (?:regex|glob)|invalid (?:regex|glob)|(?:regex|glob) syntax error/i.test(stderr);
 }
 
 function searchArgumentError(stderr: string): string {

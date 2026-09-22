@@ -743,6 +743,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     </StatusMessage>
                   ) : null}
                   <p className="hint">{t('settingsPage.remoteFirstTimeHint')}</p>
+                  <StatusMessage tone="neutral">{t('settingsPage.remoteHostBoundaryHint')}</StatusMessage>
                   {remoteMcp.message === null ? null : <StatusMessage tone={remoteMcp.state === 'error' ? 'warning' : 'neutral'}>{remoteMcp.message}{remoteMcp.ngrokPath === null ? '' : ` · ngrok: ${remoteMcp.ngrokPath}`}</StatusMessage>}
                   {remoteMcpMessage === null ? null : <StatusMessage tone={remoteMcp.state === 'error' || /failed|error|exit|stopped unexpectedly/i.test(remoteMcpMessage) ? 'warning' : 'success'}>{remoteMcpMessage}</StatusMessage>}
                 </div>

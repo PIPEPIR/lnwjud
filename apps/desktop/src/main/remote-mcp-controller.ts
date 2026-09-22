@@ -83,6 +83,8 @@ const ACCESS_TTL_MS = 8 * 60 * 60_000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
 const LOCAL_APPROVAL_TTL_MS = 60_000;
 const MAX_PENDING_LOCAL_APPROVALS = 8;
+const REMOTE_MCP_RECONNECT_BASE_DELAY_MS = 2_000;
+const REMOTE_MCP_RECONNECT_MAX_DELAY_MS = 30_000;
 const CHATGPT_OAUTH_CALLBACK_PATHS = new Set(['/aip/oauth/callback', '/connector_platform_oauth_redirect']);
 const CHATGPT_OAUTH_DYNAMIC_CALLBACK_PATH = /^\/connector\/oauth\/[A-Za-z0-9_-]+$/;
 
@@ -112,6 +114,8 @@ export class RemoteMcpController {
   private readonly refreshTokens = new Map<string, AccessGrant>();
   private readonly localApprovalServers = new Set<Server>();
   private authorizationGeneration = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
 
   public constructor(options: RemoteMcpControllerOptions) {
     this.dataPath = options.dataPath;
@@ -220,6 +224,7 @@ export class RemoteMcpController {
 
   public async resetOAuthTrust(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
+    this.clearReconnectTimer(true);
     this.authorizationGeneration += 1;
     await this.closeLocalApprovalServers();
     for (const [clientId, client] of this.clients) this.clients.set(clientId, { ...client, trusted: false });
@@ -239,6 +244,7 @@ export class RemoteMcpController {
 
   public async start(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
+    this.clearReconnectTimer();
     if (this.runState === 'running') return this.status();
     this.runState = 'starting';
     this.message = 'Starting protected Remote MCP…';
@@ -283,12 +289,14 @@ export class RemoteMcpController {
         const fail = (message: string): void => {
           if (settled) return;
           settled = true;
-          if (this.runState !== 'stopped') {
+          const unexpectedOwnedExit = this.ngrok === child && this.runState !== 'stopped';
+          if (unexpectedOwnedExit) {
             this.runState = 'error';
             this.message = message;
           }
           this.publicOrigin = null;
           if (this.ngrok === child) this.ngrok = null;
+          if (unexpectedOwnedExit) this.scheduleReconnect(message);
           resolve(message);
         };
         child.once('error', (error) => { fail(`ngrok failed to start: ${redactNgrokError(errorMessage(error))}`); });
@@ -304,21 +312,25 @@ export class RemoteMcpController {
       this.publicOrigin = origin;
       this.runState = 'running';
       this.desiredRunning = true;
+      this.reconnectAttempts = 0;
       await this.persistState();
       this.message = this.hasTrustedClient()
-        ? 'Remote MCP is online. ChatGPT authorization is trusted and will reconnect automatically.'
+        ? 'Remote MCP is online. ChatGPT authorization is trusted; unexpected Remote MCP transport exits will reconnect automatically.'
         : 'Remote MCP is online. Connect the published lnwjud app from ChatGPT; supported ChatGPT OAuth clients complete through a local Desktop handoff without manual code entry.';
       return this.status();
     } catch (error) {
       await this.stopOwnedRuntime();
       this.runState = 'error';
-      this.message = errorMessage(error);
+      const message = errorMessage(error);
+      this.message = message;
+      this.scheduleReconnect(message);
       throw error;
     }
   }
 
   public async stop(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
+    this.clearReconnectTimer(true);
     this.runState = 'stopped';
     this.desiredRunning = false;
     this.message = 'Remote MCP stopped. Automatic start is disabled until you start it again.';
@@ -328,6 +340,7 @@ export class RemoteMcpController {
   }
 
   public async close(): Promise<void> {
+    this.clearReconnectTimer(true);
     this.runState = 'stopped';
     await this.stopOwnedRuntime();
   }
@@ -670,6 +683,29 @@ export class RemoteMcpController {
       const value = decrypted.plainText.trim();
       return value.length > 0 ? value : null;
     } catch { return null; }
+  }
+
+  private clearReconnectTimer(resetAttempts = false): void {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (resetAttempts) this.reconnectAttempts = 0;
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (!this.desiredRunning || !this.hasTrustedClient() || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
+    if (this.reconnectTimer !== null) {
+      this.message = `Remote MCP disconnected: ${reason}. Automatic reconnect is already scheduled (attempt ${this.reconnectAttempts})…`;
+      return;
+    }
+    const attempt = this.reconnectAttempts + 1;
+    const delayMs = Math.min(REMOTE_MCP_RECONNECT_MAX_DELAY_MS, REMOTE_MCP_RECONNECT_BASE_DELAY_MS * (2 ** Math.min(this.reconnectAttempts, 4)));
+    this.reconnectAttempts = attempt;
+    this.message = `Remote MCP disconnected: ${reason}. Reconnecting automatically in ${Math.ceil(delayMs / 1_000)}s (attempt ${attempt})…`;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.desiredRunning || !this.hasTrustedClient() || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
+      void this.start().catch(() => undefined);
+    }, delayMs);
   }
 
   private async closeLocalApprovalServers(): Promise<void> {
