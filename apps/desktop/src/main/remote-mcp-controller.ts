@@ -388,6 +388,11 @@ export class RemoteMcpController {
   private async handleGatewayRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     this.pruneOAuthState();
     const url = new URL(request.url ?? '/', this.publicOrigin ?? this.gatewayUrl ?? 'http://127.0.0.1');
+    if (request.method === 'GET' && url.pathname === '/.well-known/oauth-protected-resource/mcp-readonly') {
+      const origin = this.requirePublicOrigin();
+      json(response, 200, { resource: `${origin}/mcp-readonly`, authorization_servers: [origin], bearer_methods_supported: ['header'] });
+      return;
+    }
     if (request.method === 'GET' && (url.pathname === '/.well-known/oauth-protected-resource' || url.pathname === '/.well-known/oauth-protected-resource/mcp')) {
       const origin = this.requirePublicOrigin();
       json(response, 200, { resource: `${origin}/mcp`, authorization_servers: [origin], bearer_methods_supported: ['header'] });
@@ -470,12 +475,15 @@ export class RemoteMcpController {
       await this.handleToken(new URLSearchParams(await readText(request, 32 * 1024)), response);
       return;
     }
-    if (url.pathname === '/mcp') {
+    if (url.pathname === '/mcp' || url.pathname === '/mcp-readonly') {
       const bearer = parseBearer(request.headers.authorization);
       if (bearer === null || !this.validAccessToken(bearer)) {
         const origin = this.requirePublicOrigin();
+        const metadataPath = url.pathname === '/mcp-readonly'
+          ? '/.well-known/oauth-protected-resource/mcp-readonly'
+          : '/.well-known/oauth-protected-resource/mcp';
         response.statusCode = 401;
-        response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+        response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${origin}${metadataPath}"`);
         response.end('Unauthorized');
         return;
       }
@@ -484,7 +492,11 @@ export class RemoteMcpController {
         json(response, 503, { error: 'local_mcp_unavailable', error_description: 'The local lnwjud MCP listener could not be started for this Remote MCP request.' });
         return;
       }
-      await proxyMcp(request, response, localMcpUrl);
+      const localTarget = new URL(localMcpUrl);
+      localTarget.pathname = url.pathname;
+      localTarget.search = '';
+      localTarget.hash = '';
+      await proxyMcp(request, response, localTarget.toString());
       return;
     }
     if (request.method === 'GET' && url.pathname === '/') {
