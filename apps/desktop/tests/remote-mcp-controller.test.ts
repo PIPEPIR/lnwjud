@@ -418,6 +418,13 @@ describe('Remote MCP OAuth gateway', () => {
     expect(unauthorized.status).toBe(401);
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
 
+    const unauthorizedReadOnly = await fetch(`${origin}/mcp-readonly`, { method: 'POST', body: '{}' });
+    expect(unauthorizedReadOnly.status).toBe(401);
+    expect(unauthorizedReadOnly.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp-readonly');
+    const readOnlyMetadata = await fetch(`${origin}/.well-known/oauth-protected-resource/mcp-readonly`);
+    expect(readOnlyMetadata.status).toBe(200);
+    await expect(readOnlyMetadata.json()).resolves.toMatchObject({ resource: `${origin}/mcp-readonly` });
+
     const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-fixture_123';
     const registration = await fetch(`${origin}/oauth/register`, {
       method: 'POST',
@@ -467,6 +474,15 @@ describe('Remote MCP OAuth gateway', () => {
     expect(await authorized.json()).toEqual({ ok: true, source: 'first', path: '/mcp' });
     expect(upstreamAuthorization).toBeUndefined();
 
+    const authorizedReadOnly = await fetch(`${origin}/mcp-readonly`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokens.access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 11, method: 'tools/list' }),
+    });
+    expect(authorizedReadOnly.status).toBe(200);
+    expect(await authorizedReadOnly.json()).toEqual({ ok: true, source: 'first', path: '/mcp-readonly' });
+    expect(upstreamAuthorization).toBeUndefined();
+
     localMcpUrl = null;
     const recovered = await fetch(`${origin}/mcp`, {
       method: 'POST',
@@ -475,7 +491,7 @@ describe('Remote MCP OAuth gateway', () => {
     });
     expect(recovered.status).toBe(200);
     expect(await recovered.json()).toEqual({ ok: true, source: 'second', path: '/mcp' });
-    expect(ensureLocalMcpUrl).toHaveBeenCalledTimes(2);
+    expect(ensureLocalMcpUrl).toHaveBeenCalledTimes(3);
     expect(upstreamAuthorization).toBeUndefined();
 
     await controller.close();
