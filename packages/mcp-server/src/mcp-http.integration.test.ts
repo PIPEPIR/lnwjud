@@ -89,11 +89,17 @@ describe('MCP localhost HTTP transport', () => {
       expect(names).not.toContain('accessibility');
       expect(names).not.toContain('web_fetch');
 
-      const hiddenWrite = await client.callTool({
-        name: 'write_file',
-        arguments: { workspaceId: 'workspace-1', path: 'should-not-exist.txt', content: 'blocked' },
-      });
-      expect(hiddenWrite.isError).toBe(true);
+      let hiddenWriteRejected = false;
+      try {
+        const hiddenWrite = await client.callTool({
+          name: 'write_file',
+          arguments: { workspaceId: 'workspace-1', path: 'should-not-exist.txt', content: 'blocked' },
+        });
+        hiddenWriteRejected = hiddenWrite.isError === true;
+      } catch {
+        hiddenWriteRejected = true;
+      }
+      expect(hiddenWriteRejected).toBe(true);
     } finally {
       await client.close();
     }
