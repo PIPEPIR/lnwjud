@@ -4,6 +4,7 @@ import {
   appError,
   err,
   ok,
+  type GoalCheckpointResumeContext,
   type GoalEvidence,
   type GoalPlan,
   type GoalRecord,
@@ -55,6 +56,7 @@ export interface PrepareScheduledContinuationRequest {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds?: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly resumeContext?: GoalCheckpointResumeContext;
   readonly successorDelayMinutes?: number;
   readonly executionPreference?: 'cloud';
 }
@@ -350,6 +352,7 @@ export class ScheduledContinuationService {
       const blockers = normalizeStrings(request.blockers, 20, 512, 'blockers');
       const evidence = normalizeEvidence(request.evidence);
       const trackedTasks = normalizeTrackedTasks(request.trackedTasks, request.activeTaskIds);
+      const resumeContext = normalizeResumeContext(request.resumeContext);
       const activeTaskIds = blockingTaskIds(trackedTasks);
       const executionPreference = request.executionPreference ?? 'cloud';
       if (executionPreference !== 'cloud') throw new Error('Scheduled continuation requires cloud execution');
@@ -367,6 +370,7 @@ export class ScheduledContinuationService {
         evidence,
         activeTaskIds,
         trackedTasks,
+        resumeContext,
         occurrence,
         intervalMinutes,
         initialDelayMinutes,
@@ -389,6 +393,7 @@ export class ScheduledContinuationService {
         evidence,
         activeTaskIds,
         trackedTasks,
+        ...(resumeContext === undefined ? {} : { resumeContext }),
         dueAt,
         occurrence,
         intervalMinutes,
@@ -1171,6 +1176,32 @@ function normalizeEvidence(values: readonly GoalEvidence[]): readonly GoalEviden
     if (!['path', 'hash', 'task', 'note'].includes(value.kind)) throw new Error('evidence is invalid');
     return { kind: value.kind, value: safeText(value.value, 1_024, 'evidence') };
   });
+}
+
+function normalizeResumeContext(value: GoalCheckpointResumeContext | undefined): GoalCheckpointResumeContext | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value.commands) || value.commands.length > 50) throw new Error('resumeContext commands are invalid');
+  const normalized: GoalCheckpointResumeContext = {
+    changedFiles: normalizeStrings(value.changedFiles, 100, 4_096, 'resumeContext changedFiles'),
+    commands: value.commands.map((entry) => {
+      if (entry.status !== 'passed' && entry.status !== 'failed' && entry.status !== 'running') throw new Error('resumeContext command status is invalid');
+      if (entry.exitCode !== undefined && !Number.isInteger(entry.exitCode)) throw new Error('resumeContext command exitCode is invalid');
+      return {
+        command: safeText(entry.command, 2_048, 'resumeContext command'),
+        status: entry.status,
+        ...(entry.exitCode === undefined ? {} : { exitCode: entry.exitCode }),
+        ...(entry.result === undefined ? {} : { result: safeText(entry.result, 2_048, 'resumeContext command result', true) }),
+      };
+    }),
+    decisions: normalizeStrings(value.decisions, 100, 1_024, 'resumeContext decisions'),
+    failedAttempts: normalizeStrings(value.failedAttempts, 100, 1_024, 'resumeContext failedAttempts'),
+    pendingValidation: normalizeStrings(value.pendingValidation, 100, 1_024, 'resumeContext pendingValidation'),
+    resumePrerequisites: normalizeStrings(value.resumePrerequisites, 100, 1_024, 'resumeContext resumePrerequisites'),
+    stateFacts: normalizeEvidence(value.stateFacts),
+    artifacts: normalizeEvidence(value.artifacts),
+  };
+  if (JSON.stringify(normalized).length > 64_000) throw new Error('resumeContext exceeds the 64 KB bounded payload limit');
+  return normalized;
 }
 
 function normalizeStrings(values: readonly string[], maxItems: number, maxLength: number, label: string): readonly string[] {

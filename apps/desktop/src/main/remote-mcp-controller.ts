@@ -15,6 +15,7 @@ interface RegisteredClient {
   readonly tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   readonly clientSecret: string | null;
   readonly trusted: boolean;
+  readonly registeredAt: number;
 }
 
 export interface RemoteMcpPersistedState {
@@ -83,6 +84,12 @@ const ACCESS_TTL_MS = 8 * 60 * 60_000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
 const LOCAL_APPROVAL_TTL_MS = 60_000;
 const MAX_PENDING_LOCAL_APPROVALS = 8;
+const UNTRUSTED_CLIENT_TTL_MS = 10 * 60_000;
+const MAX_UNTRUSTED_CLIENTS = 64;
+const MAX_TRUSTED_CLIENTS = 32;
+const MAX_AUTH_CODES = 128;
+const MAX_ACCESS_TOKENS = 256;
+const MAX_REFRESH_TOKENS = 128;
 const REMOTE_MCP_RECONNECT_BASE_DELAY_MS = 2_000;
 const REMOTE_MCP_RECONNECT_MAX_DELAY_MS = 30_000;
 const CHATGPT_OAUTH_CALLBACK_PATHS = new Set(['/aip/oauth/callback', '/connector_platform_oauth_redirect']);
@@ -228,12 +235,12 @@ export class RemoteMcpController {
     this.clearReconnectTimer(true);
     this.authorizationGeneration += 1;
     await this.closeLocalApprovalServers();
-    for (const [clientId, client] of this.clients) this.clients.set(clientId, { ...client, trusted: false });
+    for (const [clientId, client] of this.clients) this.clients.set(clientId, { ...client, trusted: false, registeredAt: this.now() });
     this.authCodes.clear();
     this.accessTokens.clear();
     this.refreshTokens.clear();
     await this.persistState();
-    this.message = 'ChatGPT authorization was reset. The next supported ChatGPT OAuth connection will complete automatically through the local Desktop handoff.';
+    this.message = 'ChatGPT authorization was reset. The next supported ChatGPT OAuth connection requires explicit local approval before it is trusted.';
     return this.status();
   }
 
@@ -379,6 +386,7 @@ export class RemoteMcpController {
   }
 
   private async handleGatewayRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    this.pruneOAuthState();
     const url = new URL(request.url ?? '/', this.publicOrigin ?? this.gatewayUrl ?? 'http://127.0.0.1');
     if (request.method === 'GET' && (url.pathname === '/.well-known/oauth-protected-resource' || url.pathname === '/.well-known/oauth-protected-resource/mcp')) {
       const origin = this.requirePublicOrigin();
@@ -427,10 +435,16 @@ export class RemoteMcpController {
         return;
       }
       const tokenEndpointAuthMethod: TokenEndpointAuthMethod = requestedAuthMethod;
+      this.pruneOAuthState();
+      const untrustedClientCount = [...this.clients.values()].filter((client) => !client.trusted).length;
+      if (untrustedClientCount >= MAX_UNTRUSTED_CLIENTS) {
+        json(response, 429, { error: 'temporarily_unavailable', error_description: 'Too many pending OAuth client registrations. Retry after older registrations expire.' });
+        return;
+      }
       const clientId = token(24);
       const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' ? token(32) : null;
       const clientName = typeof body.client_name === 'string' ? body.client_name.slice(0, 120) : null;
-      this.clients.set(clientId, { clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted: false });
+      this.clients.set(clientId, { clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted: false, registeredAt: this.now() });
       const registration: Record<string, unknown> = {
         client_id: clientId,
         client_id_issued_at: Math.floor(this.now() / 1_000),
@@ -492,7 +506,7 @@ export class RemoteMcpController {
       json(response, 400, { error: 'invalid_request' });
       return;
     }
-    if (isZeroClickChatGptClient(client)) {
+    if (isRecognizedChatGptClient(client) && !client.trusted) {
       const localApprovalUrl = await this.startChatGptLocalApproval({ clientId, redirectUri, state, challenge });
       response.statusCode = 302;
       response.setHeader('Cache-Control', 'no-store');
@@ -511,6 +525,11 @@ export class RemoteMcpController {
   }
 
   private redirectAuthorizationCode(input: { readonly clientId: string; readonly redirectUri: string; readonly state: string; readonly challenge: string }, response: ServerResponse): void {
+    this.pruneOAuthState();
+    if (this.authCodes.size >= MAX_AUTH_CODES) {
+      json(response, 503, { error: 'temporarily_unavailable', error_description: 'Too many active OAuth authorization requests. Retry after an earlier request expires.' });
+      return;
+    }
     const code = token(32);
     this.authCodes.set(code, { clientId: input.clientId, redirectUri: input.redirectUri, codeChallenge: input.challenge, expiresAt: this.now() + CODE_TTL_MS });
     const destination = new URL(input.redirectUri);
@@ -534,7 +553,7 @@ export class RemoteMcpController {
     const server = createServer((request, response) => {
       void (async (): Promise<void> => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-        if (request.method !== 'GET' || url.pathname !== approvalPath) {
+        if (url.pathname !== approvalPath || (request.method !== 'GET' && request.method !== 'POST')) {
           response.statusCode = 404;
           response.end('Not found');
           return;
@@ -545,14 +564,26 @@ export class RemoteMcpController {
           return;
         }
         const client = this.clients.get(input.clientId);
-        if (client === undefined || !isZeroClickChatGptClient(client) || !client.redirectUris.includes(input.redirectUri)) {
+        if (client === undefined || !isRecognizedChatGptClient(client) || !client.redirectUris.includes(input.redirectUri)) {
           response.statusCode = 410;
           response.end('Approval expired');
           return;
         }
+        if (request.method === 'GET') {
+          const displayName = escapeHtml(client.clientName ?? 'ChatGPT');
+          const callback = escapeHtml(input.redirectUri);
+          html(response, 200, `<!doctype html><meta charset="utf-8"><title>Approve lnwjud connection</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:48px auto;padding:0 20px;line-height:1.5}code{overflow-wrap:anywhere}button{font:inherit;padding:10px 18px}</style><main><h1>Approve ChatGPT connection?</h1><p>lnwjud received a first-use OAuth request.</p><p><strong>Client:</strong> ${displayName}</p><p><strong>Callback:</strong> <code>${callback}</code></p><form method="post"><button type="submit">Approve connection</button></form><p>Close this window to deny the request.</p></main>`);
+          return;
+        }
+        this.pruneOAuthState();
+        const trustedCount = [...this.clients.values()].filter((candidate) => candidate.trusted).length;
+        if (trustedCount >= MAX_TRUSTED_CLIENTS) {
+          html(response, 429, '<h1>OAuth trust limit reached</h1><p>Reset Remote MCP OAuth trust before approving another client.</p>');
+          return;
+        }
         consumed = true;
         this.clients.set(input.clientId, { ...client, trusted: true });
-        this.message = 'ChatGPT authorized through local Desktop confirmation. This OAuth connection is remembered for future starts.';
+        this.message = 'ChatGPT authorized after explicit local approval. This OAuth connection is remembered for future starts.';
         await this.persistState();
         this.redirectAuthorizationCode(input, response);
         const cleanup = setTimeout(() => { if (server.listening) server.close(); }, 1_000);
@@ -614,6 +645,11 @@ export class RemoteMcpController {
   }
 
   private async issueTokens(clientId: string, response: ServerResponse): Promise<void> {
+    this.pruneOAuthState();
+    if (this.accessTokens.size >= MAX_ACCESS_TOKENS || this.refreshTokens.size >= MAX_REFRESH_TOKENS) {
+      json(response, 503, { error: 'temporarily_unavailable', error_description: 'OAuth token capacity is temporarily exhausted. Retry after an older grant expires.' });
+      return;
+    }
     const access = token(32);
     const refresh = token(32);
     this.accessTokens.set(access, { clientId, expiresAt: this.now() + ACCESS_TTL_MS });
@@ -627,6 +663,22 @@ export class RemoteMcpController {
     if (grant === undefined) return false;
     if (grant.expiresAt <= this.now()) { this.accessTokens.delete(value); return false; }
     return true;
+  }
+
+  private pruneOAuthState(): void {
+    const now = this.now();
+    for (const [clientId, client] of this.clients) {
+      if (!client.trusted && client.registeredAt + UNTRUSTED_CLIENT_TTL_MS <= now) this.clients.delete(clientId);
+    }
+    for (const [code, grant] of this.authCodes) {
+      if (grant.expiresAt <= now || !this.clients.has(grant.clientId)) this.authCodes.delete(code);
+    }
+    for (const [accessToken, grant] of this.accessTokens) {
+      if (grant.expiresAt <= now || !this.clients.has(grant.clientId)) this.accessTokens.delete(accessToken);
+    }
+    for (const [refreshToken, grant] of this.refreshTokens) {
+      if (grant.expiresAt <= now || !this.clients.has(grant.clientId)) this.refreshTokens.delete(refreshToken);
+    }
   }
 
   private requirePublicOrigin(): string {
@@ -664,7 +716,7 @@ export class RemoteMcpController {
     this.desiredRunning = state.desiredRunning;
     this.configuredPublicOrigin = state.schemaVersion === 2 ? state.configuredPublicOrigin ?? null : null;
     for (const client of state.trustedClients.slice(0, 32)) {
-      this.clients.set(client.clientId, { ...client, trusted: true });
+      this.clients.set(client.clientId, { ...client, trusted: true, registeredAt: this.now() });
     }
     const trustedClientIds = new Set([...this.clients.values()].filter((client) => client.trusted).map((client) => client.clientId));
     for (const grant of state.refreshGrants.slice(0, 64)) {
@@ -1108,6 +1160,10 @@ function json(response: ServerResponse, status: number, value: unknown): void {
   response.setHeader('Cache-Control', 'no-store');
   response.end(JSON.stringify(value));
 }
+function escapeHtml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
 function html(response: ServerResponse, status: number, body: string, formActionOrigins: readonly string[] = []): void {
   const formActions = ["'self'", ...formActionOrigins.map((origin) => new URL(origin).origin)].join(' ');
   response.statusCode = status;
@@ -1140,7 +1196,7 @@ function verifyClientAuthentication(client: RegisteredClient, providedSecret: st
   const actual = Buffer.from(providedSecret, 'utf8');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
-function isZeroClickChatGptClient(client: RegisteredClient): boolean {
+function isRecognizedChatGptClient(client: RegisteredClient): boolean {
   return client.redirectUris.length > 0 && client.redirectUris.every(isRecognizedChatGptRedirectUri);
 }
 

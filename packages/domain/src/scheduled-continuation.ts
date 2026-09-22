@@ -1,4 +1,5 @@
 import type {
+  GoalCheckpointResumeContext,
   GoalEvidence,
   GoalPlan,
   GoalRecord,
@@ -151,6 +152,7 @@ export interface PrepareScheduledContinuationRecordRequest {
   readonly activeTaskIds: readonly string[];
   /** Structured goal-relative task bindings. Omitted only by legacy callers. */
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly resumeContext?: GoalCheckpointResumeContext;
   readonly dueAt: string;
   /** Omitted by legacy callers; new v4.53 preparation uses an hourly interval watchdog. */
   readonly occurrence?: ScheduledContinuationOccurrence;

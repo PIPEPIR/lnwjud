@@ -1,6 +1,8 @@
 appId: com.lnwjud.desktop
 productName: lnwjud
 asar: true
+asarUnpack:
+  - dist/main/*.node
 npmRebuild: false
 directories:
   output: dist/installers

@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { appError, err, type Result } from '@lnwjud/domain';
+import { AtomicFileWriter, type AtomicWriteOptions } from '@lnwjud/filesystem';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import type { Checkpoint, CheckpointRepository, Workspace, WorkspaceRepository } from '@lnwjud/workspace';
 import { CheckpointService } from './checkpoint-service.js';
@@ -53,6 +55,36 @@ describe('CheckpointService', () => {
     await expect(service.restore(actor, workspace.id, restored.value.rollbackCheckpointId, { profile: permissionProfiles.full, userConfirmed: true }))
       .resolves.toMatchObject({ ok: true });
     await expect(readFile(target, 'utf8')).resolves.toBe('after');
+  });
+
+  it('rolls back earlier restored files when a later checkpoint write fails', async () => {
+    const { workspace, checkpoints } = await setup();
+    const first = path.join(workspace.rootPath, 'src', 'first.txt');
+    const second = path.join(workspace.rootPath, 'src', 'second.txt');
+    await writeFile(first, 'checkpoint-first', 'utf8');
+    await writeFile(second, 'checkpoint-second', 'utf8');
+    const actor = { clientId: 'client-1', clientName: 'test' };
+    const creator = new CheckpointService(workspaces(workspace), checkpoints);
+    const created = await creator.createForFiles(actor, workspace.id, [path.join('src', 'first.txt'), path.join('src', 'second.txt')]);
+    if (!created.ok) throw new Error('checkpoint creation failed');
+    await writeFile(first, 'live-first', 'utf8');
+    await writeFile(second, 'live-second', 'utf8');
+
+    class FailSecondWriter extends AtomicFileWriter {
+      private writes = 0;
+      public override async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+        this.writes += 1;
+        if (this.writes === 2) return err(appError('INTERNAL_ERROR', 'injected checkpoint restore failure', true));
+        return super.write(filePath, content, options);
+      }
+    }
+
+    const restorer = new CheckpointService(workspaces(workspace), checkpoints, { writer: new FailSecondWriter() });
+    const result = await restorer.restore(actor, workspace.id, created.value.id, { profile: permissionProfiles.full, userConfirmed: true });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    await expect(readFile(first, 'utf8')).resolves.toBe('live-first');
+    await expect(readFile(second, 'utf8')).resolves.toBe('live-second');
   });
 
   it('lists recovery-safe checkpoint metadata without returning file content', async () => {

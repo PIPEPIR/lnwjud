@@ -172,6 +172,25 @@ describe('public repository hygiene', () => {
     expect(releaseProcess).toContain('canonical release sequence');
   });
 
+  it('pins third-party GitHub Actions to immutable full commit SHAs', async () => {
+    const workflows = (await trackedFiles()).filter((relativePath) => /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(relativePath));
+    const violations: string[] = [];
+
+    for (const workflow of workflows) {
+      const content = await readFile(path.join(repositoryRoot, workflow), 'utf8');
+      for (const [index, line] of content.split(/\r?\n/).entries()) {
+        const uses = line.match(/^\s*uses:\s*([^\s#]+)/)?.[1];
+        if (uses === undefined || uses.startsWith('./') || uses.startsWith('docker://')) continue;
+        const actionName = uses.slice(0, uses.lastIndexOf('@'));
+        const revision = uses.slice(uses.lastIndexOf('@') + 1);
+        if (actionName.startsWith('actions/')) continue;
+        if (!/^[0-9a-f]{40}$/i.test(revision)) violations.push(`${workflow}:${index + 1} ${uses}`);
+      }
+    }
+
+    expect(violations, `third-party GitHub Actions must use full commit SHAs: ${violations.join(', ')}`).toEqual([]);
+  });
+
   it('keeps recurring scheduled cleanup explicit and host-proven before terminal completion', async () => {
     const skill = await readFile(path.join(repositoryRoot, '.agents', 'skills', 'lnwjud-scheduled-continuation', 'SKILL.md'), 'utf8');
     expect(skill).toContain('`terminal_cleanup_required`');

@@ -85,14 +85,24 @@ describe('session tools', () => {
             return ok({ goals: [{
               goalId: 'goal-v5', goalKey: 'v5', workspaceId: 'workspace-1', objective: 'Ship v5 safely', status: 'active', revision: 7,
               userIntentRevision: 2, currentPhase: 'verify', plan: { steps: [{ id: 'verify', title: 'Verify', status: 'in_progress' }] },
-              acceptanceCriteria: [{ id: 'tests', title: 'Tests pass', status: 'pending' }], blockers: [], trackedTasks: [], nextAction: 'Run tests.',
-              currentContextCapsuleId: 'capsule-v5', completedSteps: [], pendingSteps: [], activeTaskIds: [], lastCheckpoint: null,
+              acceptanceCriteria: [{ id: 'tests', title: 'Tests pass', status: 'pending', evidence: [{ kind: 'task', value: 'unit-tests-42' }] }], blockers: [], trackedTasks: [{ taskId: 'shell-verify-7', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }], nextAction: 'Run tests.',
+              currentContextCapsuleId: 'capsule-v5', completedSteps: [], pendingSteps: [], activeTaskIds: [],
+              lastCheckpoint: {
+                revision: 7, summary: 'Implementation done; verification remains.', evidence: [{ kind: 'hash', value: 'abc123' }],
+                resumeContext: {
+                  changedFiles: ['src/runtime.ts'],
+                  commands: [{ command: 'pnpm test:unit', status: 'passed', exitCode: 0, result: '42 passed' }],
+                  decisions: ['Do not rerun implementation.'], failedAttempts: ['Old flaky probe discarded.'],
+                  pendingValidation: ['Run release gate.'], resumePrerequisites: ['Keep current dev branch.'],
+                  stateFacts: [{ kind: 'note', value: 'branch=dev HEAD=abc123' }], artifacts: [{ kind: 'path', value: 'dist/lnwjud-Setup-5.4.3.exe' }],
+                },
+              },
             }] });
           },
           async listContextCapsules() {
             return ok([{ id: 'capsule-v5', goalId: 'goal-v5', sourceGoalRevision: 7, sourceUserIntentRevision: 2,
               payload: { objective: 'Ship v5 safely', userSteering: ['No browser automation'], currentPhase: 'verify', plan: { steps: [] }, acceptanceCriteria: [],
-                completedWork: ['Implementation'], remainingWork: ['Verification'], decisions: ['Native scheduled tasks only'], validation: [], changedFiles: [], artifacts: [], blockers: [], nextAction: 'Run tests.' },
+                completedWork: ['Implementation'], remainingWork: ['Verification'], decisions: ['Native scheduled tasks only'], validation: [{ kind: 'task', value: 'focused tests passed' }], changedFiles: [], artifacts: [{ kind: 'path', value: 'capsule-artifact.txt' }], blockers: [], nextAction: 'Run tests.' },
               createdAt: '2026-09-15T00:00:00.000Z' }]);
           },
         },
@@ -113,7 +123,7 @@ describe('session tools', () => {
     expect(response).toMatchObject({
       ok: true,
       value: {
-        source_priority: ['durable_goal', 'context_capsule', 'git_workspace', 'legacy_tracker'],
+        source_priority: ['durable_goal', 'checkpoint_resume_context', 'context_capsule', 'git_workspace', 'legacy_tracker'],
         tracker_available: false,
         goal_state: { goalId: 'goal-v5', revision: 7, userIntentRevision: 2 },
         context_capsule: { id: 'capsule-v5', sourceGoalRevision: 7 },
@@ -123,6 +133,16 @@ describe('session tools', () => {
     const value = response.value as Record<string, unknown>;
     expect(value.prompt).toEqual(expect.stringContaining('Ship v5 safely'));
     expect(value.prompt).toEqual(expect.stringContaining('Native scheduled tasks only'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint commands: passed: pnpm test:unit (exit 0) => 42 passed'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint failed attempts: Old flaky probe discarded.'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint pending validation: Run release gate.'));
+    expect(value.prompt).toEqual(expect.stringContaining('evidence: task: unit-tests-42'));
+    expect(value.prompt).toEqual(expect.stringContaining('shell-verify-7 [shell/blocking_job] cancelWithGoal=true'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint evidence: hash: abc123'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint state facts: note: branch=dev HEAD=abc123'));
+    expect(value.prompt).toEqual(expect.stringContaining('Checkpoint artifacts: path: dist/lnwjud-Setup-5.4.3.exe'));
+    expect(value.prompt).toEqual(expect.stringContaining('Capsule validation: task: focused tests passed'));
+    expect(value.prompt).toEqual(expect.stringContaining('Capsule artifacts: path: capsule-artifact.txt'));
     expect(value.prompt).toEqual(expect.stringContaining('Never use browser/DOM automation'));
   });
 

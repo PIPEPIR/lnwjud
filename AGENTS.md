@@ -8,6 +8,10 @@ For rolling continuation, the workspace skill is authoritative. Current mainline
 
 Every rolling-mode workspace mutation must use the current `goalLease` token/generation proof. Same MCP session identity is not ownership proof. Track background work with goal-relative `trackedTasks`: `blocking_job` entries participate in liveness, while `supporting_service` entries do not; explicit `provider` routing and `cancelWithGoal` ownership prevent a shared service from being probed or stopped accidentally. Legacy `activeTaskIds` rows decode conservatively as goal-owned blocking jobs. Live or unknown liveness fails closed; stale-owner takeover must follow the bounded recovery rules in the scheduled-continuation skill. A request to disable scheduling stops only scheduled continuation and never abandons the durable goal. When the goal finishes, make the exact Native ChatGPT task non-runnable using the strongest operation actually exposed by the host (prefer true delete, otherwise host-confirmed disable), record truthful cleanup evidence, finish the goal, verify `get_goal` is terminal, and stop. Never report completion while the goal is active.
 
+## Durable checkpoint fidelity
+
+A milestone checkpoint is durable reconstruction state, not a status blurb. For meaningful milestones and every handoff boundary, populate `resumeContext` with enough concrete state for a new worker to continue without guessing or repeating settled work: changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, and artifacts. Keep blockers, tracked tasks, step status and next action truthful and current. `summary` is only a headline; never rely on summary text alone when detailed recovery facts exist. `session_handoff` must prefer durable goal + checkpoint resume context before Git diff or legacy trackers.
+
 ## Authoritative CI Watcher Policy
 
 When a GitHub Actions workflow must be monitored until completion, use one authoritative long-running background/durable watcher for the exact workflow run instead of repeated ad-hoc polling.

@@ -44,6 +44,8 @@ describe('durable goal MCP tools', () => {
     expect(byName.get('run_goal')?.description).toContain('without waiting for the user to type continue/ทำต่อ');
     expect(byName.get('checkpoint_goal')?.description).toContain('exactly one confirmed Native ChatGPT hourly recurring watchdog');
     expect(byName.get('checkpoint_goal')?.description).toContain('execution mode may remain unverified');
+    expect(byName.get('checkpoint_goal')?.description).toContain('reconstruction-grade resumeContext');
+    expect(byName.get('checkpoint_goal')?.description).toContain('summary is only a headline');
     expect(byName.get('run_goal')?.description).toContain('never substitutes browser/DOM automation');
 
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key' })).toMatchObject({ ok: true, value: { scheduledContinuation: 'auto' } });
@@ -59,7 +61,17 @@ describe('durable goal MCP tools', () => {
       goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [],
       trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }], ponytailMode: 'inherit',
-    })).toMatchObject({ ok: true, value: { ponytailMode: 'inherit' } });
+      resumeContext: {
+        changedFiles: ['src/app.ts'],
+        commands: [{ command: 'pnpm test', status: 'passed', exitCode: 0, result: '42 passed' }],
+        decisions: ['Keep exact CAS semantics.'], failedAttempts: ['Discarded stale probe.'],
+        pendingValidation: ['Run release gate.'], resumePrerequisites: ['Stay on dev.'],
+        stateFacts: [{ kind: 'hash', value: 'HEAD:abc' }], artifacts: [{ kind: 'path', value: 'src/app.ts' }],
+      },
+    })).toMatchObject({
+      ok: true,
+      value: { ponytailMode: 'inherit', resumeContext: { commands: [{ status: 'passed', exitCode: 0 }], pendingValidation: ['Run release gate.'] } },
+    });
     expect(byName.get('checkpoint_goal')?.parse({
       goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: ['job-1'],

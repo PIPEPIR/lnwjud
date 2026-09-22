@@ -79,11 +79,7 @@ docs/architecture/*
 !docs/codebase/
 docs/codebase/*
 !docs/codebase/*.md
-!docs/roadmap/
-docs/roadmap/*
-!docs/roadmap/2026-08-25-v4.11.0-persistent-openai-tunnel-runtime-plan.md
-!docs/roadmap/2026-09-14-v4.70.0-full-ecc-integration-plan.md
-!docs/roadmap/2026-09-19-senior-codebase-audit-remediation-plan.md
+docs/roadmap/
 !docs/development/
 docs/development/*
 !docs/development/OPENAI_TUNNEL_LOCAL_CONTINUITY.md

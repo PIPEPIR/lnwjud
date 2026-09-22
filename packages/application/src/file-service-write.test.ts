@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ok, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { AtomicFileWriter, type AtomicWriteOptions } from '@lnwjud/filesystem';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { WorkspacePathGuard, type Checkpoint, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import { FileService, type CheckpointServicePort } from './file-service.js';
@@ -178,6 +179,101 @@ describe('FileService writes', () => {
       files: [{ path: path.join('src', 'file.txt'), content: 'after' }], userConfirmed: true,
     })).resolves.toMatchObject({ ok: true, value: { checkpointId: 'checkpoint-1' } });
     await expect(readFile(target, 'utf8')).resolves.toBe('after');
+  });
+
+  it('rolls back earlier apply_patch writes when a later write fails', async () => {
+    const workspace = await createWorkspace();
+    const first = path.join(workspace.rootPath, 'src', 'first.txt');
+    const second = path.join(workspace.rootPath, 'src', 'second.txt');
+    await writeFile(first, 'first-before', 'utf8');
+    await writeFile(second, 'second-before', 'utf8');
+
+    class FailSecondWriter extends AtomicFileWriter {
+      private writes = 0;
+      public override async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+        this.writes += 1;
+        if (this.writes === 2) return err(appError('INTERNAL_ERROR', 'injected second-write failure', true));
+        return super.write(filePath, content, options);
+      }
+    }
+
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      checkpointService: checkpointService(),
+      writer: new FailSecondWriter(),
+    });
+    const result = await service.applyPatch(actor, workspace.id, {
+      files: [
+        { path: path.join('src', 'first.txt'), content: 'first-after' },
+        { path: path.join('src', 'second.txt'), content: 'second-after' },
+      ],
+      userConfirmed: true,
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    await expect(readFile(first, 'utf8')).resolves.toBe('first-before');
+    await expect(readFile(second, 'utf8')).resolves.toBe('second-before');
+  });
+
+  it('rolls back earlier apply_patch writes when cancellation wins before the next write', async () => {
+    const workspace = await createWorkspace();
+    const first = path.join(workspace.rootPath, 'src', 'first.txt');
+    const second = path.join(workspace.rootPath, 'src', 'second.txt');
+    await writeFile(first, 'first-before', 'utf8');
+    await writeFile(second, 'second-before', 'utf8');
+    const controller = new AbortController();
+
+    class AbortAfterFirstWriter extends AtomicFileWriter {
+      private writes = 0;
+      public override async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+        this.writes += 1;
+        const result = await super.write(filePath, content, options);
+        if (this.writes === 1 && result.ok) controller.abort();
+        return result;
+      }
+    }
+
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      checkpointService: checkpointService(),
+      writer: new AbortAfterFirstWriter(),
+    });
+    const result = await service.applyPatch(actor, workspace.id, {
+      files: [
+        { path: path.join('src', 'first.txt'), content: 'first-after' },
+        { path: path.join('src', 'second.txt'), content: 'second-after' },
+      ],
+      userConfirmed: true,
+    }, controller.signal);
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
+    await expect(readFile(first, 'utf8')).resolves.toBe('first-before');
+    await expect(readFile(second, 'utf8')).resolves.toBe('second-before');
+  });
+
+  it('fails closed when a patch parent is swapped outside the workspace after validation', async () => {
+    const workspace = await createWorkspace();
+    const swapParent = path.join(workspace.rootPath, 'src', 'swap');
+    await mkdir(swapParent);
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-patch-swap-outside-'));
+    temporaryRoots.push(outsideRoot);
+    const outsideRealRoot = await realpath(outsideRoot);
+
+    class SwapParentWriter extends AtomicFileWriter {
+      private swapped = false;
+      public override async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+        if (!this.swapped) {
+          this.swapped = true;
+          await rm(path.dirname(filePath), { recursive: true, force: true });
+          await symlink(outsideRealRoot, path.dirname(filePath), process.platform === 'win32' ? 'junction' : 'dir');
+        }
+        return super.write(filePath, content, options);
+      }
+    }
+
+    const result = await new FileService(repository(workspace), undefined, undefined, { writer: new SwapParentWriter() })
+      .applyPatch(actor, workspace.id, { files: [{ path: path.join('src', 'swap', 'escaped.txt'), content: 'must stay scoped' }] });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+    await expect(readFile(path.join(outsideRealRoot, 'escaped.txt'), 'utf8')).rejects.toThrow();
   });
 
   it('rejects recursive deletion and non-empty directories', async () => {

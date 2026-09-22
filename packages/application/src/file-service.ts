@@ -28,6 +28,8 @@ import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, typ
 import { isProtectedCriticalPath } from '@lnwjud/shared';
 import { isFilesystemRoot, isWithin, WorkspacePathGuard, type ResolvedWorkspacePath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { CheckpointServicePort } from './checkpoint-service.js';
+import { createGuardedWriteValidator } from './guarded-write.js';
+import { runMutationTransaction } from './mutation-transaction.js';
 import { resolveSharedWorkspace, resolveWorkspaceForPath } from './workspace-locator.js';
 
 export interface FileActor {
@@ -354,7 +356,8 @@ export class FileService {
       checkpointId = checkpoint.value.id;
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const writeResult = await this.writer.write(resolved.value.realPath ?? resolved.value.absolutePath, request.content);
+    const validateDestination = createGuardedWriteValidator(this.guard, workspace, request.path, resolved.value, authorization);
+    const writeResult = await this.writer.write(resolved.value.realPath ?? resolved.value.absolutePath, request.content, { validateDestination });
     if (!writeResult.ok) return writeResult;
     return ok({
       path: resultPath(resolved.value),
@@ -374,9 +377,16 @@ export class FileService {
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
 
-    const resolvedFiles: { readonly patch: FilePatch; readonly absolutePath: string; readonly path: string }[] = [];
+    const resolvedFiles: {
+      readonly patch: FilePatch;
+      readonly absolutePath: string;
+      readonly path: string;
+      readonly rollbackContent: Buffer | null;
+      readonly validateDestination: () => Promise<Result<void>>;
+    }[] = [];
     const checkpointPaths: string[] = [];
     let existingTargets = 0;
+    let rollbackBytes = 0;
     for (const patch of request.files) {
       if (isAborted(signal)) return cancelledFileMutation();
       const fileWorkspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, patch.path, authorization);
@@ -392,14 +402,27 @@ export class FileService {
       if (isAborted(signal)) return cancelledFileMutation();
       if (!existing.ok) return existing;
       if (existing.value === 'directory') return err(appError('INVALID_INPUT', 'Directories cannot be patched as files'));
+      const absolutePath = resolved.value.realPath ?? resolved.value.absolutePath;
+      let rollbackContent: Buffer | null = null;
       if (existing.value) {
         existingTargets += 1;
         if (resolved.value.outsideWorkspace !== true) checkpointPaths.push(resolved.value.relativePath);
+        try {
+          rollbackContent = await readFsFile(absolutePath);
+        } catch (error: unknown) {
+          return err(mapNodeFsError(error, 'Unable to capture rollback content before patching'));
+        }
+        rollbackBytes += rollbackContent.byteLength;
+        if (rollbackBytes > MAX_MULTI_FILE_BYTES) {
+          return err(appError('FILE_TOO_LARGE', 'Rollback snapshot exceeds the maximum multi-file size'));
+        }
       }
       resolvedFiles.push({
         patch,
-        absolutePath: resolved.value.realPath ?? resolved.value.absolutePath,
+        absolutePath,
         path: resultPath(resolved.value),
+        rollbackContent,
+        validateDestination: createGuardedWriteValidator(this.guard, workspace, patch.path, resolved.value, authorization),
       });
     }
 
@@ -416,11 +439,32 @@ export class FileService {
       if (!checkpoint.ok) return checkpoint;
       checkpointId = checkpoint.value.id;
     }
-    for (const resolved of resolvedFiles) {
-      if (isAborted(signal)) return cancelledFileMutation();
-      const writeResult = await this.writer.write(resolved.absolutePath, resolved.patch.content);
-      if (!writeResult.ok) return writeResult;
-    }
+    const transaction = await runMutationTransaction(resolvedFiles.map((resolved) => ({
+      label: resolved.path,
+      commit: (): Promise<Result<void>> => this.writer.write(resolved.absolutePath, resolved.patch.content, {
+        validateDestination: resolved.validateDestination,
+      }),
+      rollback: async (): Promise<Result<void>> => {
+        if (resolved.rollbackContent !== null) {
+          return this.writer.write(resolved.absolutePath, resolved.rollbackContent, {
+            validateDestination: resolved.validateDestination,
+          });
+        }
+        const valid = await resolved.validateDestination();
+        if (!valid.ok) return valid;
+        try {
+          await unlink(resolved.absolutePath);
+          return ok(undefined);
+        } catch (error: unknown) {
+          if (nodeErrorCode(error) === 'ENOENT') return ok(undefined);
+          return err(mapNodeFsError(error, 'Automatic rollback could not remove a newly created patch target'));
+        }
+      },
+    })), {
+      shouldAbort: (): boolean => isAborted(signal),
+      abortedResult: cancelledFileMutation,
+    });
+    if (!transaction.ok) return transaction;
     return ok({
       paths: resolvedFiles.map((resolved) => resolved.path),
       ...(checkpointId === undefined ? {} : { checkpointId }),
@@ -469,7 +513,8 @@ export class FileService {
       checkpointId = checkpoint.value.id;
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const writeResult = await this.writer.write(absolutePath, nextContent);
+    const validateDestination = createGuardedWriteValidator(this.guard, workspace, request.path, resolved.value, authorization);
+    const writeResult = await this.writer.write(absolutePath, nextContent, { validateDestination });
     if (!writeResult.ok) return writeResult;
     return ok({
       path: resultPath(resolved.value),
