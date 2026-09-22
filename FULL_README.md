@@ -51,13 +51,13 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.4.2
+## Current published version: v5.4.3
 
 ## Current source version: v5.4.3
 
-Latest published release: **v5.4.2**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below. The `dev` source tree is preparing **v5.4.3** and has not been tagged or released.
+Latest published release: **v5.4.3**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
-### Development: What's new in v5.4.3
+### What's new in v5.4.3
 
 - **Remote MCP public OAuth boundary hardened:** unauthenticated dynamic registrations and transient OAuth state are bounded, expired state is pruned, and first-use ChatGPT-compatible OAuth clients require an explicit local approval instead of treating redirect-URI shape as identity.
 - **Release supply chain is immutable:** privileged third-party GitHub Actions used for release publication and cosign setup are pinned to full commit SHAs, with a repository hygiene regression preventing mutable third-party action tags from returning.
