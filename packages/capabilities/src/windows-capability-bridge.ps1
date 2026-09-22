@@ -431,10 +431,10 @@ function Invoke-KeyPress {
 function Invoke-InputAction {
   param([string]$Operation, [object]$Parameters)
   switch ($Operation) {
-    'type_text' { foreach ($character in [string](Get-Field $Parameters 'text')) { [LnwjudNative]::Unicode([uint16][char]$character, $false); [LnwjudNative]::Unicode([uint16][char]$character, $true) }; return [ordered]@{ typed = $true } }
-    'paste_text' { foreach ($character in [string](Get-Field $Parameters 'text')) { [LnwjudNative]::Unicode([uint16][char]$character, $false); [LnwjudNative]::Unicode([uint16][char]$character, $true) }; return [ordered]@{ pasted = $true } }
+    'type_text' { foreach ($character in ([string](Get-Field $Parameters 'text')).ToCharArray()) { [LnwjudNative]::Unicode([uint16][char]$character, $false); [LnwjudNative]::Unicode([uint16][char]$character, $true) }; return [ordered]@{ typed = $true } }
+    'paste_text' { foreach ($character in ([string](Get-Field $Parameters 'text')).ToCharArray()) { [LnwjudNative]::Unicode([uint16][char]$character, $false); [LnwjudNative]::Unicode([uint16][char]$character, $true) }; return [ordered]@{ pasted = $true } }
     'press_key' { Invoke-KeyPress (Get-Field $Parameters 'key'); return [ordered]@{ pressed = $true } }
-    'hotkey' { $keys = @(Get-Field $Parameters 'modifiers'); foreach ($key in $keys) { [LnwjudNative]::Key((Get-VirtualKey $key), $false) }; Invoke-KeyPress (Get-Field $Parameters 'key'); foreach ($key in ($keys | Select-Object -Reverse)) { [LnwjudNative]::Key((Get-VirtualKey $key), $true) }; return [ordered]@{ pressed = $true } }
+    'hotkey' { $keys = @(Get-Field $Parameters 'modifiers'); $pressedKeys = @(); try { foreach ($key in $keys) { $virtualKey = Get-VirtualKey $key; [LnwjudNative]::Key($virtualKey, $false); $pressedKeys += [uint16]$virtualKey }; Invoke-KeyPress (Get-Field $Parameters 'key') } finally { $releaseKeys = @($pressedKeys); [array]::Reverse($releaseKeys); foreach ($virtualKey in $releaseKeys) { [LnwjudNative]::Key([uint16]$virtualKey, $true) } }; return [ordered]@{ pressed = $true } }
     'key_down' { [LnwjudNative]::Key((Get-VirtualKey (Get-Field $Parameters 'key')), $false); return [ordered]@{ down = $true } }
     'key_up' { [LnwjudNative]::Key((Get-VirtualKey (Get-Field $Parameters 'key')), $true); return [ordered]@{ up = $true } }
     'mouse_move' { [void][LnwjudNative]::SetCursorPos([int](Get-Field $Parameters 'x'), [int](Get-Field $Parameters 'y')); return [ordered]@{ moved = $true } }

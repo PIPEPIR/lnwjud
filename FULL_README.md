@@ -59,7 +59,7 @@ Latest published release: **v5.4.2**. Windows, macOS, and Linux artifacts are pu
 
 ### What's new in v5.4.2
 
-- **Remote MCP follows the live Local MCP endpoint:** the Remote MCP gateway no longer captures one Local MCP URL when it starts. Every authorized `/mcp` request resolves the current Desktop listener URL, so an automatic-port restart/rebind continues through the existing public OAuth/ngrok endpoint. If the local listener is actually unavailable, the gateway returns `503 local_mcp_unavailable` instead of proxying to a stale port.
+- **Remote MCP follows and recovers the live Local MCP endpoint:** the Remote MCP gateway no longer captures one Local MCP URL when it starts. Every authorized `/mcp` request ensures the Desktop listener is available and then proxies to its current URL, so automatic-port restart/rebind or transient listener loss continues through the existing public OAuth/ngrok endpoint. If the local listener cannot be started, the gateway returns `503 local_mcp_unavailable`.
 - **Remote MCP automatic recovery is single-flight:** unexpected owned ngrok exits schedule automatic reconnect with 2-second exponential backoff capped at 30 seconds. Explicit Stop, Desktop close, and OAuth trust reset cancel pending retries. Manual start, startup auto-start, and reconnect callbacks share one in-flight start operation, preventing overlapping gateway/ngrok creation.
 - **ChatGPT-side developer-MCP failures are separated from local permissions:** the Settings connection card now documents the host boundary for “conversation does not support developer MCPs” and empty plugin/tool states when Remote MCP itself is online, avoiding a false conclusion that Windows denied local file access.
 - **File-target search and ripgrep error classification:** `search_text` can target one file while keeping ripgrep's cwd at its parent directory. Access-denied/EACCES/EPERM failures are recoverable `PERMISSION_DENIED`; recognized regex/glob syntax errors remain non-recoverable `INVALID_INPUT`; unrecognized process failures remain recoverable `INTERNAL_ERROR`.
@@ -67,7 +67,8 @@ Latest published release: **v5.4.2**. Windows, macOS, and Linux artifacts are pu
 - **Persistent tunnel setup/runtime intent hardening:** first-run profile creation no longer gets blocked by a previously started persistent tunnel runtime, and profile configuration preserves the saved `running` / `stopped` desired state rather than implicitly starting a runtime the user had stopped.
 - **Durable shell PID reuse and ownership races fixed:** reconciliation uses captured process start identity to distinguish a reused PID, waits a bounded interval for worker-owned terminal metadata, and reports unresolved probe uncertainty without overwriting an already-completing durable result. Strict process-tree identity verification remains in force for cancellation/kill operations.
 - **Windows test contention hardening:** `@lnwjud/application` now runs Vitest files with file-level parallelism disabled, matching the existing policy for other filesystem/process/SQLite-heavy packages while preserving existing timeout values.
-- **Release accounting:** v5.4.2 packages the post-v5.4.1 hardening above. No additional GitHub issue is claimed closed specifically by v5.4.2; Issue #104 remains associated with v5.4.1.
+- **Issue #114 / Windows PowerShell 5.1 native-input compatibility:** `type_text` and `paste_text` enumerate `ToCharArray()` explicitly, and hotkey modifier release uses `[array]::Reverse` with `finally` cleanup rather than the PowerShell-7-only `Select-Object -Reverse` switch.
+- **Release accounting:** v5.4.2 packages the post-v5.4.1 hardening above and closes Issue #114. Issue #104 remains associated with v5.4.1.
 
 ### Historical: What's new in v5.4.1
 

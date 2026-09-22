@@ -391,8 +391,14 @@ describe('Remote MCP OAuth gateway', () => {
       response.setHeader('Content-Type', 'application/json');
       response.end(JSON.stringify({ ok: true, source: 'second', path: request.url }));
     }));
-    let localMcpUrl = `${firstUpstreamOrigin}/mcp`;
-    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-test', getLocalMcpUrl: async (): Promise<string> => localMcpUrl });
+    let localMcpUrl: string | null = `${firstUpstreamOrigin}/mcp`;
+    const recoveredLocalMcpUrl = `${secondUpstreamOrigin}/mcp`;
+    const ensureLocalMcpUrl = vi.fn(async (): Promise<string> => localMcpUrl ?? recoveredLocalMcpUrl);
+    const controller = new RemoteMcpController({
+      dataPath: 'C:\\tmp\\lnwjud-remote-mcp-test',
+      getLocalMcpUrl: async (): Promise<string | null> => localMcpUrl,
+      ensureLocalMcpUrl,
+    });
     const internal = controller as unknown as RemoteMcpTestAccess;
     await internal.startGateway();
     expect(internal.gatewayUrl).not.toBeNull();
@@ -453,14 +459,15 @@ describe('Remote MCP OAuth gateway', () => {
     expect(await authorized.json()).toEqual({ ok: true, source: 'first', path: '/mcp' });
     expect(upstreamAuthorization).toBeUndefined();
 
-    localMcpUrl = `${secondUpstreamOrigin}/mcp`;
-    const retargeted = await fetch(`${origin}/mcp`, {
+    localMcpUrl = null;
+    const recovered = await fetch(`${origin}/mcp`, {
       method: 'POST',
       headers: { authorization: `Bearer ${tokens.access_token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
     });
-    expect(retargeted.status).toBe(200);
-    expect(await retargeted.json()).toEqual({ ok: true, source: 'second', path: '/mcp' });
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toEqual({ ok: true, source: 'second', path: '/mcp' });
+    expect(ensureLocalMcpUrl).toHaveBeenCalledTimes(2);
     expect(upstreamAuthorization).toBeUndefined();
 
     await controller.close();

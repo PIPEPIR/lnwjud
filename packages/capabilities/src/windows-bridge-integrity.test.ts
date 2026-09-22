@@ -120,6 +120,12 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     expect(script).not.toContain('bounds = [ordered]@{ x = [double]$rect.X; y = [double]$rect.Y; width = [double]$rect.Width; height = [double]$rect.Height }');
     expect(script).toContain("$failureMessage = 'Windows native capability failed'");
     expect(script).toContain("$failureMessage = $failureMessage + ': ' + $detail");
+    expect(script).toContain("([string](Get-Field $Parameters 'text')).ToCharArray()");
+    expect(script).not.toContain("foreach ($character in [string](Get-Field $Parameters 'text'))");
+    expect(script).toContain('$pressedKeys = @()');
+    expect(script).toContain('[array]::Reverse($releaseKeys)');
+    expect(script).toContain('finally { $releaseKeys = @($pressedKeys)');
+    expect(script).not.toContain('Select-Object -Reverse');
   });
 
   it('prefers a visible capturable window for ambiguous selectors and accepts app.name aliases', async () => {
