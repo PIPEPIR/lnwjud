@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EMPTY_REMOTE_MCP_STATUS, type RemoteMcpStatus } from '@lnwjud/ipc-contracts';
 import { createExplicitKeySecretProtector } from '@lnwjud/shared';
 import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeConfiguredPublicOrigin, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
@@ -12,7 +13,12 @@ interface RemoteMcpTestAccess {
   publicOrigin: string | null;
   configuredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
-  startGateway(localMcpUrl: string): Promise<void>;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectAttempts: number;
+  ensurePersistenceLoaded(): Promise<void>;
+  scheduleReconnect(reason: string): void;
+  startInternal(): Promise<RemoteMcpStatus>;
+  startGateway(): Promise<void>;
 }
 
 const servers: Server[] = [];
@@ -270,6 +276,87 @@ describe('Remote MCP OAuth gateway', () => {
     }
   });
 
+  it('deduplicates concurrent Remote MCP starts and releases the start gate after completion', async () => {
+    let resolveStart: ((status: RemoteMcpStatus) => void) | undefined;
+    const pendingStart = new Promise<RemoteMcpStatus>((resolve) => { resolveStart = resolve; });
+    const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: true, autoStartEnabled: true };
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<null> => null,
+      persistence: { load: async (): Promise<null> => null, save: async (): Promise<void> => undefined },
+    });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    const startInternalSpy = vi.spyOn(internal, 'startInternal').mockReturnValue(pendingStart);
+    try {
+      const first = controller.start();
+      const second = controller.start();
+      await vi.waitFor(() => expect(startInternalSpy).toHaveBeenCalledTimes(1));
+
+      resolveStart?.(runningStatus);
+      await expect(Promise.all([first, second])).resolves.toEqual([runningStatus, runningStatus]);
+
+      await expect(controller.start()).resolves.toEqual(runningStatus);
+      expect(startInternalSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      startInternalSpy.mockRestore();
+      await controller.close();
+    }
+  });
+
+  it('retries a persistent Remote MCP after an unexpected disconnect and manual stop cancels the pending retry', async () => {
+    vi.useFakeTimers();
+    const persisted: RemoteMcpPersistedState = {
+      schemaVersion: 2,
+      desiredRunning: true,
+      configuredPublicOrigin: null,
+      trustedClients: [{
+        clientId: 'chatgpt-client',
+        clientName: 'ChatGPT',
+        redirectUris: ['https://chatgpt.com/connector/oauth/plugin-fixture_123'],
+        tokenEndpointAuthMethod: 'none',
+        clientSecret: null,
+      }],
+      refreshGrants: [],
+    };
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<null> => null,
+      persistence: { load: async (): Promise<RemoteMcpPersistedState> => persisted, save: async (): Promise<void> => undefined },
+    });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.ensurePersistenceLoaded();
+    const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: true, autoStartEnabled: true };
+    const statusSpy = vi.spyOn(controller, 'status').mockResolvedValue(runningStatus);
+    const startSpy = vi.spyOn(controller, 'start').mockImplementation(async () => {
+      internal.runState = 'running';
+      return runningStatus;
+    });
+    try {
+      internal.runState = 'error';
+      internal.scheduleReconnect('ngrok exited unexpectedly');
+      expect(internal.reconnectTimer).not.toBeNull();
+      expect(internal.reconnectAttempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(startSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+
+      internal.runState = 'error';
+      internal.scheduleReconnect('ngrok exited again');
+      expect(internal.reconnectTimer).not.toBeNull();
+      await controller.stop();
+      expect(internal.reconnectTimer).toBeNull();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      startSpy.mockRestore();
+      statusSpy.mockRestore();
+      await controller.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps status reads side-effect-free and does not ensure-start Local MCP', async () => {
     let statusReads = 0;
     let ensureStarts = 0;
@@ -294,15 +381,20 @@ describe('Remote MCP OAuth gateway', () => {
 
   it('requires OAuth, zero-click completes a recognized ChatGPT callback through local Desktop approval, and proxies authorized /mcp requests', async () => {
     let upstreamAuthorization: string | undefined;
-    const upstreamOrigin = await listen(createServer((request, response) => {
+    const firstUpstreamOrigin = await listen(createServer((request, response) => {
       upstreamAuthorization = request.headers.authorization;
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify({ ok: true, path: request.url }));
+      response.end(JSON.stringify({ ok: true, source: 'first', path: request.url }));
     }));
-    const localMcpUrl = `${upstreamOrigin}/mcp`;
+    const secondUpstreamOrigin = await listen(createServer((request, response) => {
+      upstreamAuthorization = request.headers.authorization;
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ ok: true, source: 'second', path: request.url }));
+    }));
+    let localMcpUrl = `${firstUpstreamOrigin}/mcp`;
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-test', getLocalMcpUrl: async (): Promise<string> => localMcpUrl });
     const internal = controller as unknown as RemoteMcpTestAccess;
-    await internal.startGateway(localMcpUrl);
+    await internal.startGateway();
     expect(internal.gatewayUrl).not.toBeNull();
     internal.publicOrigin = internal.gatewayUrl;
     internal.runState = 'running';
@@ -358,7 +450,17 @@ describe('Remote MCP OAuth gateway', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
     expect(authorized.status).toBe(200);
-    expect(await authorized.json()).toEqual({ ok: true, path: '/mcp' });
+    expect(await authorized.json()).toEqual({ ok: true, source: 'first', path: '/mcp' });
+    expect(upstreamAuthorization).toBeUndefined();
+
+    localMcpUrl = `${secondUpstreamOrigin}/mcp`;
+    const retargeted = await fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokens.access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    });
+    expect(retargeted.status).toBe(200);
+    expect(await retargeted.json()).toEqual({ ok: true, source: 'second', path: '/mcp' });
     expect(upstreamAuthorization).toBeUndefined();
 
     await controller.close();
@@ -372,7 +474,7 @@ describe('Remote MCP OAuth gateway', () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-unsupported-client-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
-    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    await internal.startGateway();
     internal.publicOrigin = internal.gatewayUrl;
     internal.runState = 'running';
     const origin = internal.gatewayUrl!;
@@ -406,7 +508,7 @@ describe('Remote MCP OAuth gateway', () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-chatgpt-dcr-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
-    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    await internal.startGateway();
     internal.publicOrigin = internal.gatewayUrl;
     const origin = internal.gatewayUrl!;
     const redirectUri = 'https://chatgpt.com/connector_platform_oauth_redirect';
@@ -480,7 +582,7 @@ describe('Remote MCP OAuth gateway', () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-malformed-dcr-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
-    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    await internal.startGateway();
     internal.publicOrigin = internal.gatewayUrl;
     const response = await fetch(`${internal.gatewayUrl}/oauth/register`, {
       method: 'POST',
@@ -496,7 +598,7 @@ describe('Remote MCP OAuth gateway', () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-test-2', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
-    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    await internal.startGateway();
     internal.publicOrigin = internal.gatewayUrl;
     const response = await fetch(`${internal.gatewayUrl}/oauth/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' },

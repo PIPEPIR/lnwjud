@@ -51,13 +51,25 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.4.1
+## Current published version: v5.4.2
 
-## Current source version: v5.4.1
+## Current source version: v5.4.2
 
-Latest published release: **v5.4.1**. Windows, macOS, and Linux artifacts are published from the verified target-native CI evidence for the tagged main commit.
+Latest published release: **v5.4.2**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
-### What's new in v5.4.1
+### What's new in v5.4.2
+
+- **Remote MCP follows the live Local MCP endpoint:** the Remote MCP gateway no longer captures one Local MCP URL when it starts. Every authorized `/mcp` request resolves the current Desktop listener URL, so an automatic-port restart/rebind continues through the existing public OAuth/ngrok endpoint. If the local listener is actually unavailable, the gateway returns `503 local_mcp_unavailable` instead of proxying to a stale port.
+- **Remote MCP automatic recovery is single-flight:** unexpected owned ngrok exits schedule automatic reconnect with 2-second exponential backoff capped at 30 seconds. Explicit Stop, Desktop close, and OAuth trust reset cancel pending retries. Manual start, startup auto-start, and reconnect callbacks share one in-flight start operation, preventing overlapping gateway/ngrok creation.
+- **ChatGPT-side developer-MCP failures are separated from local permissions:** the Settings connection card now documents the host boundary for “conversation does not support developer MCPs” and empty plugin/tool states when Remote MCP itself is online, avoiding a false conclusion that Windows denied local file access.
+- **File-target search and ripgrep error classification:** `search_text` can target one file while keeping ripgrep's cwd at its parent directory. Access-denied/EACCES/EPERM failures are recoverable `PERMISSION_DENIED`; recognized regex/glob syntax errors remain non-recoverable `INVALID_INPUT`; unrecognized process failures remain recoverable `INTERNAL_ERROR`.
+- **Persistent redacted internal diagnostics:** unexpected application exceptions still return the generic external `Operation failed` error, but the sanitized diagnostic event is now also flattened/redacted into persistent activity/audit detail so operators can diagnose faults without exposing bearer tokens or other credential text.
+- **Persistent tunnel setup/runtime intent hardening:** first-run profile creation no longer gets blocked by a previously started persistent tunnel runtime, and profile configuration preserves the saved `running` / `stopped` desired state rather than implicitly starting a runtime the user had stopped.
+- **Durable shell PID reuse and ownership races fixed:** reconciliation uses captured process start identity to distinguish a reused PID, waits a bounded interval for worker-owned terminal metadata, and reports unresolved probe uncertainty without overwriting an already-completing durable result. Strict process-tree identity verification remains in force for cancellation/kill operations.
+- **Windows test contention hardening:** `@lnwjud/application` now runs Vitest files with file-level parallelism disabled, matching the existing policy for other filesystem/process/SQLite-heavy packages while preserving existing timeout values.
+- **Release accounting:** v5.4.2 packages the post-v5.4.1 hardening above. No additional GitHub issue is claimed closed specifically by v5.4.2; Issue #104 remains associated with v5.4.1.
+
+### Historical: What's new in v5.4.1
 
 - **Issue #104 — Windows MCP localhost, reverse-proxy Host handling, and silent update path:** the loopback HTTP server was hardened for Windows localhost/IPv6 behavior; external hostnames can be explicitly allowed for reverse-proxy/tunnel scenarios instead of depending on manual Host rewriting; and the Windows installer/updater path was hardened against the silent `old-uninstaller.exe` stall reported against v5.3.1.
 - **Automatic MCP port selection:** the default local MCP port is now automatic so end users are not asked to understand or manually choose a port during normal setup. lnwjud selects a free port to avoid collisions and preserves an advanced/manual fixed-port override for integrations that require one.
@@ -71,17 +83,6 @@ Latest published release: **v5.4.1**. Windows, macOS, and Linux artifacts are pu
 - **Current-chat lnwjud routing:** MCP server instructions now state that supported coding/repository/filesystem/shell/build/test/Git/CI/browser/local-computer work should continue through the exposed lnwjud tools in the current conversation. The contract is capability-based and connector-name agnostic; a regression explicitly prevents hardcoding the local instance name `lnwjud_o`.
 - **Published verification evidence:** local validation passed syntax, targeted packaging regression, lint, typecheck, the full 67-file/1050-test `mcp-server` suite, and the 23-test release gate without increasing test timeouts. PR #108 then passed push CI, required Windows authoritative release verification, and GitHub Advanced Security. Final main CI `35584627254` succeeded on commit `e8d26d45953dd13a77559ab0303ad7b7ee022653`, including macOS x64/arm64, Linux x64/arm64 native package verification and macOS 26 compatibility. Release workflow `35586799494` downloaded those exact successful-CI artifacts, re-verified every provenance bundle, aggregated update feeds/manifests, generated release notes, and published v5.4.1 successfully.
 - **Issue closure accounting:** v5.4.1 closes [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). Issues #100, #98, and #94 belong to earlier published release lines and are intentionally not re-counted as v5.4.1 closures.
-
-### Post-release hardening on `main` after v5.4.1
-
-The following fixes were discovered by post-release `main` CI and are **not contained in the already-published v5.4.1 installers/packages**. They describe the current source branch and are intended for the next release unless superseded.
-
-- **Bounded live-log projection regression fixture:** main CI `35589209261` failed `Desktop Test Shard (Windows, 1/2)` because the 500-row / 500-path projection test spent 17.753 seconds preparing an already-sanitized ~2 MB fixture through `AuditService` before exercising the storage projection. The test now inserts deterministic pre-sanitized audit events through `SqliteAuditRepository`, retains the same 500 rows, 500 maximum-length 4096-character paths, compact-row assertions and full-detail resolution, and keeps the 15-second timeout unchanged. Local exact-shard verification completed 53 files / 378 tests with the projection test in the sub-second range.
-- **Durable shell PID-reuse finalization race:** main CI `35591858761` then exposed a separate production race in `DurableShellTaskStore`. On a busy Windows host, the durable worker could complete, its PID could be reused immediately, and reconciliation of a stale `running` snapshot could mistake the new process identity for an unverifiable worker and write `termination_unverified` over a finalizing `completed` result. Reconciliation now distinguishes a reused PID from an unverifiable probe when the expected start time is known, proceeds to the existing bounded finalization grace, and leaves stop/kill validation strict so a reused PID is never targeted. The deterministic regression simulates PID reuse by pairing a live PID with a different captured start time while terminal metadata is published during reconciliation.
-- **Durable shell unverifiable-probe ownership race:** exact post-merge main CI `35595124650` exposed a remaining production race after the PID-reuse fix: `Desktop Test Shard (Windows, 1/2)` received `stdout: "local-shell"` but `state: "termination_unverified"` instead of the worker's completed result. The remaining worker-unverifiable branches could still persist a stale host snapshot while the durable worker retained ownership of `task.json`. Reconciliation now waits a bounded interval for terminal metadata and, if worker identity is still unverifiable, returns that uncertainty without persisting over the worker-owned record. Cancellation and process-tree termination still require verified identities. A deterministic regression publishes terminal metadata while worker identity is deliberately unverifiable, and the exact Windows shard passes 53 files / 378 tests with the fix.
-- **Application fault-injection contention hardening:** follow-up dev CI showed `automation-fault-injection.test.ts` exhausting its unchanged 20-second timeout only when `@lnwjud/application` test files were running in parallel on the Windows runner. The application package now uses `vitest run --fileParallelism=false`, matching the established policy for process/storage/capabilities/mcp-server suites that exercise filesystem/process/SQLite-heavy fixtures. This serializes test files inside the application package without changing production behavior or any per-test timeout.
-- **Validation of the source-only hardening:** the durable store suite now passes 14 tests with 1 platform-specific skip, the exact failing Desktop MCP health/shell scenario passes directly, the exact Windows desktop shard passes 53 files / 378 tests, the full application suite passes 31 files / 208 tests in about 18 seconds with the fault-injection file under one second, the capabilities package builds/typechecks successfully, and the earlier source-hardening gate evidence remains release gate 23/23 plus `git diff --check` without relaxing runtime/test timeouts.
-- **Issue closure accounting is unchanged:** no additional GitHub issue is claimed closed by this post-release source hardening. The v5.4.1 release line still closes Issue #104 only.
 
 ### What's new in v5.4.0
 
@@ -878,8 +879,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.4.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.4.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1214,7 +1215,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 6 | `read_file` | READ | default | operational | service_dispatch | Read a workspace file as UTF-8 text or as an image/binary payload. Absolute host paths do not require workspaceId. For large files or an unknown location, prefer search_text first and then read_file_page for the relevant range instead of reading the whole file. |
 | 7 | `read_files` | READ | default | operational | service_dispatch | Read up to twenty bounded workspace files in parallel. Absolute paths do not require workspaceId. For large files, locate text with search_text and page with read_file_page instead of loading entire files. |
 | 8 | `search_files` | READ | default | operational | service_dispatch | Search workspace filenames with automatic context-economy filters; set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. |
-| 9 | `search_text` | READ | default | operational | service_dispatch | Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files. |
+| 9 | `search_text` | READ | default | operational | service_dispatch | Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files. |
 | 10 | `git_status` | READ | default | operational | service_dispatch | Inspect parsed read-only Git status. For writes (init, add, commit, remote, push, rm, clean, reset) use the git tool. |
 | 11 | `git_diff` | READ | default | operational | service_dispatch | Return a bounded read-only Git diff. For writes use the git tool. |
 | 12 | `git_log` | READ | default | operational | service_dispatch | Return bounded structured Git history. For writes use the git tool. |

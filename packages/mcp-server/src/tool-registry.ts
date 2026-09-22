@@ -673,8 +673,18 @@ export class ToolRegistry {
     } catch (error: unknown) {
       await fencedMutationEnd?.().catch(() => undefined);
       fencedMutationEnd = undefined;
-      const response = mapError(sanitizeException(error, this.diagnostic));
-      await this.activity.end(callId, 'INTERNAL_ERROR', Date.now() - started, 'Operation failed');
+      let sanitizedDiagnostic: unknown;
+      const response = mapError(sanitizeException(error, (event) => {
+        sanitizedDiagnostic = event;
+        this.diagnostic?.(event);
+      }));
+      await this.activity.end(
+        callId,
+        'INTERNAL_ERROR',
+        Date.now() - started,
+        'Operation failed',
+        describeStructuredResultDetail(sanitizedDiagnostic),
+      );
       return response;
     }
   }
@@ -1310,7 +1320,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.4.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.4.2 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

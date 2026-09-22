@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { autoStartPersistentTunnel } from '../src/main/desktop-services.js';
+import { applyConfiguredTunnelRuntimePolicy, autoStartPersistentTunnel, configuredTunnelRuntimePolicy } from '../src/main/desktop-services.js';
 import { TunnelRuntimeReconciler, type TunnelRuntimeDesiredState, type TunnelRuntimeReconcilerAdapter } from '../src/main/tunnel-runtime-reconciler.js';
 import { TunnelRuntimeSupervisor, TRANSIENT_BACKOFF_MS } from '../src/main/tunnel-runtime-supervisor.js';
 import type { NativeRuntimeConnectRequest } from '../src/main/tunnel-runtime-adapter.js';
@@ -69,6 +69,44 @@ function runtime(overrides: Partial<NativeTunnelRuntimeStatus> = {}): NativeTunn
 }
 
 describe('v4.11 persistent tunnel continuity acceptance', () => {
+  it('keeps first-time setup stopped while preserving legacy configured profiles with no saved desired state', () => {
+    expect(configuredTunnelRuntimePolicy(true, null, false)).toEqual({ desiredState: 'stopped', autoStart: false });
+    expect(configuredTunnelRuntimePolicy(true, null, true)).toEqual({ desiredState: 'running', autoStart: true });
+    expect(configuredTunnelRuntimePolicy(false, null, true)).toEqual({ desiredState: 'running', autoStart: false });
+    expect(configuredTunnelRuntimePolicy(true, 'stopped', true)).toEqual({ desiredState: 'stopped', autoStart: false });
+    expect(configuredTunnelRuntimePolicy(true, 'running', true)).toEqual({ desiredState: 'running', autoStart: true });
+  });
+
+  it('reconciles configured stopped intent instead of bypassing a surviving runtime', async () => {
+    const stopped: TunnelStatus = {
+      state: 'stopped', source: 'desktop', hasApiKey: true, authReady: true, runtimeCredentialAvailable: true,
+      clientPath: 'tunnel-client.exe', profileExists: true, message: null, logPath: 'lnwjud-tunnel.log', persistent: null,
+    };
+    const reconcileStoppedRuntime = vi.fn(async (): Promise<TunnelStatus | null> => stopped);
+    const startAutomatically = vi.fn(async (): Promise<TunnelStatus> => stopped);
+    const controller = { status: vi.fn(async (): Promise<TunnelStatus> => stopped), reconcileStoppedRuntime, startAutomatically };
+
+    await applyConfiguredTunnelRuntimePolicy(controller, configuredTunnelRuntimePolicy(true, 'stopped', true));
+
+    expect(reconcileStoppedRuntime).toHaveBeenCalledOnce();
+    expect(startAutomatically).not.toHaveBeenCalled();
+  });
+
+  it('auto-starts a legacy configured profile with no saved desired state when auto reconnect is enabled', async () => {
+    const running: TunnelStatus = {
+      state: 'running', source: 'desktop', hasApiKey: true, authReady: true, runtimeCredentialAvailable: true,
+      clientPath: 'tunnel-client.exe', profileExists: true, message: null, logPath: 'lnwjud-tunnel.log', persistent: null,
+    };
+    const reconcileStoppedRuntime = vi.fn(async (): Promise<TunnelStatus | null> => null);
+    const startAutomatically = vi.fn(async (): Promise<TunnelStatus> => running);
+    const controller = { status: vi.fn(async (): Promise<TunnelStatus> => running), reconcileStoppedRuntime, startAutomatically };
+
+    await applyConfiguredTunnelRuntimePolicy(controller, configuredTunnelRuntimePolicy(true, null, true));
+
+    expect(startAutomatically).toHaveBeenCalledOnce();
+    expect(reconcileStoppedRuntime).not.toHaveBeenCalled();
+  });
+
   it('keeps one immutable tunnel identity through runtime death, Desktop restart, and local MCP port rebinding', async () => {
     const adapter = new MutableRuntimeAdapter();
     let desiredMcp = MCP_A;

@@ -20,7 +20,7 @@ export function searchTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'search_text',
-      description: 'Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files.',
+      description: 'Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: searchTextSchema,
