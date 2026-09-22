@@ -1,0 +1,207 @@
+name: Laya downstream updater
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: laya-downstream-updater
+  cancel-in-progress: false
+
+jobs:
+  sync-build-release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DOWNSTREAM_REPO: PIPEPIR/lnwjud
+      UPSTREAM_REPO: engasnm111/lnwjud
+
+    steps:
+      - name: Checkout downstream branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve upstream state and rebase locally
+        id: sync
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if ((git remote) -notcontains 'upstream') {
+            git remote add upstream "https://github.com/$env:UPSTREAM_REPO.git"
+          }
+          git fetch upstream main --tags --force
+
+          $currentVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $upstreamPackage = git show upstream/main:package.json | ConvertFrom-Json
+          $upstreamVersion = $upstreamPackage.version
+          "current_version=$currentVersion" >> $env:GITHUB_OUTPUT
+          "upstream_version=$upstreamVersion" >> $env:GITHUB_OUTPUT
+
+          if ($currentVersion -ne $upstreamVersion) {
+            Write-Host "Upstream changed: $currentVersion -> $upstreamVersion"
+            git rebase upstream/main
+            if ($LASTEXITCODE -ne 0) {
+              git rebase --abort
+              "conflict=true" >> $env:GITHUB_OUTPUT
+              "needs_build=false" >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+
+            $rebasedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            "version=$rebasedVersion" >> $env:GITHUB_OUTPUT
+            "rebased=true" >> $env:GITHUB_OUTPUT
+            "needs_build=true" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $tag = "laya-v$currentVersion"
+          gh release view $tag --repo $env:DOWNSTREAM_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Downstream release $tag already exists; nothing to do."
+            "version=$currentVersion" >> $env:GITHUB_OUTPUT
+            "rebased=false" >> $env:GITHUB_OUTPUT
+            "conflict=false" >> $env:GITHUB_OUTPUT
+            "needs_build=false" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Current downstream version has no release yet: $tag"
+            "version=$currentVersion" >> $env:GITHUB_OUTPUT
+            "rebased=false" >> $env:GITHUB_OUTPUT
+            "conflict=false" >> $env:GITHUB_OUTPUT
+            "needs_build=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Open rebase-conflict issue
+        if: steps.sync.outputs.conflict == 'true'
+        shell: pwsh
+        run: |
+          $title = "Laya rebase conflict for upstream v${{ steps.sync.outputs.upstream_version }}"
+          $existing = gh issue list --repo $env:DOWNSTREAM_REPO --state open --json title --jq ".[] | select(.title == \"$title\") | .title"
+          if (-not $existing) {
+            gh issue create --repo $env:DOWNSTREAM_REPO --title $title --body @"
+          The scheduled downstream updater could not rebase the native Laya/Codex integration onto upstream v${{ steps.sync.outputs.upstream_version }}.
+
+          No branch was pushed and no release was published.
+
+          Resolve the rebase locally, rerun the Codex/desktop/CLI validation, then dispatch this workflow again.
+          "@
+          }
+
+      - name: Setup Node.js 24
+        if: steps.sync.outputs.needs_build == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Setup .NET 8 SDK
+        if: steps.sync.outputs.needs_build == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install cosign
+        if: steps.sync.outputs.needs_build == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: 'v3.1.3'
+
+      - name: Enable Corepack and install dependencies
+        if: steps.sync.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Validate native Laya routing
+        if: steps.sync.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          corepack pnpm@10.15.0 --filter @lnwjud/codex test
+          corepack pnpm@10.15.0 --filter @lnwjud/codex... build
+          corepack pnpm@10.15.0 --filter @lnwjud/codex typecheck
+          corepack pnpm@10.15.0 --filter @lnwjud/desktop typecheck
+          corepack pnpm@10.15.0 --filter @lnwjud/cli typecheck
+
+      - name: Package Windows downstream build
+        if: steps.sync.outputs.needs_build == 'true'
+        shell: pwsh
+        env:
+          LNWJUD_COSIGN_PATH: cosign
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+
+      - name: Packaged MCP and security smoke
+        if: steps.sync.outputs.needs_build == 'true'
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          LNWJUD_PACKAGED_EXECUTABLE: ${{ github.workspace }}/apps/desktop/dist/installers/win-unpacked/lnwjud.exe
+          PLAYWRIGHT_HTML_OPEN: never
+        run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec playwright test --config playwright.config.ts desktop-dashboard.e2e.ts desktop-mcp-client.e2e.ts tools-doctor.e2e.ts electron-security.e2e.ts --trace=retain-on-failure --reporter=list
+
+      - name: Push validated rebased downstream branch
+        if: steps.sync.outputs.needs_build == 'true' && steps.sync.outputs.rebased == 'true'
+        shell: pwsh
+        run: git push --force-with-lease origin HEAD:${{ github.ref_name }}
+
+      - name: Publish downstream release
+        if: steps.sync.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.sync.outputs.version }}"
+          $tag = "laya-v$version"
+          $dir = "apps/desktop/dist/installers"
+
+          gh release view $tag --repo $env:DOWNSTREAM_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; keeping the existing validated release."
+            exit 0
+          }
+
+          $assets = @(
+            "$dir/lnwjud-Setup-$version.exe",
+            "$dir/lnwjud-Setup-$version.exe.blockmap",
+            "$dir/lnwjud-Portable-$version.exe",
+            "$dir/latest.yml",
+            "$dir/portable.yml",
+            "$dir/SHA256SUMS.txt",
+            "$dir/PROVENANCE.json"
+          )
+
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Required release asset missing: $asset"
+            }
+          }
+
+          $notes = @"
+          Native Laya downstream build based on upstream lnwjud v$version.
+
+          Safety contract:
+          - local/self-contained Codex tasks may use the Core profile;
+          - production/security/migration/context-heavy or uncertain tasks use Full;
+          - Laya failure falls back to Full Codex;
+          - smart-agent and codex-auto wrappers are not used.
+          "@
+
+          gh release create $tag @assets --repo $env:DOWNSTREAM_REPO --target ${{ github.ref_name }} --title "lnwjud v$version + native Laya routing" --notes $notes
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: laya-downstream-failure-${{ github.run_id }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+            apps/desktop/dist/installers/PROVENANCE.json
+          if-no-files-found: ignore
+          retention-days: 7

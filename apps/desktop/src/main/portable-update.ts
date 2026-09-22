@@ -3,7 +3,7 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-export const PORTABLE_UPDATE_FEED_URL = 'https://github.com/engasnm111/lnwjud/releases/latest/download/';
+export const PORTABLE_UPDATE_FEED_URL = 'https://github.com/PIPEPIR/lnwjud/releases/latest/download/';
 export const PORTABLE_UPDATE_CHANNEL = 'portable';
 
 export type WindowsDistribution = 'installer' | 'portable';
