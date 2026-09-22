@@ -27,7 +27,7 @@ export interface CodexInvocation {
 export type CodexSandboxMode = 'read-only' | 'workspace-write';
 
 export class CodexInvocationBuilder {
-  public build(executable: string, capabilities: CodexCapabilities, instruction: string, sandboxMode: CodexSandboxMode = 'workspace-write'): Result<CodexInvocation> {
+  public build(executable: string, capabilities: CodexCapabilities, instruction: string, sandboxMode: CodexSandboxMode = 'workspace-write', profile?: string): Result<CodexInvocation> {
     if (executable.trim().length === 0 || instruction.trim().length === 0) {
       return err(appError('INVALID_INPUT', 'Codex executable and instruction are required'));
     }
@@ -38,11 +38,13 @@ export class CodexInvocationBuilder {
       return err(appError('CODEX_NOT_AVAILABLE', `Codex ${sandboxMode} sandbox support was not verified`, true));
     }
     const sandboxArgs = ['--sandbox', sandboxMode];
+    const profileName = profile?.trim();
+    const profileArgs = profileName === undefined || profileName.length === 0 ? [] : ['-p', profileName];
     const args = capabilities.instructionMode === 'exec-argument'
-      ? ['exec', ...sandboxArgs, instruction]
+      ? [...profileArgs, 'exec', ...sandboxArgs, instruction]
       : capabilities.instructionMode === 'prompt-option'
-        ? [...sandboxArgs, '--prompt', instruction]
-        : [...sandboxArgs, instruction];
+        ? [...profileArgs, ...sandboxArgs, '--prompt', instruction]
+        : [...profileArgs, ...sandboxArgs, instruction];
     return ok({ executable, args });
   }
 }
