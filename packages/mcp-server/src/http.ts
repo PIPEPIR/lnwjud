@@ -26,6 +26,7 @@ import { APP_NAME, APP_VERSION } from '@lnwjud/shared';
 
 export const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
 export const LNWJUD_MCP_IDENTITY_PATH = '/_lnwjud/identity';
+export const LNWJUD_MCP_READONLY_PATH = '/mcp-readonly';
 
 export interface McpHttpServerOptions extends McpServerOptions {
   readonly port: number;
@@ -42,7 +43,9 @@ export interface McpHttpServerAddress {
 export interface McpHttpServerHandle {
   readonly address: McpHttpServerAddress;
   readonly endpoint: URL;
+  readonly readOnlyEndpoint: URL;
   readonly ipv6Endpoint?: URL | null;
+  readonly ipv6ReadOnlyEndpoint?: URL | null;
   close(): Promise<void>;
 }
 
@@ -406,12 +409,13 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   handler: McpHttpHandler,
+  readOnlyHandler: McpHttpHandler,
   originPolicy: OriginPolicy,
   allowedHostnames: string[],
   maxBodyBytes: number,
 ): Promise<void> {
   const requestedPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-  if (requestedPath !== '/mcp' && requestedPath !== LNWJUD_MCP_IDENTITY_PATH) {
+  if (requestedPath !== '/mcp' && requestedPath !== LNWJUD_MCP_READONLY_PATH && requestedPath !== LNWJUD_MCP_IDENTITY_PATH) {
     sendStatus(response, 404, 'Not found');
     return;
   }
@@ -449,7 +453,8 @@ async function handleRequest(
     return;
   }
 
-  await writeFetchResponse(response, await handler.fetch(fetchRequest));
+  const selectedHandler = requestedPath === LNWJUD_MCP_READONLY_PATH ? readOnlyHandler : handler;
+  await writeFetchResponse(response, await selectedHandler.fetch(fetchRequest));
 }
 
 type LoopbackHost = '127.0.0.1' | '::1';
@@ -531,10 +536,18 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes <= 0) throw new Error('MCP HTTP body limit must be positive');
 
   const handler = createSessionfulMcpHandler(options);
+  const upstreamExposurePredicate = options.toolExposurePredicate;
+  const readOnlyHandler = createSessionfulMcpHandler({
+    ...options,
+    toolExposurePredicate: (tool) => (
+      tool.permission === 'READ'
+      && (upstreamExposurePredicate === undefined || upstreamExposurePredicate(tool))
+    ),
+  });
   const originPolicy = options.originPolicy ?? createOriginPolicy();
   const allowedHostnames = [...new Set([...localhostAllowedHostnames(), ...(options.allowedHostnames ?? [])])];
   const listener: RequestListener = (request, response) => {
-    void handleRequest(request, response, handler, originPolicy, allowedHostnames, maxBodyBytes).catch((error: unknown) => {
+    void handleRequest(request, response, handler, readOnlyHandler, originPolicy, allowedHostnames, maxBodyBytes).catch((error: unknown) => {
       writeDiagnostic(error instanceof Error ? error : new Error('Unhandled MCP HTTP request error'));
       if (!response.headersSent) sendStatus(response, 500, 'Internal server error');
       else response.destroy();
@@ -543,14 +556,18 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
   const servers = await bindLoopbackServers(listener, options.port);
   const address: McpHttpServerAddress = { host: '127.0.0.1', port: servers.port };
   const endpoint = new URL(`http://${address.host}:${address.port}/mcp`);
+  const readOnlyEndpoint = new URL(`http://${address.host}:${address.port}${LNWJUD_MCP_READONLY_PATH}`);
   const ipv6Endpoint = servers.ipv6 === null ? null : new URL(`http://[::1]:${address.port}/mcp`);
+  const ipv6ReadOnlyEndpoint = servers.ipv6 === null ? null : new URL(`http://[::1]:${address.port}${LNWJUD_MCP_READONLY_PATH}`);
 
   return {
     address,
     endpoint,
+    readOnlyEndpoint,
     ipv6Endpoint,
+    ipv6ReadOnlyEndpoint,
     async close(): Promise<void> {
-      await handler.close();
+      await Promise.all([handler.close(), readOnlyHandler.close()]);
       await Promise.all([
         closeHttpServer(servers.ipv4),
         servers.ipv6 === null ? Promise.resolve() : closeHttpServer(servers.ipv6),
