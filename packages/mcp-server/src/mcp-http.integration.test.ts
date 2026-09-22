@@ -85,6 +85,9 @@ describe('MCP localhost HTTP transport', () => {
       expect(names).not.toContain('edit_file');
       expect(names).not.toContain('shell');
       expect(names).not.toContain('codex_run');
+      expect(names).not.toContain('dom_cdp');
+      expect(names).not.toContain('accessibility');
+      expect(names).not.toContain('web_fetch');
 
       const hiddenWrite = await client.callTool({
         name: 'write_file',
