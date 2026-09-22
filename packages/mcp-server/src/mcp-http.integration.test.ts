@@ -65,13 +65,13 @@ describe('MCP localhost HTTP transport', () => {
   });
 
   it('exposes a dedicated read-only MCP surface and keeps mutations hidden', async () => {
-    expect(handle.readOnlyEndpoint.pathname).toBe(LNWJUD_MCP_READONLY_PATH);
+    expect(handle.readOnlyEndpoint?.pathname).toBe(LNWJUD_MCP_READONLY_PATH);
 
     const client = new Client(
       { name: 'lnwjud-readonly-http-test-client', version: '0.1.0' },
       { versionNegotiation: { mode: { pin: '2026-07-28' } } },
     );
-    const transport = new StreamableHTTPClientTransport(handle.readOnlyEndpoint);
+    const transport = new StreamableHTTPClientTransport(handle.readOnlyEndpoint!);
 
     try {
       await client.connect(transport);
