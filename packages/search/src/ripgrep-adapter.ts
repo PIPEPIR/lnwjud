@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { DEFAULT_SEARCH_RESULTS, err, MAX_PROCESS_LOG_BYTES, MAX_SEARCH_RESULTS, ok, type Result } from '@lnwjud/domain';
+import { DEFAULT_SEARCH_RESULTS, err, MAX_PROCESS_LOG_BYTES, MAX_SEARCH_RESULTS, ok, type AppError, type Result } from '@lnwjud/domain';
 import { createProcessTreeTerminator, createSpawnInvocationFactory, PathExecutableResolver, type ExecutableResolver, type ProcessTreeTerminator, type SpawnInvocationFactory } from '@lnwjud/process';
 import {
   classifyContextPath,
@@ -163,6 +163,8 @@ export interface SearchTextRequest {
   readonly rootPath: string;
   readonly targetPath?: string;
   readonly query: string;
+  /** Literal/fixed-string search is the safe default. Set true only for intentional ripgrep regex syntax. */
+  readonly regex?: boolean;
   readonly glob?: string;
   readonly maxResults?: number;
   readonly discovery?: ContextDiscoveryMode;
@@ -210,6 +212,7 @@ export class RipgrepAdapter {
     if (!executable.ok) return executable;
     const discovery = request.discovery ?? 'automatic';
     const args = ['--json', '--no-heading', '--color', 'never', '--hidden', '--no-ignore'];
+    if (request.regex !== true) args.push('--fixed-strings');
     if (discovery === 'automatic') this.appendDefaultGlobs(args);
     if (request.glob !== undefined) args.push('--glob', request.glob);
     args.push('--', request.query, request.targetPath ?? '.');
@@ -301,10 +304,7 @@ export class RipgrepAdapter {
   }
 }
 
-function classifySearchError(exitCode: number, stderr: string):
-  | { readonly code: 'PERMISSION_DENIED'; readonly message: string; readonly recoverable: true }
-  | { readonly code: 'INVALID_INPUT'; readonly message: string; readonly recoverable: false }
-  | { readonly code: 'INTERNAL_ERROR'; readonly message: string; readonly recoverable: true } {
+function classifySearchError(exitCode: number, stderr: string): AppError {
   if (isSearchPermissionError(stderr)) {
     const detail = boundedSearchError(stderr);
     return {
@@ -314,7 +314,16 @@ function classifySearchError(exitCode: number, stderr: string):
     };
   }
   if (exitCode === 2 && isSearchArgumentError(stderr)) {
-    return { code: 'INVALID_INPUT', message: searchArgumentError(stderr), recoverable: false };
+    const argumentKind = searchArgumentKind(stderr);
+    return {
+      code: 'INVALID_INPUT',
+      message: searchArgumentError(stderr),
+      recoverable: true,
+      details: {
+        argumentKind,
+        suggestedAction: argumentKind === 'regex' ? 'retry_as_literal_or_fix_regex' : 'fix_glob_and_retry',
+      },
+    };
   }
   return { code: 'INTERNAL_ERROR', message: searchProcessError(stderr), recoverable: true };
 }
@@ -325,6 +334,10 @@ function isSearchPermissionError(stderr: string): boolean {
 
 function isSearchArgumentError(stderr: string): boolean {
   return /(?:regex|glob) parse error|error parsing (?:regex|glob)|invalid (?:regex|glob)|(?:regex|glob) syntax error/i.test(stderr);
+}
+
+function searchArgumentKind(stderr: string): 'regex' | 'glob' {
+  return /glob/i.test(stderr) ? 'glob' : 'regex';
 }
 
 function searchArgumentError(stderr: string): string {

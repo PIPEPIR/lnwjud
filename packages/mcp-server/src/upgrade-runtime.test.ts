@@ -469,7 +469,7 @@ describe('upgrade runtime', () => {
     expect(calls).toEqual([
       { app: 'powerpoint', action: 'read', file_path: 'C:\\work\\deck.pptx' },
       { app: 'powerpoint', action: 'save_as', file_path: 'C:\\work\\deck.pptx', target_path: 'C:\\work\\copy.pptx', userConfirmed: true },
-      { app: 'outlook', action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 100 },
+      { app: 'outlook', action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 100, timeout_seconds: 60 },
     ]);
   });
 

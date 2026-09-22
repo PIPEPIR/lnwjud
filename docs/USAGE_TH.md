@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.4.3 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.5.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.4.3`; public release `v5.4.3` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.4.3)
+คู่มือนี้อัปเดตตาม source `v5.5.0`; public release `v5.4.3` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.4.3)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -81,7 +81,7 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 ดังนั้นผู้ใช้เลือกแบบไหนตอนดาวน์โหลดครั้งแรก ก็จะได้รับ update ของแบบนั้นต่อไป ข้อมูล/Settings ต่อผู้ใช้ Windows ยังคงใช้ชุดเดิมตามปกติ
 
-## 3A. Remote MCP ผ่าน ngrok + OAuth (แนะนำสำหรับ ChatGPT เว็บ)
+## 3A. Remote MCP ผ่าน ngrok + OAuth (ค่าเริ่มต้น/รองรับผู้ใช้เดิม)
 
 ใน v4.52.0 วิธีที่ง่ายที่สุดสำหรับ ChatGPT เว็บคือ **Remote MCP — ngrok + OAuth** ซึ่งแยกจาก OpenAI Secure MCP Tunnel เดิมอย่างชัดเจน. งาน Remote MCP/OAuth ที่พัฒนาระหว่างเลขเวอร์ชันภายใน 4.50/4.51 (ซึ่งไม่เคยเผยแพร่เป็น Release) ถูกรวมส่งมอบใน v4.52.0 ชุดเดียว. Local MCP ของ lnwjud ยังคง bind เฉพาะ loopback เช่น `http://127.0.0.1:18765/mcp`; lnwjud จะสร้าง OAuth-protected loopback gateway อีกชั้น แล้วให้ ngrok เปิดเฉพาะ gateway นั้นออกเป็น HTTPS public URL ที่ลงท้าย `/mcp`.
 
@@ -98,7 +98,35 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 Remote MCP gateway รองรับ OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, access token และ refresh token. คำขอ `/mcp` ที่ไม่มี bearer token ที่ถูกต้องจะถูกปฏิเสธ และ Authorization header จากอินเทอร์เน็ตจะไม่ถูกส่งต่อเข้า local MCP โดยตรง.
 
-## 3. เลือกวิธียืนยันตัวตนของ OpenAI Secure MCP Tunnel
+### 3B. Remote MCP ผ่าน Cloudflare
+
+โหมด **Cloudflare** เป็นตัวเลือกเพิ่มใน v5.5.0 และไม่เปลี่ยนผู้ใช้เดิมจาก ngrok อัตโนมัติ. ใช้เมื่อคุณมี Cloudflare Tunnel/reverse proxy ของตัวเองอยู่แล้ว:
+
+1. เลือก Transport = **Cloudflare** ใน Settings.
+2. lnwjud จะเปิด OAuth-protected gateway บน loopback แบบ stable และแสดง **Local gateway target** ให้คัดลอก.
+3. ตั้ง Cloudflare Tunnel/reverse proxy ของคุณให้ forward มาที่ gateway target ที่ lnwjud แสดง — ไม่ใช่ raw Local MCP URL.
+4. ใส่ public HTTPS origin ของคุณ เช่น `https://mcp.example.com` แล้วบันทึก.
+5. กด Start Remote MCP; lnwjud จะตรวจว่ public origin วิ่งกลับมาถึง gateway จริงก่อนรายงาน RUNNING.
+
+lnwjud **ไม่ได้สร้าง Cloudflare Tunnel ให้เอง** ในโหมดนี้ และจะไม่ติดตั้ง/รัน ngrok. การจัดการ Cloudflare token/domain/tunnel เป็นของผู้ใช้หรือระบบภายนอก.
+
+### 3C. Remote MCP ผ่าน Custom URL
+
+โหมด **Custom URL** ใช้กับ reverse proxy HTTPS ที่คุณจัดการเอง เช่น proxy/gateway ขององค์กร. พฤติกรรมเหมือน Cloudflare ในส่วน security boundary: lnwjud เปิด stable protected loopback gateway, ไม่ต้องใช้ ngrok authtoken และจะ verify public HTTPS origin ก่อนขึ้น RUNNING. Proxy ต้องชี้มาที่ gateway target ที่ Settings แสดง ไม่ใช่ raw Local MCP listener.
+
+### 3D. Local MCP โดยไม่ใช้ ngrok
+
+โหมด **Local MCP** เปิดเฉพาะ listener บน loopback สำหรับ MCP client ในเครื่อง/เครือข่ายที่เข้าถึง loopback ผ่านกลไกของตัวเอง. โหมดนี้:
+
+- ไม่ติดตั้งหรือรัน ngrok;
+- ไม่มี public gateway/public MCP URL;
+- ไม่ต้องมี ngrok token หรือ public OAuth;
+- แสดง Local MCP URL ชัดเจน;
+- ไม่แสดงปุ่ม Reconnect ChatGPT หรือขั้นตอนสร้าง ChatGPT Plugin ที่ไม่เกี่ยวข้อง.
+
+Local MCP เป็นตัวเลือกเพิ่ม ไม่ได้แทน OpenAI Secure MCP Tunnel หรือ Remote MCP OAuth สำหรับ ChatGPT ระยะไกล.
+
+### 3E. เลือกวิธียืนยันตัวตนของ OpenAI Secure MCP Tunnel
 
 หน้า **Settings → Secure Tunnel Authentication** แสดงวิธีที่กำลังใช้อยู่เป็น `OAUTH` หรือ `API KEY` และทุกหน้าหลัก/Logs/Doctor จะอิงค่านี้เหมือนกัน. เมื่ออยู่โหมด OAuth หน้าหลักจะแสดง OAuth account/status และไม่พาเข้า wizard สำหรับวาง Runtime API key; ฟอร์ม Runtime API key ยังอยู่เฉพาะส่วน Advanced ในฐานะ legacy fallback/troubleshooting. Transport ยังคงเป็น **OpenAI Secure MCP Tunnel** ไม่ว่า auth mode จะเป็นแบบใด.
 
@@ -344,8 +372,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

@@ -24,6 +24,10 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('historical `occurrence=once` compatibility paths only');
     expect(skill).toContain('Never create a recurring watchdog while a confirmed live one-time watchdog');
 
+    expect(skill).toContain('explicitly bind back to the connected lnwjud plugin/connector');
+    expect(skill).toContain('prefix/preserve the exact lnwjud mention used in the chat');
+    expect(skill).toContain('do **not** rely on the bare tool name alone');
+    expect(skill).toContain('before any user-visible status reply');
     expect(skill).toContain('`claim_scheduled_continuation` must be the **first connected lnwjud action');
     expect(skill).toContain('`recurring_acquired`');
     expect(skill).toContain('`worker_busy_noop`');

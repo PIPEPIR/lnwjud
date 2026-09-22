@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { InstallOperationPhase, RemoteMcpStatus } from '@lnwjud/ipc-contracts';
+import type { InstallOperationPhase, RemoteMcpStatus, RemoteMcpTransport } from '@lnwjud/ipc-contracts';
 import type { SecretProtector } from '@lnwjud/shared';
 
 export type TokenEndpointAuthMethod = 'none' | 'client_secret_post';
@@ -19,12 +19,31 @@ interface RegisteredClient {
 }
 
 export interface RemoteMcpPersistedState {
-  readonly schemaVersion: 1 | 2;
+  readonly schemaVersion: 1 | 2 | 3;
   readonly desiredRunning: boolean;
   /** schema v1 only: learned runtime origin; never reused as launch configuration. */
   readonly publicOrigin?: string | null;
-  /** schema v2: explicit user-configured ngrok static/custom domain. */
+  /** schema v2+: explicit user-configured public origin. v1/v2 always migrate to ngrok transport. */
   readonly configuredPublicOrigin?: string | null;
+  /** schema v3 transport selection. Older schemas intentionally default to ngrok. */
+  readonly transport?: RemoteMcpTransport;
+  /** v3 compatibility slot preserving the ngrok static domain while another transport is selected. */
+  readonly configuredNgrokOrigin?: string | null;
+  /** v3 external reverse-proxy origin shared by Cloudflare and Custom URL modes. */
+  readonly configuredExternalOrigin?: string | null;
+  /** Stable loopback OAuth gateway port used only by externally managed Cloudflare/custom transports. */
+  readonly externalGatewayPort?: number | null;
+  /** schema v3 persists both trusted and pending DCR registrations inside encrypted state. */
+  readonly registeredClients?: ReadonlyArray<{
+    readonly clientId: string;
+    readonly redirectUris: readonly string[];
+    readonly clientName: string | null;
+    readonly tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+    readonly clientSecret: string | null;
+    readonly trusted: boolean;
+    readonly registeredAt: number;
+  }>;
+  /** Legacy compatibility projection retained for schema v1/v2 readers and tests. */
   readonly trustedClients: ReadonlyArray<{
     readonly clientId: string;
     readonly redirectUris: readonly string[];
@@ -106,10 +125,13 @@ export class RemoteMcpController {
   private persistenceLoaded = false;
   private persistenceLoad: Promise<void> | null = null;
   private desiredRunning = false;
+  private transport: RemoteMcpTransport = 'ngrok';
+  private externalGatewayPort: number | null = null;
   private gateway: Server | null = null;
   private gatewayUrl: string | null = null;
   private publicOrigin: string | null = null;
-  private configuredPublicOrigin: string | null = null;
+  private configuredNgrokOrigin: string | null = null;
+  private configuredExternalOrigin: string | null = null;
   private ngrok: ChildProcess | null = null;
   private ngrokPath: string | null = null;
   private ngrokProbeAt = 0;
@@ -135,39 +157,58 @@ export class RemoteMcpController {
     this.persistence = options.persistence ?? createRemoteMcpStatePersistence(options.dataPath, options.secretProtector);
   }
 
+  private configuredOriginForTransport(transport: RemoteMcpTransport = this.transport): string | null {
+    if (transport === 'ngrok') return this.configuredNgrokOrigin;
+    if (transport === 'cloudflare' || transport === 'custom') return this.configuredExternalOrigin;
+    return null;
+  }
+
   public async status(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
     const localMcpUrl = await this.getLocalMcpUrl().catch(() => null);
-    const probeNow = this.now();
-    if (this.ngrokProbeAt === 0 || probeNow - this.ngrokProbeAt >= 30_000) {
-      this.ngrokPath = await resolveNgrokExecutable();
-      this.ngrokProbeAt = probeNow;
+    let executable: string | null = null;
+    let automaticInstaller: Awaited<ReturnType<typeof resolveNgrokAutomaticInstaller>> = null;
+    if (this.transport === 'ngrok') {
+      const probeNow = this.now();
+      if (this.ngrokProbeAt === 0 || probeNow - this.ngrokProbeAt >= 30_000) {
+        this.ngrokPath = await resolveManagedNgrokExecutable(this.dataPath);
+        this.ngrokProbeAt = probeNow;
+      }
+      executable = this.ngrokPath;
+      automaticInstaller = await resolveNgrokAutomaticInstaller();
     }
-    const executable = this.ngrokPath;
-    const automaticInstaller = await resolveNgrokAutomaticInstaller();
     const hasAuthtoken = await this.hasAuthtoken();
+    const configuredGatewayUrl = (this.transport === 'cloudflare' || this.transport === 'custom') && this.externalGatewayPort !== null
+      ? `http://127.0.0.1:${this.externalGatewayPort}`
+      : null;
     return {
       state: this.runState,
-      provider: 'ngrok',
-      installed: executable !== null,
-      automaticInstallAvailable: automaticInstaller !== null,
-      automaticInstallMethod: automaticInstaller?.method ?? null,
+      provider: this.transport,
+      transport: this.transport,
+      installed: this.transport === 'ngrok' ? executable !== null : true,
+      automaticInstallAvailable: this.transport === 'ngrok' && automaticInstaller !== null,
+      automaticInstallMethod: this.transport === 'ngrok' ? automaticInstaller?.method ?? null : null,
       hasAuthtoken,
-      ngrokPath: executable,
+      ngrokPath: this.transport === 'ngrok' ? executable : null,
       localMcpUrl,
       localGatewayUrl: this.gatewayUrl,
-      publicMcpUrl: this.publicOrigin === null ? null : `${this.publicOrigin}/mcp`,
-      configuredPublicOrigin: this.configuredPublicOrigin,
-      oauthProtected: true,
-      oauthConnected: this.hasTrustedClient(),
+      configuredGatewayUrl,
+      publicMcpUrl: this.transport === 'local' || this.publicOrigin === null ? null : `${this.publicOrigin}/mcp`,
+      configuredPublicOrigin: this.configuredOriginForTransport(),
+      oauthProtected: this.transport !== 'local',
+      oauthConnected: this.transport === 'local' ? false : this.hasTrustedClient(),
       autoStartEnabled: this.desiredRunning,
       message: this.message,
     };
   }
 
   public async installProvider(): Promise<RemoteMcpStatus> {
+    await this.ensurePersistenceLoaded();
+    if (this.transport !== 'ngrok') {
+      throw new Error('ngrok installation is available only when the Remote MCP transport is set to ngrok.');
+    }
     this.onInstallProgress?.('preparing');
-    const existing = await resolveNgrokExecutable();
+    const existing = await resolveManagedNgrokExecutable(this.dataPath);
     if (existing !== null) {
       this.ngrokPath = existing;
       this.message = 'ngrok is already installed';
@@ -189,7 +230,7 @@ export class RemoteMcpController {
     try {
       await runCommand(installer.executable, installer.args, 180_000);
       this.onInstallProgress?.('finalizing');
-      const installed = await resolveNgrokExecutable();
+      const installed = await resolveManagedNgrokExecutable(this.dataPath);
       if (installed === null) throw new Error('ngrok installation completed but no runnable target-native ngrok executable could be resolved');
       this.ngrokPath = installed;
       this.runState = 'stopped';
@@ -220,13 +261,41 @@ export class RemoteMcpController {
 
   public async savePublicOrigin(raw: string): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
-    if (!this.persistenceLoaded) throw new Error('Saved Remote MCP state could not be loaded; the ngrok domain was not changed. Retry after secure storage is available.');
-    if (this.runState === 'running' || this.runState === 'starting') throw new Error('Stop Remote MCP before changing the ngrok domain.');
-    this.configuredPublicOrigin = normalizeConfiguredPublicOrigin(raw);
+    if (!this.persistenceLoaded) throw new Error('Saved Remote MCP state could not be loaded; the public origin was not changed. Retry after secure storage is available.');
+    if (this.runState === 'running' || this.runState === 'starting') throw new Error('Stop MCP connectivity before changing the public origin.');
+    if (this.transport === 'local') throw new Error('Local MCP does not use a public origin. Select ngrok, Cloudflare, or Custom URL first.');
+    const configuredPublicOrigin = normalizeConfiguredPublicOrigin(raw);
+    if (this.transport === 'ngrok') this.configuredNgrokOrigin = configuredPublicOrigin;
+    else this.configuredExternalOrigin = configuredPublicOrigin;
     await this.persistState();
-    this.message = this.configuredPublicOrigin === null
-      ? 'Static ngrok domain cleared. Remote MCP will let ngrok choose the public URL at startup.'
-      : `Remote MCP will request ${this.configuredPublicOrigin} on the next start.`;
+    if (this.transport === 'ngrok') {
+      this.message = configuredPublicOrigin === null
+        ? 'Static ngrok domain cleared. Remote MCP will let ngrok choose the public URL at startup.'
+        : `Remote MCP will request ${configuredPublicOrigin} on the next ngrok start.`;
+    } else {
+      this.message = configuredPublicOrigin === null
+        ? 'External public URL cleared. Configure an HTTPS public origin before starting this transport.'
+        : `${this.transport === 'cloudflare' ? 'Cloudflare' : 'Custom URL'} public origin saved. Configure the external proxy to forward to the stable local gateway URL shown by lnwjud.`;
+    }
+    return this.status();
+  }
+
+  public async setTransport(transport: RemoteMcpTransport): Promise<RemoteMcpStatus> {
+    await this.ensurePersistenceLoaded();
+    if (!this.persistenceLoaded) throw new Error('Saved Remote MCP state could not be loaded; the transport was not changed. Retry after secure storage is available.');
+    if (this.runState === 'running' || this.runState === 'starting' || this.runState === 'installing') throw new Error('Stop MCP connectivity before changing the transport.');
+    if ((transport === 'cloudflare' || transport === 'custom') && this.externalGatewayPort === null) {
+      this.externalGatewayPort = await reserveLoopbackPort();
+    }
+    this.transport = transport;
+    await this.persistState();
+    this.message = transport === 'ngrok'
+      ? 'ngrok selected. Existing ngrok authtoken, static domain, OAuth trust, and tunnel behavior are preserved.'
+      : transport === 'cloudflare'
+        ? 'Cloudflare selected. lnwjud will run the OAuth gateway locally without starting ngrok; your Cloudflare tunnel must forward the configured HTTPS origin to the stable local gateway URL.'
+        : transport === 'custom'
+          ? 'Custom URL selected. lnwjud will run the OAuth gateway locally without starting ngrok; your reverse proxy must forward the configured HTTPS origin to the stable local gateway URL.'
+          : 'Local MCP selected. lnwjud will start the local MCP listener directly with no ngrok or public OAuth gateway.';
     return this.status();
   }
 
@@ -246,7 +315,7 @@ export class RemoteMcpController {
 
   public async autoStartIfDesired(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
-    if (!this.desiredRunning || !this.hasTrustedClient()) return this.status();
+    if (!this.desiredRunning) return this.status();
     return this.start();
   }
 
@@ -267,13 +336,60 @@ export class RemoteMcpController {
 
   private async startInternal(): Promise<RemoteMcpStatus> {
     this.runState = 'starting';
-    this.message = 'Starting protected Remote MCP…';
+    this.message = this.transport === 'local' ? 'Starting Local MCP…' : 'Starting protected Remote MCP…';
     try {
-      if (await this.ensureLocalMcpUrl() === null) throw new Error('Local MCP is unavailable. Start the lnwjud MCP listener first.');
-      let executable = this.ngrokPath ?? await resolveNgrokExecutable();
+      const localMcpUrl = await this.ensureLocalMcpUrl();
+      if (localMcpUrl === null) throw new Error('Local MCP is unavailable. Start the lnwjud MCP listener first.');
+
+      if (this.transport === 'local') {
+        this.publicOrigin = null;
+        this.runState = 'running';
+        this.desiredRunning = true;
+        this.reconnectAttempts = 0;
+        await this.persistState();
+        this.message = 'Local MCP is online directly. ngrok and the public OAuth gateway are not used in Local MCP mode.';
+        return this.status();
+      }
+
+      if (this.transport === 'cloudflare' || this.transport === 'custom') {
+        const externalOrigin = this.configuredExternalOrigin;
+        if (externalOrigin === null) {
+          throw new Error(`${this.transport === 'cloudflare' ? 'Cloudflare' : 'Custom URL'} transport requires a configured public HTTPS origin.`);
+        }
+        const requestedPort = this.externalGatewayPort ?? 0;
+        try {
+          await this.startGateway(requestedPort);
+        } catch (error) {
+          if (requestedPort === 0) throw error;
+          this.externalGatewayPort = await reserveLoopbackPort();
+          await this.persistState();
+          await this.startGateway(this.externalGatewayPort);
+        }
+        if (this.gatewayUrl === null) throw new Error('Remote MCP gateway did not start');
+        if (this.externalGatewayPort === null) {
+          const parsedGateway = new URL(this.gatewayUrl);
+          const selectedPort = Number.parseInt(parsedGateway.port, 10);
+          if (!Number.isInteger(selectedPort) || selectedPort <= 0 || selectedPort > 65_535) throw new Error('Remote MCP gateway selected an invalid loopback port');
+          this.externalGatewayPort = selectedPort;
+          await this.persistState();
+        }
+        this.publicOrigin = externalOrigin;
+        const verified = await verifyExternalPublicOrigin(externalOrigin, 8_000);
+        if (!verified) {
+          throw new Error(`${this.transport === 'cloudflare' ? 'Cloudflare' : 'Custom URL'} public origin is not forwarding to the lnwjud OAuth gateway yet. Configure ${this.publicOrigin} to forward to ${this.gatewayUrl} and start again.`);
+        }
+        this.runState = 'running';
+        this.desiredRunning = true;
+        this.reconnectAttempts = 0;
+        await this.persistState();
+        this.message = `${this.transport === 'cloudflare' ? 'Cloudflare' : 'Custom URL'} Remote MCP is online through ${this.publicOrigin}. lnwjud did not start or modify ngrok.`;
+        return this.status();
+      }
+
+      let executable = this.ngrokPath ?? await resolveManagedNgrokExecutable(this.dataPath);
       if (executable === null) {
         await this.installProvider();
-        executable = this.ngrokPath ?? await resolveNgrokExecutable();
+        executable = this.ngrokPath ?? await resolveManagedNgrokExecutable(this.dataPath);
         this.runState = 'starting';
       }
       if (executable === null) throw new Error('ngrok installation/repair completed but no runnable ngrok executable was found');
@@ -287,7 +403,8 @@ export class RemoteMcpController {
       this.publicOrigin = null;
       let lastNgrokDiagnostic: string | null = null;
       let ngrokDiagnosticBuffer = '';
-      const child = spawn(executable, buildNgrokHttpArgs(this.gatewayUrl, this.configuredPublicOrigin), {
+      const configuredNgrokOrigin = this.configuredNgrokOrigin;
+      const child = spawn(executable, buildNgrokHttpArgs(this.gatewayUrl, configuredNgrokOrigin), {
         env: { ...process.env, NGROK_AUTHTOKEN: authtoken },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -325,9 +442,9 @@ export class RemoteMcpController {
         waitForNgrokPublicOrigin(15_000, this.gatewayUrl).then((origin) => ({ kind: 'origin' as const, origin })),
         exitPromise.then((message) => ({ kind: 'exit' as const, message })),
       ]);
-      if (outcome.kind === 'exit') throw new Error(withStableOriginHint(outcome.message, this.configuredPublicOrigin));
-      if (outcome.origin === null) throw new Error(withStableOriginHint(this.message ?? 'ngrok started but no public HTTPS endpoint was reported', this.configuredPublicOrigin));
-      const origin = enforceStablePublicOrigin(outcome.origin, this.configuredPublicOrigin);
+      if (outcome.kind === 'exit') throw new Error(withStableOriginHint(outcome.message, configuredNgrokOrigin));
+      if (outcome.origin === null) throw new Error(withStableOriginHint(this.message ?? 'ngrok started but no public HTTPS endpoint was reported', configuredNgrokOrigin));
+      const origin = enforceStablePublicOrigin(outcome.origin, configuredNgrokOrigin);
       this.publicOrigin = origin;
       this.runState = 'running';
       this.desiredRunning = true;
@@ -342,7 +459,7 @@ export class RemoteMcpController {
       this.runState = 'error';
       const message = errorMessage(error);
       this.message = message;
-      this.scheduleReconnect(message);
+      if (this.transport === 'ngrok') this.scheduleReconnect(message);
       throw error;
     }
   }
@@ -364,7 +481,7 @@ export class RemoteMcpController {
     await this.stopOwnedRuntime();
   }
 
-  private async startGateway(): Promise<void> {
+  private async startGateway(port = 0): Promise<void> {
     if (this.gateway !== null) return;
     const server = createServer((request, response) => {
       void this.handleGatewayRequest(request, response).catch((error: unknown) => {
@@ -374,7 +491,7 @@ export class RemoteMcpController {
     });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => resolve());
+      server.listen(port, '127.0.0.1', () => resolve());
     });
     const address = server.address();
     if (address === null || typeof address === 'string') {
@@ -445,6 +562,13 @@ export class RemoteMcpController {
       const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' ? token(32) : null;
       const clientName = typeof body.client_name === 'string' ? body.client_name.slice(0, 120) : null;
       this.clients.set(clientId, { clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted: false, registeredAt: this.now() });
+      try {
+        // DCR registration must be durable before HTTP 201 so ChatGPT can reuse client_id after restart/update.
+        await this.persistState();
+      } catch (error) {
+        this.clients.delete(clientId);
+        throw error;
+      }
       const registration: Record<string, unknown> = {
         client_id: clientId,
         client_id_issued_at: Math.floor(this.now() / 1_000),
@@ -501,8 +625,36 @@ export class RemoteMcpController {
     const state = params.get('state') ?? '';
     const challenge = params.get('code_challenge') ?? '';
     const method = params.get('code_challenge_method') ?? '';
-    const client = this.clients.get(clientId);
-    if (params.get('response_type') !== 'code' || client === undefined || !client.redirectUris.includes(redirectUri) || challenge.length < 32 || method !== 'S256') {
+    if (params.get('response_type') !== 'code' || challenge.length < 32 || challenge.length > 256 || method !== 'S256') {
+      json(response, 400, { error: 'invalid_request' });
+      return;
+    }
+    let client = this.clients.get(clientId);
+    if (client === undefined && canRecoverLegacyChatGptClient(params, this.requirePublicOrigin())) {
+      this.pruneOAuthState();
+      const untrustedClientCount = [...this.clients.values()].filter((candidate) => !candidate.trusted).length;
+      if (untrustedClientCount >= MAX_UNTRUSTED_CLIENTS) {
+        json(response, 429, { error: 'temporarily_unavailable', error_description: 'Too many pending OAuth client registrations. Retry after older registrations expire.' });
+        return;
+      }
+      client = {
+        clientId,
+        redirectUris: [redirectUri],
+        clientName: 'ChatGPT (recovered registration)',
+        tokenEndpointAuthMethod: 'none',
+        clientSecret: null,
+        trusted: false,
+        registeredAt: this.now(),
+      };
+      this.clients.set(clientId, client);
+      try {
+        await this.persistState();
+      } catch (error) {
+        this.clients.delete(clientId);
+        throw error;
+      }
+    }
+    if (client === undefined || !client.redirectUris.includes(redirectUri)) {
       json(response, 400, { error: 'invalid_request' });
       return;
     }
@@ -714,13 +866,25 @@ export class RemoteMcpController {
     this.persistenceLoaded = true;
     if (state === null) return;
     this.desiredRunning = state.desiredRunning;
-    this.configuredPublicOrigin = state.schemaVersion === 2 ? state.configuredPublicOrigin ?? null : null;
-    for (const client of state.trustedClients.slice(0, 32)) {
-      this.clients.set(client.clientId, { ...client, trusted: true, registeredAt: this.now() });
+    this.transport = state.schemaVersion === 3 && isRemoteMcpTransport(state.transport) ? state.transport : 'ngrok';
+    this.externalGatewayPort = state.schemaVersion === 3 && isValidGatewayPort(state.externalGatewayPort) ? state.externalGatewayPort : null;
+    const legacyConfiguredOrigin = state.schemaVersion >= 2 ? state.configuredPublicOrigin ?? null : null;
+    const explicitNgrokOrigin = state.schemaVersion === 3 ? state.configuredNgrokOrigin ?? null : null;
+    const explicitExternalOrigin = state.schemaVersion === 3 ? state.configuredExternalOrigin ?? null : null;
+    this.configuredNgrokOrigin = explicitNgrokOrigin ?? (this.transport === 'ngrok' || this.transport === 'local' ? legacyConfiguredOrigin : null);
+    this.configuredExternalOrigin = explicitExternalOrigin ?? (this.transport === 'cloudflare' || this.transport === 'custom' || this.transport === 'local' ? legacyConfiguredOrigin : null);
+    const now = this.now();
+    for (const client of state.registeredClients ?? []) {
+      if (!client.trusted && client.registeredAt + UNTRUSTED_CLIENT_TTL_MS <= now) continue;
+      this.clients.set(client.clientId, { ...client, redirectUris: [...client.redirectUris] });
     }
+    for (const client of state.trustedClients.slice(0, MAX_TRUSTED_CLIENTS)) {
+      if (!this.clients.has(client.clientId)) this.clients.set(client.clientId, { ...client, trusted: true, registeredAt: now });
+    }
+    this.pruneOAuthState();
     const trustedClientIds = new Set([...this.clients.values()].filter((client) => client.trusted).map((client) => client.clientId));
-    for (const grant of state.refreshGrants.slice(0, 64)) {
-      if (grant.expiresAt > this.now() && trustedClientIds.has(grant.clientId)) {
+    for (const grant of state.refreshGrants.slice(0, MAX_REFRESH_TOKENS)) {
+      if (grant.expiresAt > now && trustedClientIds.has(grant.clientId)) {
         this.refreshTokens.set(grant.refreshToken, { clientId: grant.clientId, expiresAt: grant.expiresAt });
       }
     }
@@ -728,17 +892,35 @@ export class RemoteMcpController {
 
   private async persistState(): Promise<void> {
     if (!this.persistenceLoaded) return;
+    this.pruneOAuthState();
     const now = this.now();
-    const trustedClients = [...this.clients.values()]
+    const registeredClients = [...this.clients.values()]
+      .filter((client) => client.trusted || client.registeredAt + UNTRUSTED_CLIENT_TTL_MS > now)
+      .slice(0, MAX_TRUSTED_CLIENTS + MAX_UNTRUSTED_CLIENTS)
+      .map(({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted, registeredAt }) => ({
+        clientId, redirectUris: [...redirectUris], clientName, tokenEndpointAuthMethod, clientSecret, trusted, registeredAt,
+      }));
+    const trustedClients = registeredClients
       .filter((client) => client.trusted)
-      .slice(0, 32)
-      .map(({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }) => ({ clientId, redirectUris: [...redirectUris], clientName, tokenEndpointAuthMethod, clientSecret }));
+      .slice(0, MAX_TRUSTED_CLIENTS)
+      .map(({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }) => ({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }));
     const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
     const refreshGrants = [...this.refreshTokens.entries()]
       .filter(([, grant]) => grant.expiresAt > now && trustedClientIds.has(grant.clientId))
-      .slice(-64)
+      .slice(-MAX_REFRESH_TOKENS)
       .map(([refreshToken, grant]) => ({ refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }));
-    await this.persistence.save({ schemaVersion: 2, desiredRunning: this.desiredRunning, configuredPublicOrigin: this.configuredPublicOrigin, trustedClients, refreshGrants });
+    await this.persistence.save({
+      schemaVersion: 3,
+      desiredRunning: this.desiredRunning,
+      transport: this.transport,
+      externalGatewayPort: this.externalGatewayPort,
+      configuredPublicOrigin: this.configuredOriginForTransport(),
+      configuredNgrokOrigin: this.configuredNgrokOrigin,
+      configuredExternalOrigin: this.configuredExternalOrigin,
+      registeredClients,
+      trustedClients,
+      refreshGrants,
+    });
   }
 
   private secretDir(): string { return path.join(this.dataPath, 'remote-mcp'); }
@@ -761,7 +943,8 @@ export class RemoteMcpController {
   }
 
   private scheduleReconnect(reason: string): void {
-    if (!this.desiredRunning || !this.hasTrustedClient() || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
+    if (this.transport !== 'ngrok') return;
+    if (!this.desiredRunning || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
     if (this.reconnectTimer !== null) {
       this.message = `Remote MCP disconnected: ${reason}. Automatic reconnect is already scheduled (attempt ${this.reconnectAttempts})…`;
       return;
@@ -772,7 +955,7 @@ export class RemoteMcpController {
     this.message = `Remote MCP disconnected: ${reason}. Reconnecting automatically in ${Math.ceil(delayMs / 1_000)}s (attempt ${attempt})…`;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (!this.desiredRunning || !this.hasTrustedClient() || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
+      if (!this.desiredRunning || this.runState === 'stopped' || this.runState === 'running' || this.runState === 'starting') return;
       void this.start().catch(() => undefined);
     }, delayMs);
   }
@@ -833,26 +1016,35 @@ function createRemoteMcpStatePersistence(dataPath: string, secretProtector?: Sec
 function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if ((record.schemaVersion !== 1 && record.schemaVersion !== 2) || typeof record.desiredRunning !== 'boolean') return null;
+  if ((record.schemaVersion !== 1 && record.schemaVersion !== 2 && record.schemaVersion !== 3) || typeof record.desiredRunning !== 'boolean') return null;
   const schemaVersion = record.schemaVersion;
-  const clients = Array.isArray(record.trustedClients) ? record.trustedClients : [];
-  const trustedClients = clients.flatMap((entry) => {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
-    const client = entry as Record<string, unknown>;
-    if (typeof client.clientId !== 'string' || client.clientId.length === 0 || client.clientId.length > 256) return [];
-    const redirectUris = Array.isArray(client.redirectUris)
-      ? client.redirectUris.filter((uri): uri is string => typeof uri === 'string' && isSafeRedirectUri(uri)).slice(0, 16)
-      : [];
-    if (redirectUris.length === 0) return [];
-    const clientName = typeof client.clientName === 'string' ? client.clientName.slice(0, 120) : null;
-    const tokenEndpointAuthMethod: TokenEndpointAuthMethod = client.tokenEndpointAuthMethod === 'client_secret_post' ? 'client_secret_post' : 'none';
-    const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' && typeof client.clientSecret === 'string' && client.clientSecret.length >= 32 && client.clientSecret.length <= 256
-      ? client.clientSecret
-      : null;
-    if (tokenEndpointAuthMethod === 'client_secret_post' && clientSecret === null) return [];
-    return [{ clientId: client.clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }];
-  }).slice(0, 32);
-  const configuredPublicOrigin = schemaVersion === 2 ? normalizePublicOrigin(record.configuredPublicOrigin) : null;
+  const registeredById = new Map<string, RegisteredClient>();
+  if (schemaVersion === 3 && Array.isArray(record.registeredClients)) {
+    for (const entry of record.registeredClients.slice(0, MAX_TRUSTED_CLIENTS + MAX_UNTRUSTED_CLIENTS)) {
+      const client = normalizePersistedRegisteredClient(entry, false);
+      if (client !== null) registeredById.set(client.clientId, client);
+    }
+  }
+  const legacyClients = Array.isArray(record.trustedClients) ? record.trustedClients : [];
+  for (const entry of legacyClients.slice(0, MAX_TRUSTED_CLIENTS)) {
+    const client = normalizePersistedRegisteredClient(entry, true);
+    if (client !== null && !registeredById.has(client.clientId)) registeredById.set(client.clientId, client);
+  }
+  const registeredClients = [...registeredById.values()];
+  const trustedClients = registeredClients
+    .filter((client) => client.trusted)
+    .slice(0, MAX_TRUSTED_CLIENTS)
+    .map(({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }) => ({
+      clientId, redirectUris: [...redirectUris], clientName, tokenEndpointAuthMethod, clientSecret,
+    }));
+  const legacyConfiguredOrigin = schemaVersion >= 2 ? normalizePublicOrigin(record.configuredPublicOrigin) : null;
+  const transport: RemoteMcpTransport = schemaVersion === 3 && isRemoteMcpTransport(record.transport) ? record.transport : 'ngrok';
+  const explicitNgrokOrigin = schemaVersion === 3 ? normalizePublicOrigin(record.configuredNgrokOrigin) : null;
+  const explicitExternalOrigin = schemaVersion === 3 ? normalizePublicOrigin(record.configuredExternalOrigin) : null;
+  const configuredNgrokOrigin = explicitNgrokOrigin ?? (transport === 'ngrok' || transport === 'local' ? legacyConfiguredOrigin : null);
+  const configuredExternalOrigin = explicitExternalOrigin ?? (transport === 'cloudflare' || transport === 'custom' || transport === 'local' ? legacyConfiguredOrigin : null);
+  const configuredPublicOrigin = transport === 'ngrok' ? configuredNgrokOrigin : transport === 'cloudflare' || transport === 'custom' ? configuredExternalOrigin : null;
+  const externalGatewayPort = schemaVersion === 3 && isValidGatewayPort(record.externalGatewayPort) ? record.externalGatewayPort : null;
   const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
   const grants = Array.isArray(record.refreshGrants) ? record.refreshGrants : [];
   const refreshGrants = grants.flatMap((entry) => {
@@ -862,17 +1054,57 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
     if (typeof grant.clientId !== 'string' || !trustedClientIds.has(grant.clientId)) return [];
     if (typeof grant.expiresAt !== 'number' || !Number.isFinite(grant.expiresAt)) return [];
     return [{ refreshToken: grant.refreshToken, clientId: grant.clientId, expiresAt: grant.expiresAt }];
-  }).slice(-64);
-  return { schemaVersion: 2, desiredRunning: record.desiredRunning, configuredPublicOrigin, trustedClients, refreshGrants };
+  }).slice(-MAX_REFRESH_TOKENS);
+  return {
+    schemaVersion: 3,
+    desiredRunning: record.desiredRunning,
+    transport,
+    externalGatewayPort,
+    configuredPublicOrigin,
+    configuredNgrokOrigin,
+    configuredExternalOrigin,
+    registeredClients,
+    trustedClients,
+    refreshGrants,
+  };
+}
+
+function normalizePersistedRegisteredClient(value: unknown, trustedFallback: boolean): RegisteredClient | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const client = value as Record<string, unknown>;
+  if (typeof client.clientId !== 'string' || client.clientId.length === 0 || client.clientId.length > 256) return null;
+  const redirectUris = Array.isArray(client.redirectUris)
+    ? client.redirectUris.filter((uri): uri is string => typeof uri === 'string' && isSafeRedirectUri(uri)).slice(0, 16)
+    : [];
+  if (redirectUris.length === 0) return null;
+  const clientName = typeof client.clientName === 'string' ? client.clientName.slice(0, 120) : null;
+  const tokenEndpointAuthMethod: TokenEndpointAuthMethod = client.tokenEndpointAuthMethod === 'client_secret_post' ? 'client_secret_post' : 'none';
+  const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' && typeof client.clientSecret === 'string' && client.clientSecret.length >= 32 && client.clientSecret.length <= 256
+    ? client.clientSecret
+    : null;
+  if (tokenEndpointAuthMethod === 'client_secret_post' && clientSecret === null) return null;
+  const trusted = typeof client.trusted === 'boolean' ? client.trusted : trustedFallback;
+  const registeredAt = typeof client.registeredAt === 'number' && Number.isFinite(client.registeredAt) && client.registeredAt >= 0
+    ? client.registeredAt
+    : 0;
+  return { clientId: client.clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted, registeredAt };
+}
+
+function isRemoteMcpTransport(value: unknown): value is RemoteMcpTransport {
+  return value === 'ngrok' || value === 'cloudflare' || value === 'custom' || value === 'local';
+}
+
+function isValidGatewayPort(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65_535;
 }
 
 export function normalizeConfiguredPublicOrigin(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   const origin = normalizePublicOrigin(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
-  if (origin === null) throw new Error('Enter a valid HTTPS ngrok domain or hostname without a path, query, fragment, credentials, or port.');
+  if (origin === null) throw new Error('Enter a valid HTTPS public domain or hostname without a path, query, fragment, credentials, or port.');
   const hostname = new URL(origin).hostname.toLowerCase();
-  if (hostname === 'localhost' || hostname === '::1' || hostname === '[::1]' || hostname.startsWith('127.')) throw new Error('The ngrok domain must be a public hostname, not localhost or loopback.');
+  if (hostname === 'localhost' || hostname === '::1' || hostname === '[::1]' || hostname.startsWith('127.')) throw new Error('The public origin must use a public hostname, not localhost or loopback.');
   return origin;
 }
 
@@ -904,8 +1136,10 @@ function isMissingFileError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { readonly code?: unknown }).code === 'ENOENT';
 }
 
+const NGROK_OWNERSHIP_METADATA = 'lnwjud-remote-mcp';
+
 export function buildNgrokHttpArgs(gatewayUrl: string, publicOrigin: string | null = null): string[] {
-  return ['http', gatewayUrl, ...(publicOrigin === null ? [] : ['--url', publicOrigin]), '--log=stdout', '--log-format=json'];
+  return ['http', gatewayUrl, ...(publicOrigin === null ? [] : ['--url', publicOrigin]), `--metadata=${NGROK_OWNERSHIP_METADATA}`, '--log=stdout', '--log-format=json'];
 }
 
 type NgrokInstaller = Readonly<{
@@ -946,6 +1180,39 @@ export async function resolveNgrokExecutable(
     } catch { /* Ignore missing/stale package-manager links and try the next candidate. */ }
   }
   return null;
+}
+
+export async function resolveManagedNgrokExecutable(
+  dataPath: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  runner: typeof runCommand = runCommand,
+): Promise<string | null> {
+  if (platform !== 'win32') return resolveNgrokExecutable(platform, environment, runner);
+  const managed = path.join(dataPath, 'runtime-tools', 'ngrok', 'ngrok.exe');
+  try {
+    const version = await runner(managed, ['version'], 5_000);
+    if (/\bngrok\s+version\b/i.test(version)) return managed;
+  } catch { /* Missing or invalid managed copy; resolve an official source below. */ }
+
+  try {
+    const installLocation = (await runner('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      "$pkg = Get-AppxPackage -Name ngrok.ngrok -ErrorAction SilentlyContinue | Sort-Object Version -Descending | Select-Object -First 1; if ($null -ne $pkg) { [Console]::Out.Write($pkg.InstallLocation) }",
+    ], 8_000)).trim();
+    if (installLocation.length > 0) {
+      const source = path.join(installLocation, 'ngrok.exe');
+      const version = await runner(source, ['version'], 5_000);
+      if (/\bngrok\s+version\b/i.test(version)) {
+        await mkdir(path.dirname(managed), { recursive: true });
+        await copyFile(source, managed);
+        const managedVersion = await runner(managed, ['version'], 5_000);
+        if (/\bngrok\s+version\b/i.test(managedVersion)) return managed;
+      }
+    }
+  } catch { /* Fall back to an already-runnable PATH/App Execution Alias candidate. */ }
+
+  return resolveNgrokExecutable(platform, environment, runner);
 }
 
 async function resolveNgrokAutomaticInstaller(
@@ -994,6 +1261,7 @@ export function selectRecoverableStaleNgrokProcess(processes: readonly NgrokProc
     const commandLine = entry.commandLine.trim().toLowerCase().replace(/\s+/g, ' ');
     return /(?:^|[\\/\s])ngrok(?:\.exe)?(?:\s|$)/i.test(commandLine)
       && commandLine.includes(` http ${normalizedTarget} `)
+      && commandLine.includes(`--metadata=${NGROK_OWNERSHIP_METADATA}`)
       && commandLine.includes('--log=stdout')
       && commandLine.includes('--log-format=json');
   });
@@ -1079,10 +1347,46 @@ function isLoopbackHttpTarget(value: string): boolean {
   } catch { return false; }
 }
 
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('Could not reserve a loopback gateway port');
+    return address.port;
+  } finally {
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 async function isHttpTargetReachable(value: string): Promise<boolean> {
   try {
     await fetch(value, { redirect: 'manual', signal: AbortSignal.timeout(900) });
     return true;
+  } catch { return false; }
+}
+
+export async function verifyExternalPublicOrigin(
+  value: string,
+  timeoutMs = 8_000,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  const origin = normalizePublicOrigin(value);
+  if (origin === null) return false;
+  try {
+    const response = await fetcher(`${origin}/.well-known/oauth-authorization-server`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as { issuer?: unknown; authorization_endpoint?: unknown; token_endpoint?: unknown };
+    return body.issuer === origin
+      && body.authorization_endpoint === `${origin}/oauth/authorize`
+      && body.token_endpoint === `${origin}/oauth/token`;
   } catch { return false; }
 }
 
@@ -1198,6 +1502,21 @@ function verifyClientAuthentication(client: RegisteredClient, providedSecret: st
 }
 function isRecognizedChatGptClient(client: RegisteredClient): boolean {
   return client.redirectUris.length > 0 && client.redirectUris.every(isRecognizedChatGptRedirectUri);
+}
+
+function canRecoverLegacyChatGptClient(params: URLSearchParams, publicOrigin: string): boolean {
+  const clientId = params.get('client_id') ?? '';
+  const redirectUri = params.get('redirect_uri') ?? '';
+  const state = params.get('state') ?? '';
+  const resource = params.get('resource') ?? '';
+  const challenge = params.get('code_challenge') ?? '';
+  return params.get('response_type') === 'code'
+    && params.get('code_challenge_method') === 'S256'
+    && /^[A-Za-z0-9_-]{16,256}$/.test(clientId)
+    && challenge.length >= 32 && challenge.length <= 256
+    && state.length > 0 && state.length <= 2_048
+    && isRecognizedChatGptRedirectUri(redirectUri)
+    && resource === `${publicOrigin}/mcp`;
 }
 
 function isRecognizedChatGptRedirectUri(value: string): boolean {

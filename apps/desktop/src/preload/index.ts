@@ -57,6 +57,7 @@ import {
   type SaveTunnelApiKeyRequest,
   type SaveRemoteMcpAuthtokenRequest,
   type SetRemoteMcpPublicOriginRequest,
+  type SetRemoteMcpTransportRequest,
   type RemoteMcpStatus,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
@@ -318,12 +319,16 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
   if (!isRecord(value)) throw new Error('Invalid IPC response');
   const state = value.state;
   if (state !== 'stopped' && state !== 'installing' && state !== 'starting' && state !== 'running' && state !== 'error') throw new Error('Invalid IPC response');
-  if (value.provider !== 'ngrok') throw new Error('Invalid IPC response');
+  const provider = value.provider;
+  const transport = value.transport ?? provider;
+  if ((provider !== 'ngrok' && provider !== 'cloudflare' && provider !== 'custom' && provider !== 'local')
+    || (transport !== 'ngrok' && transport !== 'cloudflare' && transport !== 'custom' && transport !== 'local')) throw new Error('Invalid IPC response');
   const automaticInstallMethod = value.automaticInstallMethod;
   if (automaticInstallMethod !== 'windows_store' && automaticInstallMethod !== 'homebrew' && automaticInstallMethod !== null) throw new Error('Invalid IPC response');
   return {
     state,
-    provider: 'ngrok',
+    provider,
+    transport,
     installed: booleanField(value, 'installed'),
     automaticInstallAvailable: booleanField(value, 'automaticInstallAvailable'),
     automaticInstallMethod,
@@ -331,6 +336,7 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
     ngrokPath: nullableString(value.ngrokPath),
     localMcpUrl: nullableString(value.localMcpUrl),
     localGatewayUrl: nullableString(value.localGatewayUrl),
+    configuredGatewayUrl: nullableString(value.configuredGatewayUrl),
     publicMcpUrl: nullableString(value.publicMcpUrl),
     configuredPublicOrigin: nullableString(value.configuredPublicOrigin),
     oauthProtected: booleanField(value, 'oauthProtected'),
@@ -1129,6 +1135,13 @@ function setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Pro
   return invoke(ipcChannels.setRemoteMcpPublicOrigin, { publicOrigin: request.publicOrigin }).then(remoteMcpStatus);
 }
 
+function setRemoteMcpTransport(request: SetRemoteMcpTransportRequest): Promise<RemoteMcpStatus> {
+  if (!isRecord(request) || (request.transport !== 'ngrok' && request.transport !== 'cloudflare' && request.transport !== 'custom' && request.transport !== 'local')) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.setRemoteMcpTransport, { transport: request.transport }).then(remoteMcpStatus);
+}
+
 function setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> {
   if (!isRecord(request) || typeof request.clientPath !== 'string' || request.clientPath.trim().length === 0) {
     return Promise.reject(new Error('Invalid IPC request'));
@@ -1430,6 +1443,7 @@ const api: LnwjudApi = {
   installRemoteMcpProvider: () => invoke(ipcChannels.installRemoteMcpProvider).then(remoteMcpStatus),
   saveRemoteMcpAuthtoken,
   setRemoteMcpPublicOrigin,
+  setRemoteMcpTransport,
   startRemoteMcp: () => invoke(ipcChannels.startRemoteMcp).then(remoteMcpStatus),
   stopRemoteMcp: () => invoke(ipcChannels.stopRemoteMcp).then(remoteMcpStatus),
   resetRemoteMcpOAuth: () => invoke(ipcChannels.resetRemoteMcpOAuth).then(remoteMcpStatus),

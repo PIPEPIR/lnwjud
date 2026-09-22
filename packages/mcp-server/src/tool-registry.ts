@@ -63,6 +63,7 @@ import { upgradeTools } from './tools/upgrade-tools.js';
 import { ToolSchemaRegistry } from './tool-schema-registry.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
 import { upgradeCatalogEntry } from './upgrade-catalog.js';
+import { OFFICE_SEMANTIC_TOOL_NAMES } from './office-tool-contracts.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { codexTools, CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { capabilityTools } from './tools/capability-tools.js';
@@ -1123,7 +1124,7 @@ function normalizeActiveWorkspaceScopesProvider(options: ActiveWorkspaceScopeOpt
   };
 }
 
-const NATIVE_ACTIVE_SCOPE_TOOLS = new Set(['office', 'audio', 'screen_record']);
+const NATIVE_ACTIVE_SCOPE_TOOLS = new Set(['office', 'audio', 'screen_record', ...OFFICE_SEMANTIC_TOOL_NAMES]);
 const COMMAND_EXECUTION_TOOLS = new Set(['shell', 'wsl_exec', 'process_start']);
 export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file',
@@ -1132,7 +1133,7 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'verify_incremental', 'codex_run', 'codex_stop', 'agent_swarm_run', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply',
   'computer_use', 'dom_cdp', 'accessibility', 'input_event', 'ui_target_action', 'window',
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
-  'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
+  'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt', ...OFFICE_SEMANTIC_TOOL_NAMES,
   'task_create',
   ...AUTOMATION_TOOL_NAMES.filter((name) => AUTOMATION_MUTATION_TOOL_NAMES.has(name)),
 ]);
@@ -1320,7 +1321,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.4.3 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.5.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);
@@ -1418,14 +1419,14 @@ function prohibitedInvocationReason(toolName: string, input: unknown): string | 
   return undefined;
 }
 
-const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply']);
+const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply', ...OFFICE_SEMANTIC_TOOL_NAMES]);
 const LOCAL_OUTPUT_REPLACEMENT_TOOLS = new Set(['audio', 'screen_record']);
 function requiresActiveWorkspaceScope(toolName: string, decision: MutationPolicyDecision): boolean {
   return decision.kind !== 'read' && (LOCAL_MUTATION_TOOLS.has(toolName) || (decision.kind === 'replace' && LOCAL_OUTPUT_REPLACEMENT_TOOLS.has(toolName)));
 }
 function requiresNativePathScope(toolName: string, input: unknown): boolean {
   if (!NATIVE_ACTIVE_SCOPE_TOOLS.has(toolName) || !isRecord(input)) return false;
-  for (const key of ['file_path', 'target_path', 'output_path'] as const) {
+  for (const key of ['file_path', 'target_path', 'output_path', 'source_path', 'image_path'] as const) {
     if (readTrimmedString(input[key]) !== undefined) return true;
   }
   return Array.isArray(input.merge_paths) && input.merge_paths.some((entry) => readTrimmedString(entry) !== undefined);
@@ -1443,7 +1444,7 @@ function commandExecutionLeavesActiveWorkspace(toolName: string, input: unknown,
 function isDestructiveMutation(decision: MutationPolicyDecision): boolean { return decision.kind === 'replace' || decision.kind === 'delete' || decision.kind === 'opaque_mutation'; }
 const ALWAYS_CONFIRM_MUTATION_TOOLS = new Set([
   'codex_run', 'codex_stop', 'agent_swarm_run', 'cancel_goal', 'cancel_scheduled_continuation', 'mcp_call', 'web_fetch', 'scheduler',
-  'office', 'office_ppt', 'docx_merge', 'dom_cdp', 'computer_use',
+  'office', 'office_ppt', 'docx_merge', ...OFFICE_SEMANTIC_TOOL_NAMES, 'dom_cdp', 'computer_use',
   'accessibility', 'input_event', 'ui_target_action', 'window', 'clipboard',
   'audio', 'screen_record',
 ]);

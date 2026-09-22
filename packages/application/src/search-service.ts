@@ -7,6 +7,8 @@ import { resolveWorkspaceForPath } from './workspace-locator.js';
 
 export interface SearchTextRequest {
   readonly query: string;
+  /** Literal search by default; true opts into ripgrep regex semantics. */
+  readonly regex?: boolean;
   readonly path?: string;
   readonly glob?: string;
   readonly maxResults?: number;
@@ -45,6 +47,7 @@ export class SearchService {
       rootPath: searchTarget.rootPath,
       ...(searchTarget.targetPath === undefined ? {} : { targetPath: searchTarget.targetPath }),
       query: request.query,
+      ...(request.regex === undefined ? {} : { regex: request.regex }),
       ...(request.glob === undefined ? {} : { glob: request.glob }),
       ...(request.maxResults === undefined ? {} : { maxResults: request.maxResults }),
       ...(request.discovery === undefined ? {} : { discovery: request.discovery }),

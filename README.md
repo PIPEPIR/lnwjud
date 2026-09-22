@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>259 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, ECC integration, and extensibility; 247 are advertised by default and all 259 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>276 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 264 are advertised by default and all 276 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-259%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-276%20tools-6f42c1" />
 </p>
 
 <h2 align="center">Download lnwjud</h2>
@@ -53,9 +53,21 @@
 
 ## Current published version: v5.4.3
 
-## Current source version: v5.4.3
+## Current source version: v5.5.0
 
 Latest published release: **v5.4.3**. The download buttons above point directly to the published v5.4.3 assets. The release is built from the verified v5.4.3 source line and published only after the exact tagged main commit passes the target-native release gates.
+
+### v5.5.0 source candidate on `dev`
+
+v5.5.0 is being prepared as one additive release without changing the currently published v5.4.3 download links until a real release is tagged.
+
+- **Office Suite semantic runtime:** adds truthful Word, Excel, PowerPoint, Outlook, Calendar, Contacts and Tasks surfaces while preserving legacy Office tools. Windows COM actions are advertised only when implemented; macOS/Linux local parity, Microsoft Graph, Access/Visio/Project/Publisher and other optional providers remain not-ready when no verified provider exists. See [Office Suite v5.5.0](docs/OFFICE_SUITE.md).
+- **Office safety and real-provider acceptance:** Office mutations stay inside Active Project, permission, recovery and dangerous-action confirmation boundaries. Macros remain disabled/unsupported and sending remains confirmation-gated. The Windows acceptance harness exercises synthetic Word/Excel/PowerPoint files with bounded per-action timeouts; Outlook proceeds into bounded read/draft checks only when its COM status probe proves ready, otherwise readiness is reported as degraded instead of being faked.
+- **What's New:** a separate focusable `?` button beside the title-bar version opens bundled Thai/English release notes for the exact installed version without replacing the existing update/check/install button. See [What's New maintenance](docs/development/WHATS_NEW.md).
+- **Scheduled continuation hardening:** scheduled wakes bind back to the connected lnwjud connector and claim the durable goal before user-visible prose or workspace mutation; ordinary recurring wakes reuse the same task and stale-worker recovery happens within the firing when safe.
+- **Search/edit recovery hardening:** `search_text` now treats the query as a literal fixed string by default and enables ripgrep regex syntax only with explicit `regex: true`. `edit_file` keeps exact-match safety but returns recoverable conflict metadata, CRLF/LF or whitespace mismatch hints, bounded candidate context, and a re-read/retry action instead of a dead-end non-recoverable error.
+- **More Remote MCP transport choices:** ngrok remains the default/backward-compatible transport. Cloudflare and Custom URL are opt-in externally managed HTTPS reverse-proxy modes, and Local MCP can run without ngrok or public OAuth. Existing OAuth, OpenAI Secure MCP Tunnel, API-key tunnel and Persistent Tunnel Runtime flows remain separate and supported.
+- **Remote MCP persistence/recovery:** pending Dynamic Client Registration survives Desktop restart, v1/v2 saved state migrates to v3 without losing existing trusted clients/refresh grants, and stale ngrok cleanup is restricted to processes proven to be lnwjud-owned.
 
 ### What's new in v5.4.3
 
@@ -199,9 +211,11 @@ The authoritative matrix is [Native platform support contract](docs/architecture
 
 ## MCP connection choices
 
-- **Local MCP clients:** use the packaged stdio launcher or Desktop loopback MCP endpoint.
-- **Remote MCP via ngrok + OAuth:** useful for a remote ChatGPT/MCP client when you want lnwjud to run the protected OAuth gateway and ngrok runtime.
-- **OpenAI Secure MCP Tunnel:** outbound-only OpenAI tunnel path using the verified target-native bundled `tunnel-client`. One lnwjud tunnel endpoint is intended to serve multiple simultaneous ChatGPT chats/workspaces; do not create one tunnel/profile per chat. v4.62.0 explicitly gives the tunnel transport 32 active MCP-request slots so normal multi-chat tool fan-out does not hit tunnel-client's lower default ceiling. If several physical lnwjud hosts (for example Mac + Windows) must be independently selectable, give each host a distinct Tunnel ID/ChatGPT connection: HTTP replicas sharing one Tunnel ID are work-sharing replicas, so a request goes to whichever replica polls it first rather than to a chat-selected host.
+- **Local MCP:** use the packaged stdio launcher or Desktop loopback MCP endpoint directly. The Local transport starts the local listener without ngrok, a public URL, or Remote MCP OAuth.
+- **Remote MCP via ngrok + OAuth:** remains the default/backward-compatible Remote MCP transport. lnwjud owns the protected loopback OAuth gateway and ngrok child runtime.
+- **Remote MCP via Cloudflare:** opt-in for a Cloudflare Tunnel/reverse proxy that you manage. lnwjud provides a stable local OAuth-gateway target and verifies the configured public HTTPS origin; it does not claim to create or manage the Cloudflare tunnel.
+- **Remote MCP via Custom URL:** opt-in for another externally managed HTTPS reverse proxy. No ngrok token/install is required; the public origin must route to the stable local protected gateway.
+- **OpenAI Secure MCP Tunnel:** separate outbound-only OpenAI tunnel path using the verified target-native bundled `tunnel-client`. One lnwjud tunnel endpoint is intended to serve multiple simultaneous ChatGPT chats/workspaces; do not create one tunnel/profile per chat. v4.62.0 explicitly gives the tunnel transport 32 active MCP-request slots so normal multi-chat tool fan-out does not hit tunnel-client's lower default ceiling. If several physical lnwjud hosts (for example Mac + Windows) must be independently selectable, give each host a distinct Tunnel ID/ChatGPT connection: HTTP replicas sharing one Tunnel ID are work-sharing replicas, so a request goes to whichever replica polls it first rather than to a chat-selected host.
 - **External MCP servers:** lnwjud can discover supported Cursor/Claude Desktop/custom MCP definitions and keep child MCP servers separate from the first-party catalog.
 
 See the [Thai usage guide](docs/USAGE_TH.md) and [full expanded README](FULL_README.md) for the long-form setup and architecture notes.

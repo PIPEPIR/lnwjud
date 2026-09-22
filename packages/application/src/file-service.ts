@@ -9,6 +9,7 @@ import {
   isFullBypassAuthorization,
   MAX_MULTI_FILE_BYTES,
   ok,
+  type AppError,
   type InvocationAuthorization,
   type Result,
 } from '@lnwjud/domain';
@@ -500,7 +501,7 @@ export class FileService {
     if (isAborted(signal)) return cancelledFileMutation();
     const occurrences = countOccurrences(content, request.oldText);
     if (occurrences !== expectedOccurrences) {
-      return err(appError('INVALID_INPUT', `Exact edit conflict: expected ${expectedOccurrences} occurrence(s), found ${occurrences}`));
+      return err(exactEditConflict(content, request.oldText, expectedOccurrences, occurrences));
     }
     const nextContent = content.split(request.oldText).join(request.newText);
     if (Buffer.byteLength(nextContent, 'utf8') > MAX_FILE_WRITE_BYTES) return err(appError('FILE_TOO_LARGE', 'Edited file exceeds the maximum write size'));
@@ -1047,6 +1048,66 @@ function isRecoveryMetadata(value: unknown): value is RecoveryMetadata {
 
 function recoveryKind(metadata: RecoveryMetadata): RecoveryItemKind {
   return metadata.version === 1 ? 'deleted' : metadata.kind ?? 'deleted';
+}
+
+function exactEditConflict(content: string, oldText: string, expectedOccurrences: number, occurrences: number): AppError {
+  const normalizedContent = normalizeLineEndings(content);
+  const normalizedOldText = normalizeLineEndings(oldText);
+  const normalizedOccurrences = countOccurrences(normalizedContent, normalizedOldText);
+  const whitespaceContent = normalizeEditWhitespace(content);
+  const whitespaceOldText = normalizeEditWhitespace(oldText);
+  const whitespaceOccurrences = whitespaceOldText.length === 0 ? 0 : countOccurrences(whitespaceContent, whitespaceOldText);
+  const lineEndingMismatch = occurrences === 0 && normalizedOccurrences > 0;
+  const whitespaceMismatch = occurrences === 0 && !lineEndingMismatch && whitespaceOccurrences > 0;
+  const conflictKind = occurrences > expectedOccurrences
+    ? 'MULTIPLE_MATCHES'
+    : occurrences === 0 && !lineEndingMismatch && !whitespaceMismatch
+      ? 'TEXT_NOT_FOUND'
+      : 'STALE_CONTENT';
+  const suggestedAction = conflictKind === 'MULTIPLE_MATCHES'
+    ? 're_read_with_more_context_and_retry'
+    : 're_read_and_retry';
+  const mismatchHint = lineEndingMismatch
+    ? ' The requested text differs only by CRLF/LF line endings.'
+    : whitespaceMismatch
+      ? ' The requested text appears to differ only by whitespace.'
+      : '';
+  const candidateContext = editConflictCandidateContext(content, oldText);
+  return {
+    code: 'CONFLICT' as const,
+    message: `Exact edit conflict: expected ${expectedOccurrences} occurrence(s), found ${occurrences}.${mismatchHint} Re-read the current file and retry with exact current context.`,
+    recoverable: true,
+    details: {
+      conflictKind,
+      suggestedAction,
+      expectedOccurrences,
+      observedOccurrences: occurrences,
+      normalizedOccurrences,
+      whitespaceOccurrences,
+      ...(lineEndingMismatch ? { lineEndingMismatch: 1 } : {}),
+      ...(whitespaceMismatch ? { whitespaceMismatch: 1 } : {}),
+      ...(candidateContext === undefined ? {} : { candidateContext }),
+    },
+  };
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function normalizeEditWhitespace(value: string): string {
+  return normalizeLineEndings(value).replace(/[\t ]+/g, ' ').replace(/ *\n */g, '\n').trim();
+}
+
+function editConflictCandidateContext(content: string, oldText: string): string | undefined {
+  const tokens = oldText.split(/\s+/).map((token) => token.trim()).filter((token) => token.length >= 4).sort((left, right) => right.length - left.length);
+  const seed = tokens[0];
+  if (seed === undefined) return undefined;
+  const index = content.indexOf(seed);
+  if (index < 0) return undefined;
+  const start = Math.max(0, index - 180);
+  const end = Math.min(content.length, index + seed.length + 180);
+  return content.slice(start, end).replace(/\r\n/g, '\n').slice(0, 512);
 }
 
 function countOccurrences(content: string, needle: string): number {

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement, type UIEvent } from 'react';
-import { EMPTY_REMOTE_MCP_STATUS, type DashboardSnapshot, type DestructiveDeletePolicy, type ExternalSetupTarget, type PdfProviderInstallResult, type PermissionProfileName, type PonytailModeOverride, type PonytailPolicyContext, type TunnelOAuthLoginStatus, type TunnelStatus, type UiLocale, type UserSettings } from '@lnwjud/ipc-contracts';
+import { EMPTY_REMOTE_MCP_STATUS, type DashboardSnapshot, type DestructiveDeletePolicy, type ExternalSetupTarget, type PdfProviderInstallResult, type PermissionProfileName, type PonytailModeOverride, type PonytailPolicyContext, type RemoteMcpTransport, type TunnelOAuthLoginStatus, type TunnelStatus, type UiLocale, type UserSettings } from '@lnwjud/ipc-contracts';
 import { parseDelimitedList } from '@lnwjud/shared/text-list';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator, type Translator } from '../../i18n/index.js';
@@ -68,9 +68,12 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const tunnelPresentation = tunnelAuthPresentation(props.dashboard.tunnel);
   const remoteMcp = props.dashboard.remoteMcp ?? { ...EMPTY_REMOTE_MCP_STATUS, localMcpUrl: props.dashboard.mcp.url };
 
-  const ngrokReady = remoteMcp.installed && remoteMcp.ngrokPath !== null;
-  const ngrokAutoInstallAvailable = remoteMcp.automaticInstallAvailable;
+  const ngrokReady = remoteMcp.transport === 'ngrok' && remoteMcp.installed && remoteMcp.ngrokPath !== null;
+  const ngrokAutoInstallAvailable = remoteMcp.transport === 'ngrok' && remoteMcp.automaticInstallAvailable;
   const remoteMcpOnline = remoteMcp.state === 'running';
+  const remoteMcpCopyUrl = remoteMcp.transport === 'local' ? remoteMcp.localMcpUrl : remoteMcp.publicMcpUrl;
+  const remoteMcpStartReady = remoteMcp.transport === 'local'
+    || (remoteMcp.transport === 'ngrok' ? remoteMcp.hasAuthtoken : remoteMcp.configuredPublicOrigin !== null);
   const secureTunnelOnline = props.dashboard.tunnel.state === 'running';
   const activeRemoteConnections = Number(remoteMcpOnline) + Number(secureTunnelOnline);
   const [remoteMethodOpen, setRemoteMethodOpen] = useState(remoteMcpOnline || !guidedTunnelConfigured);
@@ -412,8 +415,23 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     }
   }
 
+  async function setRemoteMcpTransport(transport: RemoteMcpTransport): Promise<void> {
+    setRemoteMcpBusy(true);
+    setRemoteMcpMessage(null);
+    try {
+      const status = await window.lnwjud.setRemoteMcpTransport({ transport });
+      setRemoteMcpPublicOrigin(status.configuredPublicOrigin ?? '');
+      await props.onRefresh();
+      setRemoteMcpMessage(t('settingsPage.remoteTransportUpdated'));
+    } catch (cause: unknown) {
+      setRemoteMcpMessage(cause instanceof Error ? cause.message : 'Remote MCP transport update failed');
+    } finally {
+      setRemoteMcpBusy(false);
+    }
+  }
+
   async function copyRemoteMcpUrl(): Promise<void> {
-    const value = remoteMcp.publicMcpUrl;
+    const value = remoteMcpCopyUrl;
     if (value === null) return;
     await navigator.clipboard.writeText(value);
     setRemoteMcpMessage(t('settingsPage.remoteUrlCopied'));
@@ -673,7 +691,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   </div>
                   <div className="connection-method-summary-status">
                     <span className={`connection-method-live-dot ${remoteMcpOnline ? 'is-online' : ''}`} aria-hidden="true" />
-                    <span>{remoteMcpOnline ? t('status.online') : ngrokReady && remoteMcp.hasAuthtoken ? t('status.ready') : t('status.setup')}</span>
+                    <span>{remoteMcpOnline ? t('status.online') : remoteMcpStartReady ? t('status.ready') : t('status.setup')}</span>
                     <span className="connection-method-chevron" aria-hidden="true">⌄</span>
                   </div>
                 </summary>
@@ -682,20 +700,33 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   icon="◎"
                   title={t('settingsPage.remoteMcpTitle')}
                   subtitle={t('settingsPage.remoteSubtitle')}
-                  badge={remoteMcp.state === 'running' ? t('status.running') : remoteMcp.installed && remoteMcp.hasAuthtoken ? t('status.ready') : t('status.setup')}
+                  badge={remoteMcp.state === 'running' ? t('status.running') : remoteMcpStartReady ? t('status.ready') : t('status.setup')}
                 />
+                <div className="setting-field remote-mcp-transport-field">
+                  <label className="field-label" htmlFor="remote-mcp-transport">{t('settingsPage.remoteTransportLabel')}</label>
+                  <select id="remote-mcp-transport" value={remoteMcp.transport} disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onChange={(event) => { void setRemoteMcpTransport(event.target.value as RemoteMcpTransport); }}>
+                    <option value="ngrok">{t('settingsPage.remoteTransportNgrok')}</option>
+                    <option value="cloudflare">{t('settingsPage.remoteTransportCloudflare')}</option>
+                    <option value="custom">{t('settingsPage.remoteTransportCustom')}</option>
+                    <option value="local">{t('settingsPage.remoteTransportLocal')}</option>
+                  </select>
+                  <p className="hint">{t('settingsPage.remoteTransportHint')}</p>
+                </div>
                 <div className="setting-grid two-col">
                   <div className="setting-field">
                     <span className="field-label">{t('settingsPage.localMcp')}</span>
                     <code className="settings-path-display">{remoteMcp.localMcpUrl ?? props.dashboard.mcp.url ?? t('settingsPage.localMcpAutoPending')}</code>
                     <p className="hint">{t('settingsPage.remoteLoopbackHint')}</p>
                   </div>
-                  <div className="setting-field">
-                    <span className="field-label">{t('settingsPage.publicMcpUrl')}</span>
-                    <code className="settings-path-display">{remoteMcp.publicMcpUrl ?? '—'}</code>
-                    <p className="hint">{t('settingsPage.remotePublicUrlHint')}</p>
-                  </div>
+                  {remoteMcp.transport === 'local' ? null : (
+                    <div className="setting-field">
+                      <span className="field-label">{t('settingsPage.publicMcpUrl')}</span>
+                      <code className="settings-path-display">{remoteMcp.publicMcpUrl ?? '—'}</code>
+                      <p className="hint">{remoteMcp.transport === 'ngrok' ? t('settingsPage.remotePublicUrlHint') : t('settingsPage.externalPublicMcpUrlHint')}</p>
+                    </div>
+                  )}
                 </div>
+                {remoteMcp.transport === 'ngrok' ? (
                 <div className="tunnel-setup-box">
                   <div className="settings-mini-heading"><strong>{t('settingsPage.prepareNgrok')}</strong><span>{ngrokReady ? t('status.ready') : remoteMcp.state === 'installing' ? t('status.installing') : t('status.notReady')}</span></div>
                   <p className="hint">{t('settingsPage.ngrokVerifyHint')}</p>
@@ -727,23 +758,39 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{t('settingsPage.saveSecurely')}</button></div>
                   <p className="hint">{remoteMcp.hasAuthtoken ? t('settingsPage.ngrokStored', { storage: secureStorageLabel }) : t('settingsPage.ngrokPlaintextHint')}</p>
                 </div>
-                <div className="tunnel-setup-box">
-                  <div className="settings-mini-heading"><strong>{t('settingsPage.startRemoteMcp')}</strong><span>{remoteMcp.oauthConnected ? t('status.linked') : remoteMcp.oauthProtected ? t('status.ready') : t('status.authRequired')}</span></div>
-                  <div className="inline-actions">
-                    <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || !remoteMcp.hasAuthtoken || remoteMcp.state === 'running'} onClick={() => { void runRemoteMcpAction('start'); }}>{remoteMcpBusy && remoteMcp.state !== 'running' ? t('settingsPage.working') : t('settingsPage.startRemoteMcpButton')}</button>
-                    <button type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{t('settingsPage.stop')}</button>
-                    <button type="button" disabled={remoteMcp.publicMcpUrl === null} onClick={() => { void copyRemoteMcpUrl(); }}>{t('settingsPage.copyMcpUrl')}</button>
-                    <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('resetOauth'); }}>{t('settingsPage.reconnectChatgpt')}</button>
-                    <button type="button" onClick={() => { void props.onOpenExternalSetupPage('chatgpt_plugins'); }}>{t('settingsPage.openChatgptPlugins')}</button>
+                ) : null}
+                {(remoteMcp.transport === 'cloudflare' || remoteMcp.transport === 'custom') ? (
+                  <div className="tunnel-setup-box">
+                    <div className="settings-mini-heading"><strong>{remoteMcp.transport === 'cloudflare' ? t('settingsPage.cloudflareSetup') : t('settingsPage.customUrlSetup')}</strong><span>{remoteMcp.configuredPublicOrigin === null ? t('status.setup') : t('status.ready')}</span></div>
+                    <p className="hint">{t('settingsPage.externalProxyHint')}</p>
+                    <label className="field-label" htmlFor="remote-mcp-public-origin">{t('settingsPage.externalPublicOriginLabel')}</label>
+                    <div className="form-row"><input id="remote-mcp-public-origin" type="text" autoComplete="off" placeholder="https://mcp.example.com" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><button type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{t('settingsPage.ngrokDomainSave')}</button></div>
+                    <p className="hint">{t('settingsPage.externalPublicOriginHint')}</p>
+                    <span className="field-label">{t('settingsPage.externalGatewayLabel')}</span>
+                    <code className="settings-path-display">{remoteMcp.configuredGatewayUrl ?? remoteMcp.localGatewayUrl ?? t('settingsPage.externalGatewayPending')}</code>
+                    <p className="hint">{t('settingsPage.externalGatewayHint')}</p>
                   </div>
-                  {remoteMcp.oauthConnected ? (
+                ) : null}
+                {remoteMcp.transport === 'local' ? (
+                  <StatusMessage tone="neutral">{t('settingsPage.localDirectHint')}</StatusMessage>
+                ) : null}
+                <div className="tunnel-setup-box">
+                  <div className="settings-mini-heading"><strong>{remoteMcp.transport === 'local' ? t('settingsPage.startLocalMcp') : t('settingsPage.startRemoteMcp')}</strong><span>{remoteMcp.transport === 'local' ? t('status.ready') : remoteMcp.oauthConnected ? t('status.linked') : remoteMcp.oauthProtected ? t('status.ready') : t('status.authRequired')}</span></div>
+                  <div className="inline-actions">
+                    <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || !remoteMcpStartReady || remoteMcp.state === 'running'} onClick={() => { void runRemoteMcpAction('start'); }}>{remoteMcpBusy && remoteMcp.state !== 'running' ? t('settingsPage.working') : remoteMcp.transport === 'local' ? t('settingsPage.startLocalMcpButton') : t('settingsPage.startRemoteMcpButton')}</button>
+                    <button type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{t('settingsPage.stop')}</button>
+                    <button type="button" disabled={remoteMcpCopyUrl === null} onClick={() => { void copyRemoteMcpUrl(); }}>{t('settingsPage.copyMcpUrl')}</button>
+                    {remoteMcp.transport === 'local' ? null : <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('resetOauth'); }}>{t('settingsPage.reconnectChatgpt')}</button>}
+                    {remoteMcp.transport === 'local' ? null : <button type="button" onClick={() => { void props.onOpenExternalSetupPage('chatgpt_plugins'); }}>{t('settingsPage.openChatgptPlugins')}</button>}
+                  </div>
+                  {remoteMcp.transport !== 'local' && remoteMcp.oauthConnected ? (
                     <StatusMessage tone="success" className="remote-mcp-auth-banner">
                       <strong>{t('settingsPage.chatgptConnected')}</strong>
                       <span>{remoteMcp.autoStartEnabled ? t('settingsPage.oauthRememberedAuto') : t('settingsPage.oauthRememberedManual')}</span>
                     </StatusMessage>
                   ) : null}
-                  <p className="hint">{t('settingsPage.remoteFirstTimeHint')}</p>
-                  <StatusMessage tone="neutral">{t('settingsPage.remoteHostBoundaryHint')}</StatusMessage>
+                  <p className="hint">{remoteMcp.transport === 'local' ? t('settingsPage.localFirstTimeHint') : t('settingsPage.remoteFirstTimeHint')}</p>
+                  {remoteMcp.transport === 'local' ? null : <StatusMessage tone="neutral">{t('settingsPage.remoteHostBoundaryHint')}</StatusMessage>}
                   {remoteMcp.message === null ? null : <StatusMessage tone={remoteMcp.state === 'error' ? 'warning' : 'neutral'}>{remoteMcp.message}{remoteMcp.ngrokPath === null ? '' : ` · ngrok: ${remoteMcp.ngrokPath}`}</StatusMessage>}
                   {remoteMcpMessage === null ? null : <StatusMessage tone={remoteMcp.state === 'error' || /failed|error|exit|stopped unexpectedly/i.test(remoteMcpMessage) ? 'warning' : 'success'}>{remoteMcpMessage}</StatusMessage>}
                 </div>

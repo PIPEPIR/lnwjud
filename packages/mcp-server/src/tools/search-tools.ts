@@ -20,7 +20,7 @@ export function searchTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'search_text',
-      description: 'Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files.',
+      description: 'Preferred tool to locate relevant code/lines before reading files. Query matching is literal/fixed-string by default so characters such as (), {}, ?, +, and * are searched as text; set regex=true only for intentional ripgrep regex syntax. Glob filtering remains separate from the query. Uses direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: searchTextSchema,
@@ -28,6 +28,7 @@ export function searchTools(context: McpToolContext): McpToolDefinition[] {
         ? missingService()
         : context.services.search.searchText(context.actor, input.workspaceId, {
           query: input.query,
+          regex: input.regex,
           ...(input.path === undefined ? {} : { path: input.path }),
           ...(input.glob === undefined ? {} : { glob: input.glob }),
           ...(input.maxResults === undefined ? {} : { maxResults: input.maxResults }),

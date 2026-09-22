@@ -94,6 +94,36 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('passes the full Office payload so top-level document paths survive nested action parameters', async () => {
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
+    const script = await readFile(scriptPath, 'utf8');
+    expect(script).toContain("'office' { Invoke-OfficeAction ([string](Get-Field $payload 'app')) ([string](Get-Field $payload 'action')) $payload }");
+    expect(script).toContain("$parametersValue = Get-Field $Parameters 'parameters'");
+  });
+
+  it('normalizes JSON matrix values before Excel writes and uses an unambiguous pivot-cache source', async () => {
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
+    const script = await readFile(scriptPath, 'utf8');
+    expect(script).toContain('function ConvertTo-ExcelRangeValues');
+    expect(script).toContain('$excelValues = ConvertTo-ExcelRangeValues $values $target');
+    expect(script).toContain('$excelFormulas = ConvertTo-ExcelRangeValues $formulas $target');
+    expect(script).toContain('$target.Value2 = ConvertTo-ExcelRangeValues $fillValues $target');
+    expect(script).toContain("$sourceData = [string]$sourceRange.Address($true, $true, -4150, $true)");
+    expect(script).toContain('$workbook.PivotCaches().Create(1, $sourceData)');
+    expect(script).not.toContain('$workbook.PivotCaches().Create(1, $sourceRange)');
+    expect(script).toContain('$field.Position = $pivot.RowFields().Count');
+    expect(script).toContain('$field.Position = $pivot.ColumnFields().Count');
+    expect(script).not.toContain('$field.Position = $pivot.RowFields().Count + 1');
+    expect(script).not.toContain('$field.Position = $pivot.ColumnFields().Count + 1');
+    expect(script).toContain("$operator = if ($formula2.Length -gt 0) { 1 } else { 3 }");
+    expect(script).toContain("'equal' { $operator = 3 }");
+    expect(script).toContain("elseif ($formula2.Length -gt 0) { $target.Validation.Add($validationType, 1, $operator, $formula, $formula2) }");
+    expect(script).toContain('# PowerPoint chart insertion requires an active presentation window on some Office 16 builds;');
+    expect(script).toContain('$presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $true)');
+    expect(script).toContain('$presentation.SaveAs($target, 32)');
+    expect(script).not.toContain('$presentation.ExportAsFixedFormat($target, 2)');
+  });
+
   it('never quits the user Outlook instance from read-only bridge actions', async () => {
     const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
     const script = await readFile(scriptPath, 'utf8');

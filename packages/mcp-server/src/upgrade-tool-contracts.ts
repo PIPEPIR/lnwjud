@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { UpgradeToolCatalogEntry } from './upgrade-catalog.js';
 import type { McpToolAnnotations, McpToolExecution } from './tools/tool-types.js';
+import { isOfficeSemanticToolName, officeToolInputSchema } from './office-tool-contracts.js';
 
 type FieldName = keyof typeof FIELD_SCHEMAS;
 
@@ -250,6 +251,7 @@ const INPUT_FIELDS: Readonly<Record<string, readonly FieldName[]>> = Object.free
 // therefore accepts only an empty object before the shared approval/goal envelopes
 // are applied by ToolRegistry.
 export function upgradeToolInputSchema(entry: UpgradeToolCatalogEntry): z.ZodObject {
+  if (isOfficeSemanticToolName(entry.name)) return officeToolInputSchema(entry.name);
   const fields = INPUT_FIELDS[entry.name] ?? [];
   const shape: Record<string, z.ZodType> = {};
   for (const field of fields) shape[field] = FIELD_SCHEMAS[field];

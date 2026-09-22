@@ -26,6 +26,8 @@ import { ContextEconomyRuntime } from './context-economy.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { DatabaseRuntimeService } from './database-runtime.js';
 import { DocumentRuntimeService } from './document-runtime.js';
+import { OfficeRuntimeService } from './office-runtime.js';
+import type { OfficeSemanticToolName } from './office-tool-contracts.js';
 import { LspRuntimeService } from './lsp-runtime.js';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { withCapabilityOwnerMetadata } from './request-scope.js';
@@ -195,6 +197,7 @@ export class UpgradeRuntimeService {
   private readonly database: DatabaseRuntimeService;
   private readonly lsp: LspRuntimeService;
   private readonly documents: DocumentRuntimeService;
+  private readonly office: OfficeRuntimeService;
   private readonly diagnostics: PlatformDiagnosticsProvider;
   private readonly stateStore: UpgradeRuntimeStateStore | undefined;
   private loaded = false;
@@ -221,6 +224,7 @@ export class UpgradeRuntimeService {
     this.database = new DatabaseRuntimeService(services, actor);
     this.lsp = new LspRuntimeService(services, actor);
     this.documents = new DocumentRuntimeService(services, actor);
+    this.office = new OfficeRuntimeService(services, actor);
     this.diagnostics = createPlatformDiagnosticsProvider(platform);
   }
 
@@ -496,10 +500,27 @@ export class UpgradeRuntimeService {
         return this.documents.inspectWorkbook(input, authorization);
       case 'docx_merge':
         return this.documents.docxMerge(input, signal, authorization);
+      case 'office_status':
+      case 'office_word':
+      case 'office_excel':
+      case 'office_powerpoint':
+      case 'office_outlook':
+      case 'office_calendar':
+      case 'office_contacts':
+      case 'office_tasks':
+      case 'office_onenote':
+      case 'office_onedrive':
+      case 'office_sharepoint':
+      case 'office_teams':
+      case 'office_access':
+      case 'office_visio':
+      case 'office_project':
+      case 'office_publisher':
+      case 'office_convert':
+      case 'office_batch':
+        return this.office.execute(name as OfficeSemanticToolName, input, signal, authorization);
       case 'office_ppt':
         return this.officePowerPoint(input, signal, authorization);
-      case 'office_outlook':
-        return this.officeOutlook(input, authorization);
       case 'handoff_context':
         return this.compoundContext(name, input);
       case 'benchmark_run':

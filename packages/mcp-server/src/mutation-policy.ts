@@ -1,5 +1,6 @@
 import type { McpPermissionLevel } from './tools/tool-types.js';
 import { isProvablyReadOnlyGitInvocation, riskyAgentCommandReason, type DestructiveApprovalKey } from '@lnwjud/shared';
+import { OFFICE_DANGEROUS_ACTIONS, OFFICE_DESTRUCTIVE_ACTIONS, OFFICE_READ_ACTIONS, isOfficeSemanticToolName } from './office-tool-contracts.js';
 
 export type MutationKind = 'read' | 'execute' | 'bounded_write' | 'replace' | 'delete' | 'opaque_mutation';
 
@@ -81,6 +82,7 @@ export function inspectMutationOperation(
   permission: McpPermissionLevel,
 ): MutationPolicyDecision {
   const value = asRecord(input) ?? {};
+  if (isOfficeSemanticToolName(toolName)) return inspectSemanticOffice(toolName, value);
 
   switch (toolName) {
     case 'read_file':
@@ -366,6 +368,22 @@ function inspectScheduler(value: Readonly<Record<string, unknown>>): MutationPol
   if (action === 'list') return read('scheduled task listing');
   if (action === 'delete') return deletion('scheduled task deletion');
   return opaque(`scheduled task ${action} changes or executes persisted state`);
+}
+
+function inspectSemanticOffice(toolName: string, value: Readonly<Record<string, unknown>>): MutationPolicyDecision {
+  if (toolName === 'office_status') return read('Office provider status is read-only');
+  if (value.dryRun === true || value.dry_run === true) return read(`${toolName} dry run does not mutate Office state`);
+  if (toolName === 'office_batch') return inputUsesDefaultDryRun(value) ? read('Office batch defaults to dry run') : opaque('Office batch may combine multiple confirmed mutations');
+  if (toolName === 'office_convert') return inputUsesDefaultDryRun(value) ? read('Office conversion defaults to dry run') : replace('Office conversion creates or replaces a workspace artifact');
+  const action = normalized(value.action);
+  if (OFFICE_READ_ACTIONS.has(action)) return read(`${toolName} ${action || 'read'} action`);
+  if (OFFICE_DESTRUCTIVE_ACTIONS.has(action)) return deletion(`${toolName} ${action} can remove Office data`);
+  if (OFFICE_DANGEROUS_ACTIONS.has(action)) return opaque(`${toolName} ${action} is a high-risk Office action`);
+  if (inputUsesDefaultDryRun(value)) return read(`${toolName} mutation defaults to dry run`);
+  if (['office_word', 'office_excel', 'office_powerpoint', 'office_access', 'office_visio', 'office_project', 'office_publisher'].includes(toolName)) {
+    return replace(`${toolName} ${action || 'mutation'} can replace local Office document data`);
+  }
+  return opaque(`${toolName} ${action || 'mutation'} can change mailbox or cloud state`);
 }
 
 function inspectOffice(value: Readonly<Record<string, unknown>>): MutationPolicyDecision {

@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>259 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, ECC integration, and extensibility; 247 are advertised by default and all 259 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>276 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 264 are advertised by default and all 276 when Codex delegation plus Agent Swarm is enabled.</em>
 
   <em>อ่านที่เหลือใน Readme ได้เลยครับ ติดปัญหาทักมาได้ใน FB: Adisorn NM ได้ตลอดครับ / กำลังพัฒนาให้เรื่อยๆครับ ท่านที่ถามหาช่องสนับสนุนค่ากาแฟ แปะลิงค์ ไว้ให้แล้วครับ ขอบคุณครับ</em>
  https://easydonate.app/abcz
@@ -25,7 +25,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-259%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-276%20tools-6f42c1" />
 </p>
 
 ---
@@ -53,9 +53,22 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.4.3
 
-## Current source version: v5.4.3
+## Current source version: v5.5.0
 
 Latest published release: **v5.4.3**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### v5.5.0 source candidate on `dev`
+
+v5.5.0 combines the Office Suite, in-app What's New, scheduled-continuation reliability work, and additive Remote MCP transports in one source line. It does not change the published v5.4.3 download links until a real release is tagged.
+
+- **Semantic Office Suite:** Word, Excel, PowerPoint, Outlook, Calendar, Contacts and Tasks route through one provider-aware runtime. Windows COM readiness is action-level, optional/local/cloud providers fail closed when no verified implementation exists, Graph remains unavailable until real OAuth/provider acceptance exists, and legacy Office aliases remain supported.
+- **Office mutation/recovery:** Active Project, dry-run, mutation classification, pre-image recovery and dangerous-action confirmation stay in force. Macro execution stays disabled/unsupported; sending mail or invitations remains confirmation-gated.
+- **Real Windows Office acceptance:** `scripts/verify-office-provider.ps1` creates only synthetic `.local-artifacts`, logs every action, enforces bounded per-action timeouts, verifies Word/Excel/PowerPoint create-edit-export workflows, and checks for new orphan Word/Excel/PowerPoint processes. Outlook proceeds into bounded no-send folder/message/draft checks only when its COM status probe proves ready; otherwise the harness records degraded Outlook readiness and skips mailbox mutation. See [Office Suite v5.5.0](docs/OFFICE_SUITE.md).
+- **What's New:** a separate `?` beside the version opens exact-version bundled Thai/English notes with keyboard/focus accessibility, while the existing version/update button keeps its original update behavior. See [What's New maintenance](docs/development/WHATS_NEW.md).
+- **Scheduled continuation:** wake prompts bind to the connected lnwjud connector, claim before prose/mutation, recover eligible stale workers in the same recurring firing, and do not create/retime replacement recurring tasks on ordinary wakes.
+- **Search/edit recovery:** `search_text` defaults to ripgrep fixed-string matching, with regex semantics available only through explicit `regex: true`; malformed explicit regex/glob input returns a recoverable structured error. `edit_file` remains exact-only and never fuzzy-edits automatically, but conflict responses now identify multiple/stale/not-found cases, detect CRLF/LF or whitespace drift, include bounded nearby context when available, and suggest re-read/retry.
+- **Remote MCP transports:** ngrok remains the default/backward-compatible mode. Cloudflare and Custom URL use an externally managed public HTTPS reverse proxy to a stable protected loopback gateway; Local MCP starts without ngrok/public OAuth. OpenAI Secure MCP Tunnel, OAuth/API-key tunnel flows and Persistent Tunnel Runtime remain separate and supported.
+- **DCR/ngrok reliability:** pending Dynamic Client Registration is persisted before registration success so restart-before-authorize does not become `invalid_client`; schema v3 preserves existing trusted clients/refresh grants, and stale ngrok cleanup is limited to processes proven lnwjud-owned.
 
 ### What's new in v5.4.3
 
@@ -552,7 +565,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v5.4.0. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** remains the default/backward-compatible Remote MCP transport in the v5.5.0 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -560,9 +573,20 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
 5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no manual code entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket. OAuth clients outside the supported ChatGPT callback contract are rejected with `403 access_denied`.
 6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship.
-7. Confirm the connection discovers **247 tools by default** (or **259** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
+7. Confirm the connection discovers **264 tools by default** (or **276** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
+
+#### v5.5.0 Remote MCP transport selector
+
+The transport selector is additive and does not migrate an existing user automatically:
+
+- **ngrok** — default and legacy-compatible. lnwjud can install/resolve its managed ngrok runtime, stores the authtoken through secure storage, starts the protected OAuth gateway, spawns only its owned ngrok child, and preserves the configured/static origin behavior from earlier versions.
+- **Cloudflare** — for a Cloudflare Tunnel or reverse proxy that **you manage**. lnwjud does not create the Cloudflare tunnel. It starts a stable loopback OAuth gateway, shows that local gateway target, requires a configured public HTTPS origin, and verifies that the public origin actually routes back to the gateway before reporting RUNNING. ngrok is not installed or spawned in this mode.
+- **Custom URL** — the same protected stable-gateway model for another externally managed HTTPS reverse proxy. No ngrok token/install is required. The configured public origin must be HTTPS and must route to the shown loopback gateway.
+- **Local MCP** — starts only the loopback MCP listener. It has no public gateway, no ngrok requirement, no public OAuth requirement, and no ChatGPT remote-plugin setup prompt. Use it for local MCP clients; it is not a replacement for Remote MCP OAuth or OpenAI Secure MCP Tunnel.
+
+Cloudflare/Custom must proxy the **protected gateway target shown in Settings**, not the raw Local MCP endpoint. Existing OAuth client trust, refresh grants, Secure MCP Tunnel configuration and Persistent Tunnel Runtime state are independent of this selector.
 
 ### 3. Alternative: OpenAI Secure MCP Tunnel (Tunnel ID + Runtime API key)
 
@@ -635,7 +659,7 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 5. **ฝั่ง Admin/Owner ของ Business:** ไป Workspace Settings → Apps → Create, ใส่ URL ที่คัดลอกมา เลือก **OAuth**, Scan Tools ให้ผ่าน แล้ว Create และ **Publish** แอป lnwjud ให้ Workspace. สมาชิกทั่วไปไม่ต้องเปิด Developer mode และไม่ต้องกรอก Server URL ซ้ำ
 6. **ฝั่งสมาชิก:** เปิดแอป lnwjud ที่ถูก Publish แล้วกด **Connect**. ถ้าเป็น callback ของ ChatGPT ที่รองรับ browser จะถูกส่งผ่าน one-time URL ที่ `127.0.0.1` ของเครื่องผู้ใช้ไปหา lnwjud Desktop โดยอัตโนมัติ แล้วจึงทำ DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT — **ไม่ต้องกรอกรหัสและไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ไม่สามารถนำ localhost ticket นี้ไปแลกสิทธิ์แทนได้ และ OAuth client ที่ไม่ตรง callback ที่รองรับจะถูกปฏิเสธด้วย `403 access_denied`
 7. หลังเชื่อม lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย secure storage ของ host การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้องอนุมัติซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้างความสัมพันธ์ใหม่จริง ๆ
-8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **247 tools**, หรือ **259** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
+8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **264 tools**, หรือ **276** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
 
@@ -892,8 +916,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1214,7 +1238,7 @@ For workspace <workspace-id>, show the project snapshot, Git status, and the top
 When a first-party tool is enabled or disabled, standards-compliant MCP clients receive `notifications/tools/list_changed` and can refresh the live list without restarting lnwjud. ChatGPT app/action catalogs may additionally use a host-managed approved snapshot: use the ChatGPT action refresh/tool-scan flow that is actually available for the workspace. A browser F5 alone is **not** guaranteed to update an approved/frozen action snapshot, and lnwjud does not claim host synchronization without evidence.
 
 <!-- BEGIN GENERATED README TOOL REGISTRY -->
-## Complete MCP tool catalog (259 total definitions; 247 advertised by default; 259 with Codex delegation plus Agent Swarm enabled)
+## Complete MCP tool catalog (276 total definitions; 264 advertised by default; 276 with Codex delegation plus Agent Swarm enabled)
 
 This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds 12 opt-in definitions to the advertised surface.
 
@@ -1228,14 +1252,14 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 6 | `read_file` | READ | default | operational | service_dispatch | Read a workspace file as UTF-8 text or as an image/binary payload. Absolute host paths do not require workspaceId. For large files or an unknown location, prefer search_text first and then read_file_page for the relevant range instead of reading the whole file. |
 | 7 | `read_files` | READ | default | operational | service_dispatch | Read up to twenty bounded workspace files in parallel. Absolute paths do not require workspaceId. For large files, locate text with search_text and page with read_file_page instead of loading entire files. |
 | 8 | `search_files` | READ | default | operational | service_dispatch | Search workspace filenames with automatic context-economy filters; set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. |
-| 9 | `search_text` | READ | default | operational | service_dispatch | Preferred tool to locate relevant code/lines before reading files. Searches workspace text using direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files. |
+| 9 | `search_text` | READ | default | operational | service_dispatch | Preferred tool to locate relevant code/lines before reading files. Query matching is literal/fixed-string by default so characters such as (), {}, ?, +, and * are searched as text; set regex=true only for intentional ripgrep regex syntax. Glob filtering remains separate from the query. Uses direct ripgrep arguments with automatic binary/generated filters; path may be a directory or a specific file, and set includeIgnored for an explicit full path search. Absolute path does not require workspaceId. Follow with read_file_page for large files. |
 | 10 | `git_status` | READ | default | operational | service_dispatch | Inspect parsed read-only Git status. For writes (init, add, commit, remote, push, rm, clean, reset) use the git tool. |
 | 11 | `git_diff` | READ | default | operational | service_dispatch | Return a bounded read-only Git diff. For writes use the git tool. |
 | 12 | `git_log` | READ | default | operational | service_dispatch | Return bounded structured Git history. For writes use the git tool. |
 | 13 | `git` | EXECUTE | default | operational | service_dispatch | Run a Git subcommand with a separate args array. With Full Bypass OFF, Full Access runs ordinary read and non-destructive Git mutations without confirmation while destructive/data-loss forms, scope overrides, aliases, unsafe pathspecs, unknown commands, and destructive remote/history rewrites remain guarded or denied. Trusted Full Bypass skips lnwjud approval, command-policy, and Active Project scope checks, including explicitly absolute outside paths, without bypassing Git or OS errors. Do not wrap Git in PowerShell/cmd. |
 | 14 | `write_file` | WRITE | default | operational | service_dispatch | Create or replace a UTF-8 text file and missing parents. Balanced/Safe refuse existing targets unless overwriteExisting is explicit; Full may replace an existing target without a confirmation prompt and still creates a checkpoint. Prefer edit_file for narrow repairs. Use this instead of shell scripts that call fs.writeFile, writeFileSync, Set-Content, or equivalent when the task is simply to create or replace guarded text. Do not use write_file to persist lnwjud continuation/recovery as USER_INSTRUCTIONS, user-instruction, or generic handoff-history files; use checkpoint_goal/session_handoff for that state. |
 | 15 | `apply_patch` | WRITE | default | operational | service_dispatch | Apply reviewed whole-file replacement content to at most twenty files. Existing targets are checkpointed first; Full profile does not prompt for non-destructive replacement. Prefer edit_file for narrow repairs. Use this instead of shell-generated whole-file rewrites when several reviewed text files must change. |
-| 16 | `edit_file` | WRITE | default | operational | service_dispatch | First choice for narrow source, config, and text repairs. Replaces exact text only when the expected occurrence count matches, checkpoints the original, and refuses conflicts instead of rewriting an unverified whole file. Use edit_file instead of shell, node -e, python -c, PowerShell Set-Content, or inline filesystem scripts when a guarded text edit can express the change. Full Access performs ordinary edits without a confirmation prompt; destructive deletion remains separately guarded. |
+| 16 | `edit_file` | WRITE | default | operational | service_dispatch | First choice for narrow source, config, and text repairs. Replaces exact text only when the expected occurrence count matches, checkpoints the original, and refuses conflicts instead of rewriting an unverified whole file. Exact-match conflicts are recoverable and include structured conflict kind, mismatch hints, candidate context when available, and a re-read/retry suggestion; never fuzzy-edit automatically. Use edit_file instead of shell, node -e, python -c, PowerShell Set-Content, or inline filesystem scripts when a guarded text edit can express the change. Full Access performs ordinary edits without a confirmation prompt; destructive deletion remains separately guarded. |
 | 17 | `move_file` | WRITE | default | operational | service_dispatch | Move a file or directory, creating missing destination parents. With Full Bypass OFF, Full Access performs ordinary in-project moves without a confirmation prompt while conflicting or destructive forms remain policy-gated. Trusted Full Bypass skips lnwjud approval/scope checks for explicit absolute outside paths; OS/filesystem errors still apply. |
 | 18 | `copy_file` | WRITE | default | operational | service_dispatch | Copy a file or directory within one workspace, creating missing destination parents. |
 | 19 | `delete_file` | DANGEROUS | default | operational | service_dispatch | Delete one file or empty directory. With Full Bypass OFF, eligible in-project targets move to Recovery Trash and exact safe targets can use scoped auto-approval; critical paths, roots, non-empty directories, ambiguous paths, and mismatched workspaces remain guarded. Trusted Full Bypass skips lnwjud approval/scope checks and permits an exact absolute outside target, which is deleted without Recovery Trash; root and non-empty-directory input guards still apply. |
@@ -1457,28 +1481,45 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 235 | `db_inspect` | READ | default | dependency_gated | truthful_unavailable | Inspect a local database schema through a configured, read-only connection. |
 | 236 | `db_query` | READ | default | dependency_gated | truthful_unavailable | Run a bounded read-only local SQLite SELECT, PRAGMA, or WITH...SELECT query. |
 | 237 | `office_ppt` | WRITE | default | dependency_gated | service_dispatch | Read PowerPoint content or save a copy through the existing Office policy boundary. |
-| 238 | `office_outlook` | READ | default | dependency_gated | service_dispatch | Read Outlook folder and message headers through the existing Office policy boundary. |
-| 239 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | Extract bounded PDF text and tables through a local document provider. |
-| 240 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | Create a deterministic DOCX merge plan and write only after approval. |
-| 241 | `self_heal_plan` | READ | default | operational | service_dispatch | Propose safe, deterministic, reversible recovery steps without applying mutations. |
-| 242 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | Apply a current reversible recovery plan without automatic destructive retries; standard mode requires confirmation and trusted Full Bypass skips lnwjud approval. |
-| 243 | `skills_import` | WRITE | default | operational | service_dispatch | Import a validated local SKILL.md into the selected workspace skill catalog through guarded file read/write operations. |
-| 244 | `ecc_status` | READ | default | operational | deterministic_operation | Report the pinned ECC provider, provenance, activation policy, and bundled security-scanner readiness. |
-| 245 | `ecc_catalog` | READ | default | operational | deterministic_operation | Search the pinned ECC artifact catalog without eagerly loading artifact bodies. |
-| 246 | `ecc_load` | READ | default | operational | truthful_unavailable | Load one selected bounded ECC text artifact by stable catalog ID. |
-| 247 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | Persist selective ECC activation settings without granting imported artifacts extra runtime authority. |
-| 248 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | Run the pinned bundled AgentShield scanner against ECC resources or a registered workspace with bounded JSON output. |
-| 249 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | Create one unreviewed ecc.memory.v1 document without overwriting existing memory. |
-| 250 | `ecc_memory_search` | READ | default | operational | service_dispatch | Search active ECC Memory Vault entries with bounded local lexical retrieval. |
-| 251 | `ecc_memory_read` | READ | default | operational | service_dispatch | Read one ECC Memory Vault entry by stable memory id after completeness checks. |
-| 252 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | Validate ECC Memory Vault documents, symlinks, duplicates, and schema health without rewriting them. |
-| 253 | `tool_batch` | EXECUTE | default | operational | service_dispatch | Execute multiple MCP tools with parallel, dependency-aware, timeout, cancellation, and partial-result handling. |
-| 254 | `automation_create` | WRITE | default | operational | service_dispatch | Create one owner- and workspace-scoped durable shell automation run beneath an existing leased Goal. The plan must be a bounded acyclic milestone graph with evidence-producing verification for every milestone. |
-| 255 | `automation_status` | READ | default | operational | service_dispatch | Read one durable automation run owned by the current actor in the requested workspace. |
-| 256 | `automation_events` | READ | default | operational | service_dispatch | Read a bounded page of durable automation events owned by the current actor in the requested workspace. |
-| 257 | `automation_run` | EXECUTE | default | operational | service_dispatch | Advance one leased durable automation run to its next deterministic dispatch, observation, or verification boundary. Repeat with the returned current revision; this operation never creates a scheduler. |
-| 258 | `automation_control` | DANGEROUS | default | operational | service_dispatch | Pause, resume, or cancel one leased durable automation run. Cancellation also applies the run cancellation policy to its root Goal. |
-| 259 | `automation_finalize` | WRITE | default | operational | service_dispatch | Finalize a fully verified durable automation run and confirm its root Goal reached terminal completion. This fails closed while native scheduled-task cleanup is pending. |
+| 238 | `office_status` | READ | default | operational | service_dispatch | Report truthful Office provider, app, action, dependency, and policy readiness without exposing credentials. |
+| 239 | `office_word` | WRITE | default | dependency_gated | service_dispatch | Read, create, edit, inspect, merge, convert, and validate Word documents through a verified Office provider. |
+| 240 | `office_excel` | WRITE | default | dependency_gated | service_dispatch | Automate structured Excel workbook reads, edits, formulas, sheets, formatting, exports, and validation through a verified provider. |
+| 241 | `office_powerpoint` | WRITE | default | dependency_gated | service_dispatch | Author, inspect, edit, export, and validate PowerPoint presentations through a verified provider. |
+| 242 | `office_outlook` | WRITE | default | dependency_gated | service_dispatch | Read Outlook mail, create and update drafts, and perform guarded mailbox mutations through a verified provider. |
+| 243 | `office_calendar` | WRITE | default | dependency_gated | service_dispatch | Read and manage Outlook/Microsoft 365 calendar events through a verified provider with guarded invite/cancel actions. |
+| 244 | `office_contacts` | WRITE | default | dependency_gated | service_dispatch | Read and manage Outlook/Microsoft 365 contacts through a verified provider. |
+| 245 | `office_tasks` | WRITE | default | dependency_gated | service_dispatch | Read and manage Outlook/Microsoft 365 tasks only when the configured provider exposes a compatible task API. |
+| 246 | `office_onenote` | WRITE | default | dependency_gated | truthful_unavailable | Read and manage OneNote through Microsoft Graph when OAuth and required scopes are configured. |
+| 247 | `office_onedrive` | WRITE | default | dependency_gated | truthful_unavailable | Manage OneDrive files through Microsoft Graph while respecting Active Project boundaries for local transfers. |
+| 248 | `office_sharepoint` | WRITE | default | dependency_gated | truthful_unavailable | Read and manage bounded SharePoint sites, lists, drives, and files through Microsoft Graph. |
+| 249 | `office_teams` | WRITE | default | dependency_gated | truthful_unavailable | Read and send guarded Microsoft Teams messages only through supported Microsoft Graph permissions. |
+| 250 | `office_access` | WRITE | default | dependency_gated | service_dispatch | Automate Microsoft Access only when a verified local Access provider is installed. |
+| 251 | `office_visio` | WRITE | default | dependency_gated | service_dispatch | Automate Microsoft Visio only when a verified local Visio provider is installed. |
+| 252 | `office_project` | WRITE | default | dependency_gated | service_dispatch | Automate Microsoft Project only when a verified local Project provider is installed. |
+| 253 | `office_publisher` | WRITE | default | dependency_gated | service_dispatch | Automate legacy Microsoft Publisher only when an installed automation provider is verified. |
+| 254 | `office_convert` | WRITE | default | dependency_gated | deterministic_operation | Convert supported Office formats through a verified provider and verify the produced artifact before reporting success. |
+| 255 | `office_batch` | WRITE | default | dependency_gated | deterministic_operation | Run a bounded ordered Office batch with per-step results, dry-run support, and fail-fast semantics; operations are not atomic across apps. |
+| 256 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | Extract bounded PDF text and tables through a local document provider. |
+| 257 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | Create a deterministic DOCX merge plan and write only after approval. |
+| 258 | `self_heal_plan` | READ | default | operational | service_dispatch | Propose safe, deterministic, reversible recovery steps without applying mutations. |
+| 259 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | Apply a current reversible recovery plan without automatic destructive retries; standard mode requires confirmation and trusted Full Bypass skips lnwjud approval. |
+| 260 | `skills_import` | WRITE | default | operational | service_dispatch | Import a validated local SKILL.md into the selected workspace skill catalog through guarded file read/write operations. |
+| 261 | `ecc_status` | READ | default | operational | deterministic_operation | Report the pinned ECC provider, provenance, activation policy, and bundled security-scanner readiness. |
+| 262 | `ecc_catalog` | READ | default | operational | deterministic_operation | Search the pinned ECC artifact catalog without eagerly loading artifact bodies. |
+| 263 | `ecc_load` | READ | default | operational | truthful_unavailable | Load one selected bounded ECC text artifact by stable catalog ID. |
+| 264 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | Persist selective ECC activation settings without granting imported artifacts extra runtime authority. |
+| 265 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | Run the pinned bundled AgentShield scanner against ECC resources or a registered workspace with bounded JSON output. |
+| 266 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | Create one unreviewed ecc.memory.v1 document without overwriting existing memory. |
+| 267 | `ecc_memory_search` | READ | default | operational | service_dispatch | Search active ECC Memory Vault entries with bounded local lexical retrieval. |
+| 268 | `ecc_memory_read` | READ | default | operational | service_dispatch | Read one ECC Memory Vault entry by stable memory id after completeness checks. |
+| 269 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | Validate ECC Memory Vault documents, symlinks, duplicates, and schema health without rewriting them. |
+| 270 | `tool_batch` | EXECUTE | default | operational | service_dispatch | Execute multiple MCP tools with parallel, dependency-aware, timeout, cancellation, and partial-result handling. |
+| 271 | `automation_create` | WRITE | default | operational | service_dispatch | Create one owner- and workspace-scoped durable shell automation run beneath an existing leased Goal. The plan must be a bounded acyclic milestone graph with evidence-producing verification for every milestone. |
+| 272 | `automation_status` | READ | default | operational | service_dispatch | Read one durable automation run owned by the current actor in the requested workspace. |
+| 273 | `automation_events` | READ | default | operational | service_dispatch | Read a bounded page of durable automation events owned by the current actor in the requested workspace. |
+| 274 | `automation_run` | EXECUTE | default | operational | service_dispatch | Advance one leased durable automation run to its next deterministic dispatch, observation, or verification boundary. Repeat with the returned current revision; this operation never creates a scheduler. |
+| 275 | `automation_control` | DANGEROUS | default | operational | service_dispatch | Pause, resume, or cancel one leased durable automation run. Cancellation also applies the run cancellation policy to its root Goal. |
+| 276 | `automation_finalize` | WRITE | default | operational | service_dispatch | Finalize a fully verified durable automation run and confirm its root Goal reached terminal completion. This fails closed while native scheduled-task cleanup is pending. |
 <!-- END GENERATED README TOOL REGISTRY -->
 
 ## Detailed capability guide

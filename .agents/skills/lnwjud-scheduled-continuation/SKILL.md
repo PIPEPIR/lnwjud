@@ -90,7 +90,9 @@ gh run watch 123456 -i 20 --exit-status
 
 ## Recurring scheduled wake
 
-`claim_scheduled_continuation` must be the **first connected lnwjud action before any workspace mutation**.
+The Native Scheduled Task prompt must explicitly bind back to the connected lnwjud plugin/connector for the current chat. When the host exposes an `@connector` mention, prefix/preserve the exact lnwjud mention used in the chat; do **not** rely on the bare tool name alone. On wake, resolve that connected lnwjud connector before producing user-visible prose. If the connector cannot be resolved or invoked, treat it as scheduler transport degradation only: perform no workspace mutation, do not claim progress, leave the durable goal active, and let the recurring task try again.
+
+`claim_scheduled_continuation` must be the **first connected lnwjud action before any workspace mutation** and before any user-visible status reply.
 
 Handle the result exactly:
 

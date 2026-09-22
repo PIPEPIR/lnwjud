@@ -49,6 +49,7 @@ import {
   type SaveTunnelApiKeyRequest,
   type SaveRemoteMcpAuthtokenRequest,
   type SetRemoteMcpPublicOriginRequest,
+  type SetRemoteMcpTransportRequest,
   type RemoteMcpStatus,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
@@ -170,6 +171,7 @@ export interface DesktopIpcServices {
   installRemoteMcpProvider(): Promise<RemoteMcpStatus>;
   saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise<RemoteMcpStatus>;
   setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<RemoteMcpStatus>;
+  setRemoteMcpTransport(request: SetRemoteMcpTransportRequest): Promise<RemoteMcpStatus>;
   startRemoteMcp(): Promise<RemoteMcpStatus>;
   stopRemoteMcp(): Promise<RemoteMcpStatus>;
   resetRemoteMcpOAuth(): Promise<RemoteMcpStatus>;
@@ -335,6 +337,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   installRemoteMcpProvider: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   saveRemoteMcpAuthtoken: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   setRemoteMcpPublicOrigin: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
+  setRemoteMcpTransport: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   startRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   stopRemoteMcp: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
   resetRemoteMcpOAuth: async (): Promise<RemoteMcpStatus> => emptyRemoteMcp,
@@ -597,6 +600,10 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.setRemoteMcpPublicOrigin, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setRemoteMcpPublicOrigin(parseSetRemoteMcpPublicOriginRequest(payload));
+  });
+  registerHandler(ipcChannels.setRemoteMcpTransport, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setRemoteMcpTransport(parseSetRemoteMcpTransportRequest(payload));
   });
   registerHandler(ipcChannels.startRemoteMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -1153,6 +1160,11 @@ function parseSaveRemoteMcpAuthtokenRequest(payload: unknown): SaveRemoteMcpAuth
 function parseSetRemoteMcpPublicOriginRequest(payload: unknown): SetRemoteMcpPublicOriginRequest {
   if (!isRecord(payload) || typeof payload.publicOrigin !== 'string' || payload.publicOrigin.length > 2_048) throw new Error('Invalid IPC payload: publicOrigin');
   return { publicOrigin: payload.publicOrigin };
+}
+
+function parseSetRemoteMcpTransportRequest(payload: unknown): SetRemoteMcpTransportRequest {
+  if (!isRecord(payload) || (payload.transport !== 'ngrok' && payload.transport !== 'cloudflare' && payload.transport !== 'custom' && payload.transport !== 'local')) throw new Error('Invalid IPC payload: transport');
+  return { transport: payload.transport };
 }
 
 function parseSetTunnelClientPathRequest(payload: unknown): SetTunnelClientPathRequest {

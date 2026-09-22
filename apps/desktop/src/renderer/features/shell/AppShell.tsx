@@ -1,7 +1,8 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import type { DashboardSnapshot, UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { createTranslator, type Translator } from '../../i18n/index.js';
 import type { MessageKey } from '../../i18n/messages.js';
+import { WhatsNewModal } from '../release-notes/WhatsNewModal.js';
 
 export type Screen = 'home' | 'projects' | 'tools' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor';
 
@@ -39,6 +40,8 @@ const navItems: ReadonlyArray<{ readonly screen: Screen; readonly key: MessageKe
 export function AppShell(props: AppShellProps): ReactElement {
   const t = createTranslator(props.locale);
   const platformLabel = desktopPlatformLabel();
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const closeWhatsNew = useCallback(() => setWhatsNewOpen(false), []);
   return (
     <div className="window-container" data-host-platform={props.hostPlatform}>
       {/* Modern Luxury Dark Gold Titlebar */}
@@ -58,6 +61,15 @@ export function AppShell(props: AppShellProps): ReactElement {
               aria-busy={props.updateStatus?.phase === 'checking' || props.updateStatus?.phase === 'downloading'}
             >
               {versionBadgeText(props.appVersion, props.updateStatus, t)}
+            </button>
+            <button
+              type="button"
+              className="titlebar-whats-new"
+              onClick={() => setWhatsNewOpen(true)}
+              title={t('whatsNew.tooltip')}
+              aria-label={t('whatsNew.tooltip')}
+            >
+              ?
             </button>
           </div>
 
@@ -118,6 +130,7 @@ export function AppShell(props: AppShellProps): ReactElement {
           <main className="main-content">{props.children}</main>
         </div>
       </div>
+      {whatsNewOpen ? <WhatsNewModal locale={props.locale} version={props.appVersion} onClose={closeWhatsNew} /> : null}
     </div>
   );
 }

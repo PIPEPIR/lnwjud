@@ -140,11 +140,13 @@ A scheduler mutation dispatches `schtasks.exe` once. If dispatch returns an erro
 
 ### 11. Office/document replacement and merge
 
-**Covered tools:** `office`, `office_ppt`, `docx_merge`.
+**Covered tools:** legacy `office`, `office_ppt`, `office_outlook`, `docx_merge`; semantic `office_status`, `office_word`, `office_excel`, `office_powerpoint`, `office_outlook`, `office_calendar`, `office_contacts`, `office_tasks`, `office_onenote`, `office_onedrive`, `office_sharepoint`, `office_teams`, `office_access`, `office_visio`, `office_project`, `office_publisher`, `office_convert`, `office_batch`.
+
+The semantic Office family is operation-classified before dispatch. `office_status` and declared read actions are read-only; `office_batch` and `office_convert` default to dry-run; local document mutations are replacement-classified; mailbox/cloud mutations are opaque unless a narrower destructive/dangerous classification applies. Unsupported providers/actions fail closed and do not become mutations merely because a dependency is installed. Send/invite and other dangerous actions remain separately confirmation-gated; macro execution is not enabled by this family.
 
 | Mutation kind | Chat confirmation | Host approval | Recoverable | Auto-approvable | Active Project | Command policy | Packaged transports |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read modes are `read`; save/save-as/merge to target is `create` or `replace` | replacement/mutating mode requires chat confirmation | mutation requires exact host approval | yes for workspace-owned replacement: FileService prepares a replacement pre-image before native/Office dispatch | no | source/target paths are canonicalized under the matching Active Project | n/a for COM/native calls; any command-backed helper is still independently guarded | Desktop provider can approve; standalone providerless mutation denies |
+| read/status/dry-run modes are `read`; local document create/save/edit/export is `create`/`replace`; destructive item operations are `delete`; mailbox/cloud/high-risk operations are `opaque` when no narrower proof exists | replacement/mutating mode is profile/action dependent; dangerous send/invite/destructive actions require explicit confirmation and are never silently approved | mutation requires exact host approval when policy requires it; unsupported providers fail before dispatch | yes for workspace-owned local file replacement: FileService prepares a replacement pre-image before native/Office dispatch; mailbox/cloud/native object changes are external/unknown | no | source/target/attachment paths are canonicalized under the matching Active Project; local provider routing cannot widen scope | n/a for COM/native calls; any command-backed helper is independently guarded; macros/external refresh are not silently enabled | Desktop provider can approve; standalone providerless mutation denies; provider readiness remains action-specific and truthful |
 
 ### 12. WSL filesystem translation
 

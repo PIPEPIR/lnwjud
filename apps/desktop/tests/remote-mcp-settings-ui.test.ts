@@ -8,8 +8,8 @@ const settingsCssSource = readFileSync(new URL('../src/renderer/settings-extra.c
 
 describe('Remote MCP ngrok settings UI', () => {
   it('treats a verified executable as ready and disables redundant reinstall', () => {
-    expect(settingsSource).toContain("const ngrokReady = remoteMcp.installed && remoteMcp.ngrokPath !== null;");
-    expect(settingsSource).toContain("remoteMcp.state === 'running' || ngrokReady");
+    expect(settingsSource).toContain("const ngrokReady = remoteMcp.transport === 'ngrok' && remoteMcp.installed && remoteMcp.ngrokPath !== null;");
+    expect(settingsSource).toContain("disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady}");
     expect(settingsSource).toContain("t('settingsPage.ngrokReady')");
     expect(settingsSource).toContain("t('settingsPage.ngrokReadyButton')");
     expect(settingsSource).toContain("t('settingsPage.ngrokVerifyHint')");
@@ -18,6 +18,8 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(messagesSource).toContain('Without an explicit static domain, ngrok may provide a new URL on each start.');
     expect(settingsSource).toContain('id="remote-mcp-domain"');
     expect(settingsSource).toContain('setRemoteMcpPublicOrigin');
+    expect(settingsSource).toContain("const remoteMcpCopyUrl = remoteMcp.transport === 'local' ? remoteMcp.localMcpUrl : remoteMcp.publicMcpUrl;");
+    expect(settingsSource).toContain('disabled={remoteMcpCopyUrl === null}');
     expect(messagesSource).not.toContain('save the authtoken again to learn the new URL');
   });
 
@@ -25,7 +27,7 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsSource).toContain("t('settingsPage.chooseConnection')");
     expect(settingsSource).toContain('connection-method-stack is-recommended');
     expect(settingsSource).toContain('setSecureMethodOpen(false)');
-    expect(messagesSource).toContain('Secure MCP Tunnel remains an advanced alternative, and both may run at the same time when needed.');
+    expect(messagesSource).toContain('while the existing Secure MCP Tunnel remains a separate option.');
     expect(homeSource).toContain('setSecureTunnelExpanded(!remoteMcpOnline)');
     expect(homeSource).toContain("t('home.advancedOption')");
   });
