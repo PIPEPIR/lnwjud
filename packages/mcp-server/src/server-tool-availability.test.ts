@@ -76,6 +76,41 @@ describe('MCP server live tool availability', () => {
     expect(listeners.size).toBe(0);
   });
 
+  it('does not let user availability overrides re-enable transport-filtered mutation tools', async () => {
+    const snapshot: ToolAvailabilitySnapshot = {
+      version: 1,
+      generation: 1,
+      overrides: { write_file: 'enabled', edit_file: 'enabled' },
+    };
+    const server = createMcpServer({
+      services: {} as McpApplicationServices,
+      actor,
+      toolAvailabilitySnapshotProvider: () => snapshot,
+      toolExposurePredicate: (tool) => (
+        tool.permission === 'READ'
+        && tool.annotations.readOnlyHint
+        && !tool.annotations.destructiveHint
+      ),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'transport-filter-test-client', version: '1.0.0' });
+
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const tools = await client.listTools();
+      const names = tools.tools.map((tool) => tool.name);
+
+      expect(names).toContain('read_file');
+      expect(names).not.toContain('write_file');
+      expect(names).not.toContain('edit_file');
+      expect(names).not.toContain('dom_cdp');
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }
+  });
+
   it('releases tool availability when only the underlying protocol server closes', async () => {
     const listeners = new Set<(next: ToolAvailabilitySnapshot) => void>();
     let unsubscribeCount = 0;
