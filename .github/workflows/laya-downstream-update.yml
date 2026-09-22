@@ -88,6 +88,7 @@ jobs:
             "conflict=false" >> $env:GITHUB_OUTPUT
             "needs_build=true" >> $env:GITHUB_OUTPUT
           }
+          exit 0
 
       - name: Open rebase-conflict issue
         if: steps.sync.outputs.conflict == 'true'
