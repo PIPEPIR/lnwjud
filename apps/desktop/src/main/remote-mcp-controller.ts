@@ -465,9 +465,9 @@ export class RemoteMcpController {
         response.end('Unauthorized');
         return;
       }
-      const localMcpUrl = await this.getLocalMcpUrl().catch(() => null);
+      const localMcpUrl = await this.ensureLocalMcpUrl().catch(() => null);
       if (localMcpUrl === null) {
-        json(response, 503, { error: 'local_mcp_unavailable', error_description: 'The local lnwjud MCP listener is not currently available.' });
+        json(response, 503, { error: 'local_mcp_unavailable', error_description: 'The local lnwjud MCP listener could not be started for this Remote MCP request.' });
         return;
       }
       await proxyMcp(request, response, localMcpUrl);
