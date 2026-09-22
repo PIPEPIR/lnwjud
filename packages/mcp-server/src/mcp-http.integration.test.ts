@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityTracker } from './activity-tracker.js';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 import { BUNDLED_PONYTAIL_SKILL_ID } from './ponytail-runtime.js';
-import { LNWJUD_MCP_IDENTITY_PATH, startMcpHttp, type McpHttpServerHandle } from './http.js';
+import { LNWJUD_MCP_IDENTITY_PATH, LNWJUD_MCP_READONLY_PATH, startMcpHttp, type McpHttpServerHandle } from './http.js';
 
 const TEST_PNG_640X480 = 'iVBORw0KGgoAAAANSUhEUgAAAoAAAAHgCAIAAAC6s0uzAAAF9klEQVR42u3VoQEAMAjAsDGJRvP/mXwBJjmhppHVDwDY9SUAAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAO4Ng+cD/NAAns4AAAAASUVORK5CYII=';
 const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
@@ -59,6 +59,38 @@ describe('MCP localhost HTTP transport', () => {
       expect(first.tools.map((tool) => tool.name)).toHaveLength(expectedAdvertisedToolCount);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('exposes a dedicated read-only MCP surface and keeps mutations hidden', async () => {
+    expect(handle.readOnlyEndpoint.pathname).toBe(LNWJUD_MCP_READONLY_PATH);
+
+    const client = new Client(
+      { name: 'lnwjud-readonly-http-test-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(handle.readOnlyEndpoint);
+
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+      const names = tools.tools.map((tool) => tool.name);
+
+      expect(names).toContain('workspace_list');
+      expect(names).toContain('read_file');
+      expect(names).toContain('search_text');
+      expect(names).not.toContain('write_file');
+      expect(names).not.toContain('edit_file');
+      expect(names).not.toContain('shell');
+      expect(names).not.toContain('codex_run');
+
+      const hiddenWrite = await client.callTool({
+        name: 'write_file',
+        arguments: { workspaceId: 'workspace-1', path: 'should-not-exist.txt', content: 'blocked' },
+      });
+      expect(hiddenWrite.isError).toBe(true);
     } finally {
       await client.close();
     }
