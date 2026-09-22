@@ -58,6 +58,8 @@ export interface McpServerOptions {
   readonly ponytailActivationLedger?: PonytailActivationLedger;
   /** Current persisted per-tool availability snapshot. */
   readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
+  /** Optional transport-scoped hard exposure boundary applied before user tool-availability settings. */
+  readonly toolExposurePredicate?: ToolRegistryOptions['toolExposurePredicate'];
   /** Subscribes to persisted per-tool availability changes for live SDK handle toggling. */
   readonly toolAvailabilitySubscribe?: (listener: (snapshot: ToolAvailabilitySnapshot) => void) => () => void;
   /** Shared across per-request server factories so repeated diff fingerprints can hit cache. */
@@ -96,6 +98,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.ponytailModeProvider === undefined ? {} : { ponytailModeProvider: options.ponytailModeProvider }),
     ...(options.ponytailActivationLedger === undefined ? {} : { ponytailActivationLedger: options.ponytailActivationLedger }),
     ...(options.toolAvailabilitySnapshotProvider === undefined ? {} : { toolAvailabilitySnapshotProvider: options.toolAvailabilitySnapshotProvider }),
+    ...(options.toolExposurePredicate === undefined ? {} : { toolExposurePredicate: options.toolExposurePredicate }),
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
   });
