@@ -40,6 +40,24 @@ describe('Codex sandbox capability', () => {
     });
   });
 
+  it('adds a native Codex profile before the exec subcommand', () => {
+    const capabilities = capabilitiesFromHelp([
+      'Usage: codex exec [OPTIONS] [PROMPT]',
+      'Commands:',
+      '  exec  run a task',
+      'Options:',
+      '  --sandbox <MODE>  Sandbox policy [possible values: read-only, workspace-write]',
+    ].join('\n'));
+
+    expect(new CodexInvocationBuilder().build('codex.exe', capabilities, 'fix local bug', 'workspace-write', 'core')).toEqual({
+      ok: true,
+      value: {
+        executable: 'codex.exe',
+        args: ['-p', 'core', 'exec', '--sandbox', 'workspace-write', 'fix local bug'],
+      },
+    });
+  });
+
   it('fails closed when workspace-write sandbox support was not observed', () => {
     const capabilities = capabilitiesFromHelp('Usage: codex\nCommands:\n  exec  run a task\n');
 
