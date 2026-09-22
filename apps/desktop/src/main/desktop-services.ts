@@ -30,7 +30,7 @@ import {
   type DoctorProbeResult,
 } from '@lnwjud/application';
 import { AuditService, decodeActivityTargetReference, type ActivityAuditEvent, type ActivityTargetDetail, type AuditEventRepository, type AuditEventSummaryProjection } from '@lnwjud/audit';
-import { CodexDiscovery, formatCodexDiscoveryError } from '@lnwjud/codex';
+import { CodexAdapter, CodexDiscovery, LayaCodexHarnessRouter, formatCodexDiscoveryError } from '@lnwjud/codex';
 import type { Result } from '@lnwjud/domain';
 import {
   EXTENSIONS_SETTINGS_KEY,
@@ -493,6 +493,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     processService,
   });
   const codexService = new CodexService(workspaceRepository, {
+    adapter: new CodexAdapter(undefined, undefined, undefined, new LayaCodexHarnessRouter({
+      enabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexLayaEnabled), false),
+      pythonExecutable: settingsRepository.get(USER_SETTING_KEYS.codexLayaPythonPath)?.trim() ?? '',
+      serviceCwd: settingsRepository.get(USER_SETTING_KEYS.codexLayaServiceCwd)?.trim() ?? '',
+    })),
     auditService,
     profileProvider: activePermissionProfile,
   });
