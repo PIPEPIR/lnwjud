@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.4.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.4.2 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.2.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.2.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.2-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.2-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,13 +51,24 @@
 
 ---
 
-## Current published version: v5.4.1
+## Current published version: v5.4.2
 
 ## Current source version: v5.4.2
 
-Latest published release: **v5.4.1**. The download buttons above point directly to the published v5.4.1 assets.
+Latest published release: **v5.4.2**. The download buttons above point directly to the published v5.4.2 assets.
 
-### What's new in v5.4.1
+### What's new in v5.4.2
+
+- **Remote MCP survives Local MCP listener rebinding:** the OAuth gateway resolves the current Desktop MCP URL for every authorized `/mcp` request instead of pinning the startup URL. Local MCP restarts can move to a new automatic port without leaving Remote MCP apparently online but proxying to a dead listener; a genuinely unavailable local listener returns an explicit `503 local_mcp_unavailable` response.
+- **Remote MCP reconnect and startup are race-safe:** unexpected owned ngrok exits schedule bounded automatic reconnects with exponential backoff capped at 30 seconds. Manual Stop, Desktop shutdown, and OAuth reset cancel pending retries, while concurrent manual/automatic starts share one in-flight start operation so duplicate gateways/ngrok children are not spawned.
+- **ChatGPT host failures are diagnosed at the correct boundary:** Settings now explains that “conversation does not support developer MCPs” / missing plugin-tool states can be rejected by ChatGPT before a request reaches lnwjud, instead of presenting them as Windows filesystem-permission failures.
+- **Search and audit diagnostics are more reliable:** `search_text` accepts a specific file path without using the file as ripgrep's working directory; access-denied ripgrep failures map to recoverable `PERMISSION_DENIED`, malformed regex/glob input remains `INVALID_INPUT`, and unexpected exceptions persist redacted diagnostic detail while the external MCP response stays generic.
+- **Persistent tunnel first-run/runtime intent is preserved:** first-time profile configuration no longer conflicts with an already-running persistent tunnel runtime, and configure/reconfigure flows preserve the saved stopped/running intent instead of silently changing the operator's desired state.
+- **Durable shell completion resists PID reuse and finalization races:** process identity reconciliation distinguishes a reused PID from the original worker, gives worker-owned terminal metadata a bounded finalization grace, and avoids overwriting a completed result with stale `termination_unverified` metadata while keeping cancellation/kill identity checks strict.
+- **Windows-heavy application tests are serialized without loosening timeouts:** the application package disables Vitest file-level parallelism for filesystem/process/SQLite-heavy suites, eliminating runner contention while keeping existing per-test timeout limits unchanged.
+- **Release accounting:** v5.4.2 is a hardening release following v5.4.1. No additional GitHub issue is claimed closed specifically by this release; Issue #104 remains the v5.4.1 closure.
+
+### Historical: What's new in v5.4.1
 
 - **Issue #104 fixed — Windows MCP localhost/tunnel/update hardening:** loopback HTTP handling was hardened for Windows `localhost`/IPv6 behavior, reverse-proxy/tunnel Host validation can use explicitly configured external hostnames instead of requiring ad-hoc Host rewrites, and the Windows updater/installer path was hardened against the silent old-uninstaller stall reported in v5.3.1.
 - **Automatic local MCP ports by default:** ordinary users no longer need to choose or understand a fixed MCP port during setup. lnwjud selects a free local port automatically to avoid collisions, while an advanced/manual port override remains available for users who need a fixed value.
@@ -71,16 +82,6 @@ Latest published release: **v5.4.1**. The download buttons above point directly 
 - **Chat execution routing is connector-name agnostic:** when the connected lnwjud MCP server exposes the required coding, repository, filesystem, shell, build, test, Git, CI, browser, or local-computer capability, the MCP instructions tell the assistant to use those tools directly in the current conversation instead of suggesting a switch to ChatGPT Work/Codex solely because of task type. The rule is generic and does not depend on a user-specific connector instance name such as `lnwjud_o`.
 - **Published from verified cross-platform evidence:** final main CI `35584627254` passed on commit `e8d26d45953dd13a77559ab0303ad7b7ee022653`, including Windows authoritative release verification, macOS x64/arm64 and Linux x64/arm64 native package verification, packaged Electron smoke tests, and macOS 26 compatibility checks. Release workflow `35586799494` then re-verified the exact artifacts/provenance and published the v5.4.1 GitHub Release.
 - **Closed in this release:** [Issue #104](https://github.com/engasnm111/lnwjud/issues/104). No other GitHub issue is being claimed as closed specifically by the v5.4.1 cycle; the remaining v5.4.1 work is hardening/refactoring found during review and release preparation.
-
-### Post-release hardening on `main` after v5.4.1
-
-These changes were found while validating post-release `main` CI and are **not part of the already-published v5.4.1 binaries**. They will ship in the next release unless superseded by later changes.
-
-- **Windows live-log projection CI fixture bounded:** main CI `35589209261` exposed a 15-second timeout in the 500-row / 500-maximum-length-path projection regression. The test still exercises the same 500×4096-character storage/projection case and full-detail resolution, but no longer routes the already-sanitized ~2 MB fixture through `AuditService` a second time. The exact Windows shard then dropped the case from 17.75s to sub-second execution without increasing the timeout.
-- **Durable shell PID-reuse reconciliation fixed:** main CI `35591858761` exposed a real Windows race where a stale `running` snapshot could observe a quickly reused PID and overwrite an already-finalizing `completed` task with `termination_unverified`. Reconciliation now treats a live PID with a different captured start time as a replaced process, preserves kill/cancel identity safety, and continues through the bounded finalization grace. A deterministic PID-reuse regression plus repeated Desktop MCP shell tests and the exact Windows shard cover the fix.
-- **Durable shell unverifiable-probe finalization race fixed:** exact post-merge main CI `35595124650` exposed a second reconciliation window: the Desktop MCP shell command had already produced `local-shell`, but the returned durable state was overwritten to `termination_unverified`. Review found that an unverifiable worker-identity probe could persist stale host metadata while the durable worker still owned `task.json` and was publishing its terminal result. Reconciliation now gives terminal metadata a bounded grace period and reports unresolved worker-probe uncertainty without writing over the worker-owned record; strict identity checks for cancel/kill are unchanged. A deterministic concurrent-finalization regression and the exact Windows desktop shard (53 files / 378 tests) pass with the fix.
-- **Application fault-injection tests no longer compete for Windows filesystem/SQLite I/O:** follow-up push CI exposed `automation-fault-injection.test.ts` timing out at its existing 20-second limit while application test files were running in parallel. `@lnwjud/application` now uses the same `--fileParallelism=false` policy already used by process/storage/capabilities/mcp-server heavy suites. The timeout is unchanged; the full application suite passes 31 files / 208 tests locally, with the fault-injection file completing in under a second.
-- **Issue accounting remains unchanged:** no additional GitHub issue is claimed closed by these post-release fixes; v5.4.1 still closes Issue #104 only.
 
 ### What's new in v5.4.0
 

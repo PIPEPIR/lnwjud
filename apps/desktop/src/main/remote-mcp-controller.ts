@@ -116,6 +116,7 @@ export class RemoteMcpController {
   private authorizationGeneration = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private startOperation: Promise<RemoteMcpStatus> | null = null;
 
   public constructor(options: RemoteMcpControllerOptions) {
     this.dataPath = options.dataPath;
@@ -246,11 +247,22 @@ export class RemoteMcpController {
     await this.ensurePersistenceLoaded();
     this.clearReconnectTimer();
     if (this.runState === 'running') return this.status();
+    if (this.startOperation !== null) return this.startOperation;
+
+    const operation = this.startInternal();
+    this.startOperation = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.startOperation === operation) this.startOperation = null;
+    }
+  }
+
+  private async startInternal(): Promise<RemoteMcpStatus> {
     this.runState = 'starting';
     this.message = 'Starting protected Remote MCP…';
     try {
-      const localMcpUrl = await this.ensureLocalMcpUrl();
-      if (localMcpUrl === null) throw new Error('Local MCP is unavailable. Start the lnwjud MCP listener first.');
+      if (await this.ensureLocalMcpUrl() === null) throw new Error('Local MCP is unavailable. Start the lnwjud MCP listener first.');
       let executable = this.ngrokPath ?? await resolveNgrokExecutable();
       if (executable === null) {
         await this.installProvider();
@@ -263,7 +275,7 @@ export class RemoteMcpController {
       if (authtoken === null) throw new Error('ngrok authtoken is not configured');
       const recoveredStaleNgrok = await recoverStaleLnwjudNgrokRuntime();
       if (recoveredStaleNgrok) this.message = 'Recovered a stale lnwjud ngrok runtime from a previous Desktop session';
-      await this.startGateway(localMcpUrl);
+      await this.startGateway();
       if (this.gatewayUrl === null) throw new Error('Remote MCP gateway did not start');
       this.publicOrigin = null;
       let lastNgrokDiagnostic: string | null = null;
@@ -345,10 +357,10 @@ export class RemoteMcpController {
     await this.stopOwnedRuntime();
   }
 
-  private async startGateway(localMcpUrl: string): Promise<void> {
+  private async startGateway(): Promise<void> {
     if (this.gateway !== null) return;
     const server = createServer((request, response) => {
-      void this.handleGatewayRequest(request, response, localMcpUrl).catch((error: unknown) => {
+      void this.handleGatewayRequest(request, response).catch((error: unknown) => {
         if (!response.headersSent) json(response, 500, { error: 'server_error', error_description: errorMessage(error) });
         else response.end();
       });
@@ -366,7 +378,7 @@ export class RemoteMcpController {
     this.gatewayUrl = `http://127.0.0.1:${address.port}`;
   }
 
-  private async handleGatewayRequest(request: IncomingMessage, response: ServerResponse, localMcpUrl: string): Promise<void> {
+  private async handleGatewayRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', this.publicOrigin ?? this.gatewayUrl ?? 'http://127.0.0.1');
     if (request.method === 'GET' && (url.pathname === '/.well-known/oauth-protected-resource' || url.pathname === '/.well-known/oauth-protected-resource/mcp')) {
       const origin = this.requirePublicOrigin();
@@ -451,6 +463,11 @@ export class RemoteMcpController {
         response.statusCode = 401;
         response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
         response.end('Unauthorized');
+        return;
+      }
+      const localMcpUrl = await this.getLocalMcpUrl().catch(() => null);
+      if (localMcpUrl === null) {
+        json(response, 503, { error: 'local_mcp_unavailable', error_description: 'The local lnwjud MCP listener is not currently available.' });
         return;
       }
       await proxyMcp(request, response, localMcpUrl);
