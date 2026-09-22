@@ -43,7 +43,7 @@ export interface McpHttpServerAddress {
 export interface McpHttpServerHandle {
   readonly address: McpHttpServerAddress;
   readonly endpoint: URL;
-  readonly readOnlyEndpoint: URL;
+  readonly readOnlyEndpoint?: URL;
   readonly ipv6Endpoint?: URL | null;
   readonly ipv6ReadOnlyEndpoint?: URL | null;
   close(): Promise<void>;
