@@ -541,6 +541,8 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
     ...options,
     toolExposurePredicate: (tool) => (
       tool.permission === 'READ'
+      && tool.annotations.readOnlyHint
+      && !tool.annotations.destructiveHint
       && (upstreamExposurePredicate === undefined || upstreamExposurePredicate(tool))
     ),
   });
