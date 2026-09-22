@@ -15,7 +15,7 @@ describe('PDF provider installer', () => {
   it('downloads a pinned archive, verifies SHA-256, installs Poppler, and reuses the verified path', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-pdf-provider-'));
     roots.push(dataPath);
-    const archive = Buffer.from('test poppler archive');
+    const archive = emptyZipArchive();
     const packageInfo = testPackage(archive);
     let downloads = 0;
     let extracts = 0;
@@ -51,7 +51,7 @@ describe('PDF provider installer', () => {
   it('coalesces concurrent install requests for the same pinned provider', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-pdf-provider-concurrent-'));
     roots.push(dataPath);
-    const archive = Buffer.from('concurrent poppler archive');
+    const archive = emptyZipArchive();
     const packageInfo = testPackage(archive);
     let downloads = 0;
     let extracts = 0;
@@ -89,6 +89,12 @@ describe('PDF provider installer', () => {
     })).rejects.toThrow('integrity check failed');
   });
 });
+
+function emptyZipArchive(): Buffer {
+  const archive = Buffer.alloc(22);
+  archive.writeUInt32LE(0x06054b50, 0);
+  return archive;
+}
 
 function testPackage(archive: Buffer): PdfProviderPackage {
   return {

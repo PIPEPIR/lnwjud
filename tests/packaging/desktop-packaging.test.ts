@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.4.2', async () => {
+  it('[version-contract] pins the product release to v5.4.3', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.4.2');
-    expect(desktopPackage.version).toBe('5.4.2');
+    expect(rootPackage.version).toBe('5.4.3');
+    expect(desktopPackage.version).toBe('5.4.3');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.4.2');
+      expect(packageJson.version, packagePath).toBe('5.4.3');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.4.2'");
-    expect(shared).toContain("APP_VERSION = '5.4.2'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.4.3'");
+    expect(shared).toContain("APP_VERSION = '5.4.3'");
   });
 
   it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
@@ -124,6 +124,19 @@ describe('cross-platform desktop packaging', () => {
     expect(desktopPackage.scripts?.['package:windows']).toContain('write-portable-update-manifest.mjs');
     expect(desktopPackage.scripts?.build).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
     expect(desktopPackage.scripts?.['build:main']).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
+    expect(desktopPackage.scripts?.build).toContain('stage-main-native-bindings.mjs');
+    expect(desktopPackage.scripts?.['build:main']).toContain('stage-main-native-bindings.mjs');
+    expect(desktopPackage.scripts?.['test:e2e']).toContain('stage-main-native-bindings.mjs');
+    expect(config).toContain('asarUnpack:');
+    expect(config).toContain('- dist/main/*.node');
+    const nativeBindingStager = await readFile(path.join(desktopRoot, 'scripts', 'stage-main-native-bindings.mjs'), 'utf8');
+    expect(nativeBindingStager).toContain('index.win32-x64-msvc.node');
+    expect(nativeBindingStager).toContain('index.win32-arm64-msvc.node');
+    expect(nativeBindingStager).toContain('index.darwin-universal.node');
+    expect(nativeBindingStager).toContain('index.linux-x64-gnu.node');
+    expect(nativeBindingStager).toContain('index.linux-x64-musl.node');
+    expect(nativeBindingStager).toContain('index.linux-arm64-gnu.node');
+    expect(nativeBindingStager).toContain('index.linux-arm64-musl.node');
     expect(config).toContain('icon: build/icon.ico');
     expect(config).toContain('signAndEditExecutable: true');
     expect(config).not.toContain('signAndEditExecutable: false');

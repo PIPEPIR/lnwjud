@@ -284,8 +284,18 @@ export function App(): ReactElement {
       return;
     }
     void refresh();
-    const interval = window.setInterval(() => { void refresh(); }, 2_000);
-    return (): void => { window.clearInterval(interval); };
+    const reconcileInterval = window.setInterval(() => { void refresh(); }, 30_000);
+    const refreshOnFocus = (): void => { void refresh(); };
+    const refreshOnVisibility = (): void => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+    return (): void => {
+      window.clearInterval(reconcileInterval);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+    };
   }, [refresh, updateStatus?.phase]);
 
   useEffect(() => {
@@ -909,6 +919,7 @@ export function App(): ReactElement {
         const target = startupDoctorNavigationTarget(startupDoctorReady, nextScreen);
         if (target === 'settings') setRequestedSettingsSection(undefined);
         setScreen(target);
+        if (target === 'worklog') void refresh();
         if (target === 'tools') void loadToolCatalog(['external_mcp_connection']);
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}

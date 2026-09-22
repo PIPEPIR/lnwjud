@@ -13,6 +13,7 @@ import {
   type ReconcileGoalRecordRequest,
   type FinishGoalRecordRequest,
   type GoalCheckpointRecord,
+  type GoalCheckpointResumeContext,
   type GoalEvidence,
   type GoalAcceptanceCriterion,
   type GoalContextCapsulePayload,
@@ -102,6 +103,7 @@ interface CheckpointRow {
   readonly evidence_json: string;
   readonly active_task_ids_json: string;
   readonly tracked_tasks_json: string | null;
+  readonly resume_context_json: string | null;
   readonly created_at: string;
 }
 
@@ -453,6 +455,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         evidence: request.evidence,
         activeTaskIds,
         trackedTasks,
+        ...(request.resumeContext === undefined ? {} : { resumeContext: request.resumeContext }),
         createdAt: request.now,
       });
       return this.requireById(request.goalId);
@@ -841,6 +844,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         evidence: request.evidence,
         activeTaskIds,
         trackedTasks,
+        ...(request.resumeContext === undefined ? {} : { resumeContext: request.resumeContext }),
         createdAt: request.now,
       });
 
@@ -2240,8 +2244,8 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     this.database.connection.prepare(`
       INSERT INTO goal_checkpoints (
         id, goal_id, revision, current_phase, summary, step_updates_json,
-        next_action, blockers_json, evidence_json, active_task_ids_json, tracked_tasks_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        next_action, blockers_json, evidence_json, active_task_ids_json, tracked_tasks_json, resume_context_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       checkpoint.id,
       checkpoint.goalId,
@@ -2254,6 +2258,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       JSON.stringify(checkpoint.evidence),
       JSON.stringify(checkpoint.activeTaskIds),
       JSON.stringify(checkpoint.trackedTasks ?? legacyTrackedTasks(checkpoint.activeTaskIds)),
+      checkpoint.resumeContext === undefined ? null : JSON.stringify(checkpoint.resumeContext),
       checkpoint.createdAt,
     );
   }
@@ -2425,6 +2430,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       evidence: parseEvidence(row.evidence_json, 'checkpoint evidence'),
       activeTaskIds: blockingTaskIds(parseTrackedTasks(row.tracked_tasks_json, row.active_task_ids_json, 'checkpoint tracked tasks')),
       trackedTasks: parseTrackedTasks(row.tracked_tasks_json, row.active_task_ids_json, 'checkpoint tracked tasks'),
+      ...(row.resume_context_json === null ? {} : { resumeContext: parseCheckpointResumeContext(row.resume_context_json) }),
       createdAt: row.created_at,
     };
   }
@@ -2445,6 +2451,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     if (!isRecord(value)) throw corrupt('Goal checkpoint row is invalid');
     const strings = ['id','goal_id','current_phase','summary','step_updates_json','next_action','blockers_json','evidence_json','active_task_ids_json','created_at'];
     if (value.tracked_tasks_json !== null && typeof value.tracked_tasks_json !== 'string') throw corrupt('Goal checkpoint tracked tasks are invalid');
+    if (value.resume_context_json !== null && typeof value.resume_context_json !== 'string') throw corrupt('Goal checkpoint resume context is invalid');
     if (!strings.every((key) => typeof value[key] === 'string') || typeof value.revision !== 'number') throw corrupt('Goal checkpoint row fields are invalid');
     return value as unknown as CheckpointRow;
   }
@@ -2995,6 +3002,38 @@ function parseContextCapsulePayload(serialized: string): GoalContextCapsulePaylo
     artifacts: parseEvidenceValue(value.artifacts, 'context capsule artifacts'),
     blockers: parseStringArrayValue(value.blockers, 'context capsule blockers'),
     nextAction: value.nextAction as string,
+  };
+}
+
+function parseCheckpointResumeContext(serialized: string): GoalCheckpointResumeContext {
+  const value = parseJson(serialized, 'checkpoint resume context');
+  if (!isRecord(value)) throw corrupt('Checkpoint resume context is invalid');
+  if (!Array.isArray(value.commands)) throw corrupt('Checkpoint resume commands are invalid');
+  const commands = value.commands.map((entry) => {
+    if (!isRecord(entry) || typeof entry.command !== 'string' || (entry.status !== 'passed' && entry.status !== 'failed' && entry.status !== 'running')) {
+      throw corrupt('Checkpoint resume command is invalid');
+    }
+    const status = entry.status as 'passed' | 'failed' | 'running';
+    const exitCode = entry.exitCode;
+    if (exitCode !== undefined && (typeof exitCode !== 'number' || !Number.isInteger(exitCode))) throw corrupt('Checkpoint resume command exit code is invalid');
+    const result = entry.result;
+    if (result !== undefined && typeof result !== 'string') throw corrupt('Checkpoint resume command result is invalid');
+    return {
+      command: entry.command,
+      status,
+      ...(exitCode === undefined ? {} : { exitCode }),
+      ...(result === undefined ? {} : { result }),
+    };
+  });
+  return {
+    changedFiles: parseStringArrayValue(value.changedFiles, 'checkpoint resume changed files'),
+    commands,
+    decisions: parseStringArrayValue(value.decisions, 'checkpoint resume decisions'),
+    failedAttempts: parseStringArrayValue(value.failedAttempts, 'checkpoint resume failed attempts'),
+    pendingValidation: parseStringArrayValue(value.pendingValidation, 'checkpoint resume pending validation'),
+    resumePrerequisites: parseStringArrayValue(value.resumePrerequisites, 'checkpoint resume prerequisites'),
+    stateFacts: parseEvidenceValue(value.stateFacts, 'checkpoint resume state facts'),
+    artifacts: parseEvidenceValue(value.artifacts, 'checkpoint resume artifacts'),
   };
 }
 

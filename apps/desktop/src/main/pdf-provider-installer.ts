@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import extractZip from 'extract-zip';
 import type { InstallOperationPhase } from '@lnwjud/ipc-contracts';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
+import { extractZipSafely, type ZipExtractImplementation } from './safe-zip-extractor.js';
 
 export interface PdfProviderPackage {
   readonly version: string;
@@ -31,7 +31,7 @@ interface DownloadResponse {
 export interface PdfProviderInstallerOptions {
   readonly package?: PdfProviderPackage;
   readonly fetchImpl?: (url: string) => Promise<DownloadResponse>;
-  readonly extractImpl?: (archivePath: string, options: { readonly dir: string }) => Promise<void>;
+  readonly extractImpl?: ZipExtractImplementation;
   readonly onProgress?: (phase: InstallOperationPhase) => void;
 }
 
@@ -60,7 +60,6 @@ export function installPdfProvider(dataPath: string, options: PdfProviderInstall
 async function installPdfProviderOnce(dataPath: string, options: PdfProviderInstallerOptions): Promise<InstalledPdfProvider> {
   const packageInfo = options.package ?? DEFAULT_PDF_PROVIDER_PACKAGE;
   const fetchImpl = options.fetchImpl ?? (async (url: string): Promise<DownloadResponse> => fetch(url));
-  const extractImpl = options.extractImpl ?? extractZip;
   const providerRoot = path.join(dataPath, 'runtime-tools', 'pdf-provider');
   const versionRoot = path.join(providerRoot, packageInfo.version);
   const providerPath = path.join(versionRoot, 'Library', 'bin', 'pdftotext.exe');
@@ -92,7 +91,7 @@ async function installPdfProviderOnce(dataPath: string, options: PdfProviderInst
     options.onProgress?.('installing');
     await writeFile(archivePath, archiveBytes);
     await mkdir(extractRoot, { recursive: true });
-    await extractImpl(archivePath, { dir: extractRoot });
+    await extractZipSafely(archivePath, extractRoot, options.extractImpl);
 
     const extractedRoot = path.join(extractRoot, `poppler-${packageInfo.popplerVersion}`);
     const extractedProvider = path.join(extractedRoot, 'Library', 'bin', 'pdftotext.exe');

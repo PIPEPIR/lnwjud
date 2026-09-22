@@ -433,6 +433,16 @@ describe('durable goal continuation persistence', () => {
       blockers: [],
       evidence: [{ kind: 'path', value: 'packages/storage/src/goal-repository.ts' }],
       activeTaskIds: ['durable-task-123'],
+      resumeContext: {
+        changedFiles: ['packages/storage/src/goal-repository.ts'],
+        commands: [{ command: 'pnpm test goal-continuation', status: 'passed', exitCode: 0, result: '17 passed' }],
+        decisions: ['Keep compare-and-swap checkpoint writes atomic.'],
+        failedAttempts: ['Legacy summary-only checkpoint did not capture command evidence.'],
+        pendingValidation: ['Run full storage suite.'],
+        resumePrerequisites: ['Reuse durable-task-123 if it is still running.'],
+        stateFacts: [{ kind: 'hash', value: 'HEAD:abc123' }],
+        artifacts: [{ kind: 'path', value: 'packages/storage/src/goal-repository.ts' }],
+      },
     });
     expect(checkpointed).toMatchObject({
       ok: true,
@@ -461,12 +471,24 @@ describe('durable goal continuation persistence', () => {
         revision: 1,
         activeTaskIds: ['durable-task-123'],
         completedSteps: [expect.objectContaining({ id: 'implement' })],
-        lastCheckpoint: expect.objectContaining({ revision: 1, summary: 'Repository migration is implemented.' }),
+        lastCheckpoint: expect.objectContaining({
+          revision: 1,
+          summary: 'Repository migration is implemented.',
+          resumeContext: expect.objectContaining({
+            changedFiles: ['packages/storage/src/goal-repository.ts'],
+            commands: [expect.objectContaining({ status: 'passed', exitCode: 0, result: '17 passed' })],
+            pendingValidation: ['Run full storage suite.'],
+          }),
+        }),
       },
     });
     const persisted = await second.repository.getById(created.value.goalId);
     expect(persisted?.checkpoints).toHaveLength(1);
-    expect(persisted?.checkpoints[0]).toMatchObject({ revision: 1, summary: 'Repository migration is implemented.' });
+    expect(persisted?.checkpoints[0]).toMatchObject({
+      revision: 1,
+      summary: 'Repository migration is implemented.',
+      resumeContext: { pendingValidation: ['Run full storage suite.'] },
+    });
     second.database.close();
   });
 

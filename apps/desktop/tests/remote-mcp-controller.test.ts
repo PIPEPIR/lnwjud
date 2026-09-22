@@ -15,6 +15,10 @@ interface RemoteMcpTestAccess {
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectAttempts: number;
+  clients: Map<string, unknown>;
+  authCodes: Map<string, { readonly clientId: string; readonly expiresAt: number }>;
+  accessTokens: Map<string, { readonly clientId: string; readonly expiresAt: number }>;
+  refreshTokens: Map<string, { readonly clientId: string; readonly expiresAt: number }>;
   ensurePersistenceLoaded(): Promise<void>;
   scheduleReconnect(reason: string): void;
   startInternal(): Promise<RemoteMcpStatus>;
@@ -48,7 +52,11 @@ async function completeChatGptLocalApproval(response: Response, publicOrigin: st
   const publicReplay = await fetch(`${publicOrigin}${localApproval.pathname}`, { redirect: 'manual' });
   expect(publicReplay.status).toBe(404);
 
-  const approved = await fetch(localApproval, { redirect: 'manual' });
+  const confirmation = await fetch(localApproval, { redirect: 'manual' });
+  expect(confirmation.status).toBe(200);
+  expect(await confirmation.text()).toContain('Approve ChatGPT connection?');
+
+  const approved = await fetch(localApproval, { method: 'POST', redirect: 'manual' });
   expect(approved.status).toBe(302);
   const callback = new URL(approved.headers.get('location')!);
   expect(callback.origin + callback.pathname).toBe(redirectUri);
@@ -379,7 +387,7 @@ describe('Remote MCP OAuth gateway', () => {
     expect(ensureStarts).toBe(0);
   });
 
-  it('requires OAuth, zero-click completes a recognized ChatGPT callback through local Desktop approval, and proxies authorized /mcp requests', async () => {
+  it('requires explicit first-use local approval, then reauthorizes a trusted ChatGPT client without another approval hop and proxies authorized /mcp requests', async () => {
     let upstreamAuthorization: string | undefined;
     const firstUpstreamOrigin = await listen(createServer((request, response) => {
       upstreamAuthorization = request.headers.authorization;
@@ -434,8 +442,8 @@ describe('Remote MCP OAuth gateway', () => {
     const trustedReauthorize = await fetch(authorize, { redirect: 'manual' });
     expect(trustedReauthorize.status).toBe(302);
     const trustedReauthorizeLocation = new URL(trustedReauthorize.headers.get('location')!);
-    expect(trustedReauthorizeLocation.hostname).toBe('127.0.0.1');
-    expect(trustedReauthorizeLocation.searchParams.get('code')).toBeNull();
+    expect(trustedReauthorizeLocation.origin + trustedReauthorizeLocation.pathname).toBe(redirectUri);
+    expect(trustedReauthorizeLocation.searchParams.get('code')).toBeTruthy();
 
     const tokenResponse = await fetch(`${origin}/oauth/token`, {
       method: 'POST',
@@ -582,6 +590,50 @@ describe('Remote MCP OAuth gateway', () => {
     const tokens = await tokenResponse.json() as { access_token: string; refresh_token: string };
     expect(tokens.access_token.length).toBeGreaterThan(30);
     expect(tokens.refresh_token.length).toBeGreaterThan(30);
+    await controller.close();
+  });
+
+  it('bounds unauthenticated DCR state and prunes expired OAuth state', async () => {
+    const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
+    let now = 1_800_000_000_000;
+    const controller = new RemoteMcpController({
+      dataPath: 'C:\\tmp\\lnwjud-remote-mcp-dcr-bound-test',
+      getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp`,
+      now: (): number => now,
+    });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.startGateway();
+    internal.publicOrigin = internal.gatewayUrl;
+    const origin = internal.gatewayUrl!;
+    const register = async (): Promise<Response> => fetch(`${origin}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'] }),
+    });
+
+    for (let index = 0; index < 64; index += 1) expect((await register()).status).toBe(201);
+    expect(internal.clients.size).toBe(64);
+    const rejected = await register();
+    expect(rejected.status).toBe(429);
+    await expect(rejected.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+
+    now += 10 * 60_000 + 1;
+    const recovered = await register();
+    expect(recovered.status).toBe(201);
+    const recoveredClient = await recovered.json() as { client_id: string };
+    expect(internal.clients.size).toBe(1);
+
+    internal.authCodes.set('expired-code', { clientId: recoveredClient.client_id, expiresAt: now - 1 });
+    internal.authCodes.set('live-code', { clientId: recoveredClient.client_id, expiresAt: now + 60_000 });
+    internal.accessTokens.set('expired-access', { clientId: recoveredClient.client_id, expiresAt: now - 1 });
+    internal.accessTokens.set('live-access', { clientId: recoveredClient.client_id, expiresAt: now + 60_000 });
+    internal.refreshTokens.set('expired-refresh', { clientId: recoveredClient.client_id, expiresAt: now - 1 });
+    internal.refreshTokens.set('live-refresh', { clientId: recoveredClient.client_id, expiresAt: now + 60_000 });
+
+    expect((await fetch(`${origin}/.well-known/oauth-authorization-server`)).status).toBe(200);
+    expect([...internal.authCodes.keys()]).toEqual(['live-code']);
+    expect([...internal.accessTokens.keys()]).toEqual(['live-access']);
+    expect([...internal.refreshTokens.keys()]).toEqual(['live-refresh']);
     await controller.close();
   });
 

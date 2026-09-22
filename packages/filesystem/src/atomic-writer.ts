@@ -7,16 +7,39 @@ import { mapNodeFsError } from './fs-error.js';
 
 export const MAX_FILE_WRITE_BYTES = 4 * 1024 * 1024;
 
+export interface AtomicWriteOptions {
+  /**
+   * Revalidate the destination immediately around filesystem side effects.
+   * Guarded callers use this to detect symlink/junction/path swaps that occur
+   * after their initial workspace containment check.
+   */
+  readonly validateDestination?: () => Promise<Result<void>>;
+}
+
 export class AtomicFileWriter {
-  public async write(filePath: string, content: string): Promise<Result<void>> {
-    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_WRITE_BYTES) {
+  public async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+    const byteLength = typeof content === 'string' ? Buffer.byteLength(content, 'utf8') : content.byteLength;
+    if (byteLength > MAX_FILE_WRITE_BYTES) {
       return err(appError('FILE_TOO_LARGE', 'File exceeds the maximum write size'));
     }
+
+    const preflight = await options.validateDestination?.();
+    if (preflight !== undefined && !preflight.ok) return preflight;
+
     const parentResult = await ensureParentDirectory(filePath);
     if (!parentResult.ok) return parentResult;
+
+    const prepared = await options.validateDestination?.();
+    if (prepared !== undefined && !prepared.ok) return prepared;
+
     const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
     try {
-      await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' });
+      if (typeof content === 'string') await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' });
+      else await writeFile(temporaryPath, content, { flag: 'wx' });
+
+      const publish = await options.validateDestination?.();
+      if (publish !== undefined && !publish.ok) return publish;
+
       await rename(temporaryPath, filePath);
       return ok(undefined);
     } catch (error: unknown) {

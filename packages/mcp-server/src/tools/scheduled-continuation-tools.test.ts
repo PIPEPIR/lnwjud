@@ -40,7 +40,13 @@ describe('scheduled continuation MCP tools', () => {
       ...validPrepare,
       activeTaskIds: undefined,
       trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }],
-    })).toMatchObject({ ok: true });
+      resumeContext: {
+        changedFiles: ['src/app.ts'],
+        commands: [{ command: 'pnpm test', status: 'passed', exitCode: 0, result: '42 passed' }],
+        decisions: ['Keep current transport.'], failedAttempts: [], pendingValidation: ['Run release gate.'],
+        resumePrerequisites: ['Reuse current dev branch.'], stateFacts: [], artifacts: [],
+      },
+    })).toMatchObject({ ok: true, value: { resumeContext: { pendingValidation: ['Run release gate.'] } } });
     expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, successorDelayMinutes: 2 })).toMatchObject({ ok: true, value: { successorDelayMinutes: 2 } });
     expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, successorDelayMinutes: 5 })).toMatchObject({ ok: true, value: { successorDelayMinutes: 5 } });
     expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, successorDelayMinutes: 24 })).toMatchObject({ ok: true, value: { successorDelayMinutes: 24 } });
@@ -123,6 +129,7 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('intervalMinutes=60');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('legacy explicit 2–25 minute value changes only the first firing');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('never create a per-wake successor');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('reconstruction-grade resumeContext');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('one-time and recurring native tasks never overlap');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');

@@ -56,6 +56,22 @@ const trackedTask = z.object({
   role: z.enum(['blocking_job', 'supporting_service']),
   cancelWithGoal: z.boolean(),
 }).strict();
+const resumeCommand = z.object({
+  command: z.string().min(1).max(2048),
+  status: z.enum(['passed', 'failed', 'running']),
+  exitCode: z.number().int().optional(),
+  result: z.string().max(2048).optional(),
+}).strict();
+const resumeContext = z.object({
+  changedFiles: z.array(z.string().min(1).max(4096)).max(100),
+  commands: z.array(resumeCommand).max(50),
+  decisions: z.array(z.string().min(1).max(1024)).max(100),
+  failedAttempts: z.array(z.string().min(1).max(1024)).max(100),
+  pendingValidation: z.array(z.string().min(1).max(1024)).max(100),
+  resumePrerequisites: z.array(z.string().min(1).max(1024)).max(100),
+  stateFacts: z.array(evidence).max(20),
+  artifacts: z.array(evidence).max(20),
+}).strict();
 
 const runGoalSchema = z.object({
   workspaceId: z.string().min(1).max(128),
@@ -87,6 +103,7 @@ const checkpointGoalSchema = z.object({
   evidence: z.array(evidence).max(20),
   activeTaskIds: z.array(z.string().min(1).max(256)).max(50).optional(),
   trackedTasks: z.array(trackedTask).max(50).optional(),
+  resumeContext: resumeContext.optional(),
   ponytailMode: ponytailModeOverride.optional(),
   releaseLease: z.boolean().optional(),
 }).strict().refine((value) => value.activeTaskIds !== undefined || value.trackedTasks !== undefined, {
@@ -526,7 +543,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'checkpoint_goal',
-      description: 'Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. A checkpoint records durable progress only; it is not a turn boundary or permission to yield, and it does not create a new Scheduled Task. After an ordinary checkpoint keep useful work moving on the current lease. A transient task/status/log/result observation failure must be retried or re-resolved in the same turn, and a tracked blocking job that becomes terminal must have its terminal result inspected before handoff. Before yielding an active automatic-continuation goal, ensure exactly one confirmed Native ChatGPT hourly recurring watchdog exists with cloud execution requested. Reuse the same nativeTaskId across checkpoints and ordinary hourly wakes; never create a per-wake successor and never retime the recurring cadence merely because a checkpoint changed. Historical v4.52 one-time rows keep their compatibility behavior until they become historical, and one-time plus recurring watchdogs must never overlap for the same goal. A real native task ID is required for confirmed coverage, while execution mode may remain unverified when the host does not expose it. At the actual turn boundary, after confirmed watchdog coverage and the final durable state are recorded, use one final checkpoint with releaseLease=true and then perform no further mutation. Never wait for the user to type continue/ทำต่อ.',
+      description: 'Atomically checkpoint durable goal progress using the current lease and expected revision. For every meaningful milestone or handoff boundary, include resumeContext with the concrete state a new worker needs to reconstruct work without guessing: changedFiles, exact commands with pass/fail/running status and result, decisions, failedAttempts, pendingValidation, resumePrerequisites, stateFacts, and artifacts. summary is only a headline and must not replace reconstruction-grade resumeContext. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. A checkpoint records durable progress only; it is not a turn boundary or permission to yield, and it does not create a new Scheduled Task. After an ordinary checkpoint keep useful work moving on the current lease. A transient task/status/log/result observation failure must be retried or re-resolved in the same turn, and a tracked blocking job that becomes terminal must have its terminal result inspected before handoff. Before yielding an active automatic-continuation goal, ensure exactly one confirmed Native ChatGPT hourly recurring watchdog exists with cloud execution requested unless scheduling was explicitly disabled. Reuse the same nativeTaskId across checkpoints and ordinary hourly wakes; never create a per-wake successor and never retime the recurring cadence merely because a checkpoint changed. Historical v4.52 one-time rows keep their compatibility behavior until they become historical, and one-time plus recurring watchdogs must never overlap for one goal. A real native task ID is required for confirmed coverage, while execution mode may remain unverified when the host does not expose it. At an unavoidable turn boundary, persist full resumeContext before releasing the lease; if scheduling is enabled confirm watchdog coverage first. Never wait for the user to type continue/ทำต่อ.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: checkpointGoalSchema,
@@ -547,6 +564,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
         evidence: input.evidence,
         ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
         ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
+        ...(input.resumeContext === undefined ? {} : { resumeContext: input.resumeContext }),
         ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         ...(input.releaseLease === undefined ? {} : { releaseLease: input.releaseLease }),
       }) ?? missingService(),

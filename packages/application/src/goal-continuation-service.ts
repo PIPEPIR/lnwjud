@@ -5,6 +5,7 @@ import {
   err,
   ok,
   type GoalCheckpointRecord,
+  type GoalCheckpointResumeContext,
   type GoalEvidence,
   type GoalAcceptanceCriterion,
   type GoalContextCapsulePayload,
@@ -127,6 +128,7 @@ export interface CheckpointGoalRequest {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds?: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly resumeContext?: GoalCheckpointResumeContext;
   readonly ponytailMode?: GoalPonytailModeOverride;
   readonly releaseLease?: boolean;
 }
@@ -500,6 +502,7 @@ export class GoalContinuationService {
       const stepUpdates = normalizeStepUpdates(request.stepUpdates, current.plan);
       const updatedPlan = applyStepUpdates(current.plan, stepUpdates);
       const trackedTasks = normalizeTrackedTasks(request.trackedTasks, request.activeTaskIds);
+      const resumeContext = normalizeCheckpointResumeContext(request.resumeContext);
       const requestedPonytailMode = request.ponytailMode === undefined ? undefined : normalizeGoalPonytailModeOverride(request.ponytailMode);
       const ponytailMode = requestedPonytailMode === undefined
         ? current.ponytailMode ?? null
@@ -521,6 +524,7 @@ export class GoalContinuationService {
         evidence: normalizeEvidence(request.evidence),
         activeTaskIds: blockingTaskIds(trackedTasks),
         trackedTasks,
+        ...(resumeContext === undefined ? {} : { resumeContext }),
         ponytailMode,
         releaseLease: request.releaseLease === true,
         now: this.now().toISOString(),
@@ -1279,6 +1283,38 @@ function normalizeEvidence(evidence: readonly GoalEvidence[]): readonly GoalEvid
     if (entry.kind !== 'path' && entry.kind !== 'hash' && entry.kind !== 'task' && entry.kind !== 'note') throw new Error('evidence kind is invalid');
     return { kind: entry.kind, value: safeText(entry.value, MAX_EVIDENCE_VALUE, 'evidence value') };
   });
+}
+
+function normalizeCheckpointResumeContext(value: GoalCheckpointResumeContext | undefined): GoalCheckpointResumeContext | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error('resumeContext is invalid');
+  const commands = value.commands;
+  if (!Array.isArray(commands) || commands.length > 50) throw new Error('resumeContext commands are invalid');
+  const normalized: GoalCheckpointResumeContext = {
+    changedFiles: normalizeStrings(value.changedFiles, MAX_CONTEXT_ITEMS, 4_096, 'resumeContext changedFiles'),
+    commands: commands.map((entry) => {
+      if (!isRecord(entry) || typeof entry.command !== 'string') throw new Error('resumeContext command is invalid');
+      if (entry.status !== 'passed' && entry.status !== 'failed' && entry.status !== 'running') throw new Error('resumeContext command status is invalid');
+      const exitCode = entry.exitCode;
+      if (exitCode !== undefined && (typeof exitCode !== 'number' || !Number.isInteger(exitCode) || Math.abs(exitCode) > 2_147_483_647)) throw new Error('resumeContext exitCode is invalid');
+      const result = entry.result;
+      if (result !== undefined && typeof result !== 'string') throw new Error('resumeContext command result is invalid');
+      return {
+        command: safeText(entry.command, 2_048, 'resumeContext command'),
+        status: entry.status,
+        ...(exitCode === undefined ? {} : { exitCode }),
+        ...(result === undefined ? {} : { result: safeText(result, 2_048, 'resumeContext command result', true) }),
+      };
+    }),
+    decisions: normalizeStrings(value.decisions, MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'resumeContext decisions'),
+    failedAttempts: normalizeStrings(value.failedAttempts, MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'resumeContext failedAttempts'),
+    pendingValidation: normalizeStrings(value.pendingValidation, MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'resumeContext pendingValidation'),
+    resumePrerequisites: normalizeStrings(value.resumePrerequisites, MAX_CONTEXT_ITEMS, MAX_CONTEXT_ITEM, 'resumeContext resumePrerequisites'),
+    stateFacts: normalizeEvidence(value.stateFacts),
+    artifacts: normalizeEvidence(value.artifacts),
+  };
+  if (JSON.stringify(normalized).length > 64_000) throw new Error('resumeContext exceeds the 64 KB bounded payload limit');
+  return normalized;
 }
 
 function normalizeTaskIds(values: readonly string[] | undefined): readonly string[] {

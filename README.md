@@ -53,11 +53,23 @@
 
 ## Current published version: v5.4.2
 
-## Current source version: v5.4.2
+## Current source version: v5.4.3
 
-Latest published release: **v5.4.2**. The download buttons above point directly to the published v5.4.2 assets.
+Latest published release: **v5.4.2**. The download buttons above point directly to the published v5.4.2 assets. The `dev` source tree is preparing **v5.4.3** and has not been tagged or released.
 
-### What's new in v5.4.2
+### Development: What's new in v5.4.3
+
+- **Remote MCP public OAuth boundary hardened:** unauthenticated dynamic registrations and transient OAuth state are bounded, expired state is pruned, and first-use ChatGPT-compatible OAuth clients require an explicit local approval instead of treating redirect-URI shape as identity.
+- **Release supply chain is immutable:** privileged third-party GitHub Actions used for release publication and cosign setup are pinned to full commit SHAs, with a repository hygiene regression preventing mutable third-party action tags from returning.
+- **PDF archive extraction is containment-safe:** the vulnerable production `extract-zip@2.0.1` path is removed. Archive validation rejects path traversal, absolute paths, symlink/special-file entries, encrypted entries, and duplicate/colliding names before extraction; `pnpm audit --prod` is clean.
+- **Electron native ZIP binding is packaged explicitly:** the Desktop build stages the target-specific `@electron-internal/extract-zip` N-API binding beside the bundled main process and unpacks `.node` files from ASAR, preventing the startup `Cannot find native binding` crash on packaged Windows while preserving macOS/Linux target selection.
+- **Multi-file mutations are all-or-rollback:** `apply_patch` and checkpoint restore automatically restore earlier writes when a later write or cancellation fails, and report explicit rollback failure details instead of silently leaving a mixed tree.
+- **Workspace writes revalidate at publication time:** guarded writes detect symlink/junction/path swaps between initial validation and the final atomic rename, strengthening the workspace boundary against TOCTOU races.
+- **Dashboard idle work is reduced:** the full dashboard snapshot no longer rebuilds every 2 seconds. A 30-second reconciliation fallback is combined with focus/visibility wakeups and immediate refresh after explicit user actions.
+- **Durable checkpoints now carry reconstruction-grade resume state:** milestone checkpoints can atomically persist changed files, exact command outcomes, decisions, failed attempts, pending validation, resume prerequisites, state facts, and artifacts. `session_handoff` prefers this checkpoint resume context before Git diff or legacy trackers and surfaces acceptance/checkpoint evidence plus tracked task IDs so a new worker can continue without guessing.
+- **Roadmap drafts stay out of product commits:** `docs/roadmap/` is ignored for new draft plans; historical tracked roadmap documents remain historical Git content.
+
+### Historical: What's new in v5.4.2
 
 - **Remote MCP survives Local MCP listener rebinding and transient listener loss:** every authorized `/mcp` request now ensures the Desktop MCP listener is available before proxying, so a stopped/rebinding automatic-port listener is recovered and the live URL is used instead of returning an avoidable transport failure. If the listener cannot be started, the gateway returns an explicit `503 local_mcp_unavailable` response.
 - **Remote MCP reconnect and startup are race-safe:** unexpected owned ngrok exits schedule bounded automatic reconnects with exponential backoff capped at 30 seconds. Manual Stop, Desktop shutdown, and OAuth reset cancel pending retries, while concurrent manual/automatic starts share one in-flight start operation so duplicate gateways/ngrok children are not spawned.

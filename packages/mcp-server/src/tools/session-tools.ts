@@ -75,6 +75,7 @@ async function createSessionHandoff(
           blockers: goal.blockers,
           trackedTasks: goal.trackedTasks,
           nextAction: goal.nextAction,
+          lastCheckpoint: goal.lastCheckpoint,
           ...(goal.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: goal.currentContextCapsuleId }),
         };
         capsuleState = capsule === undefined ? null : {
@@ -109,6 +110,9 @@ async function createSessionHandoff(
   const backgroundTasks = await readBackgroundTasks(context, signal);
   const changedFiles = [...new Set(status.value.entries.map((entry) => entry.path))].sort();
   const diffSummary = compactDiff(unstaged.value.patch, staged.value.patch, maxDiffBytes);
+  const hasCheckpointResumeContext = goalState !== null
+    && isRecord(goalState.lastCheckpoint)
+    && isRecord(goalState.lastCheckpoint.resumeContext);
   const prompt = buildHandoffPrompt({
     goalExcerpt,
     trackerPath,
@@ -124,7 +128,11 @@ async function createSessionHandoff(
     recovery_state: prompt,
     recovery_format: 'task_state',
     persistent_instructions: false,
-    source_priority: goalState === null ? ['git_workspace', 'legacy_tracker'] : ['durable_goal', 'context_capsule', 'git_workspace', 'legacy_tracker'],
+    source_priority: goalState === null
+      ? ['git_workspace', 'legacy_tracker']
+      : hasCheckpointResumeContext
+        ? ['durable_goal', 'checkpoint_resume_context', 'context_capsule', 'git_workspace', 'legacy_tracker']
+        : ['durable_goal', 'context_capsule', 'git_workspace', 'legacy_tracker'],
     goal_state: goalState,
     context_capsule: capsuleState,
     tracker_path: trackerPath,
@@ -161,19 +169,44 @@ async function readBackgroundTasks(context: McpToolContext, signal: AbortSignal)
 }
 
 function formatGoalHandoff(goal: Record<string, unknown>, capsule: Record<string, unknown> | null): string {
+  const evidenceList = (value: unknown, limit = 20): string => {
+    if (!Array.isArray(value) || value.length === 0) return '(none)';
+    return value.slice(0, limit).map((entry) => {
+      if (!isRecord(entry)) return 'invalid evidence';
+      return `${String(entry.kind ?? 'note')}: ${String(entry.value ?? '')}`;
+    }).join(' | ');
+  };
   const plan = isRecord(goal.plan) && Array.isArray(goal.plan.steps)
     ? goal.plan.steps.map((step) => {
         if (!isRecord(step)) return '- invalid plan entry';
-        return `- [${String(step.status ?? 'unknown')}] ${String(step.id ?? '?')}: ${String(step.title ?? '')}`;
+        return `- [${String(step.status ?? 'unknown')}] ${String(step.id ?? '?')}: ${String(step.title ?? '')}${step.summary === undefined ? '' : ` — ${String(step.summary)}`}`;
       }).join('\n')
     : '- no plan';
   const acceptance = Array.isArray(goal.acceptanceCriteria)
     ? goal.acceptanceCriteria.map((criterion) => {
         if (!isRecord(criterion)) return '- invalid acceptance entry';
-        return `- [${String(criterion.status ?? 'unknown')}] ${String(criterion.id ?? '?')}: ${String(criterion.title ?? '')}`;
+        return `- [${String(criterion.status ?? 'unknown')}] ${String(criterion.id ?? '?')}: ${String(criterion.title ?? '')}; evidence: ${evidenceList(criterion.evidence, 10)}`;
       }).join('\n')
     : '- none';
   const blockers = Array.isArray(goal.blockers) && goal.blockers.length > 0 ? goal.blockers.map((entry) => `- ${String(entry)}`).join('\n') : '- none';
+  const trackedTasks = Array.isArray(goal.trackedTasks) && goal.trackedTasks.length > 0
+    ? goal.trackedTasks.slice(0, 50).map((entry) => {
+        if (!isRecord(entry)) return '- invalid tracked task';
+        return `- ${String(entry.taskId ?? '?')} [${String(entry.provider ?? 'unknown')}/${String(entry.role ?? 'unknown')}] cancelWithGoal=${String(entry.cancelWithGoal ?? false)}`;
+      }).join('\n')
+    : '- none';
+  const checkpoint = isRecord(goal.lastCheckpoint) ? goal.lastCheckpoint : null;
+  const resumeContext = checkpoint !== null && isRecord(checkpoint.resumeContext) ? checkpoint.resumeContext : null;
+  const resumeList = (key: string): string => {
+    const value = resumeContext?.[key];
+    return Array.isArray(value) && value.length > 0 ? value.slice(0, 20).map(String).join(' | ') : '(none)';
+  };
+  const resumeCommands = resumeContext !== null && Array.isArray(resumeContext.commands) && resumeContext.commands.length > 0
+    ? resumeContext.commands.slice(0, 20).map((entry) => {
+        if (!isRecord(entry)) return 'invalid command record';
+        return `${String(entry.status ?? 'unknown')}: ${String(entry.command ?? '')}${entry.exitCode === undefined ? '' : ` (exit ${String(entry.exitCode)})`}${entry.result === undefined ? '' : ` => ${String(entry.result)}`}`;
+      }).join(' | ')
+    : '(none)';
   const capsulePayload = capsule !== null && isRecord(capsule.payload) ? capsule.payload : null;
   const capsuleList = (key: string): string => {
     const value = capsulePayload?.[key];
@@ -190,13 +223,31 @@ function formatGoalHandoff(goal: Record<string, unknown>, capsule: Record<string
     acceptance,
     'Blockers:',
     blockers,
+    'Tracked goal tasks:',
+    trackedTasks,
     `Next action: ${String(goal.nextAction ?? '')}`,
+    checkpoint === null ? 'Latest checkpoint: none' : `Latest checkpoint: revision ${String(checkpoint.revision ?? '')} — ${String(checkpoint.summary ?? '')}`,
+    ...(checkpoint === null ? [] : [
+      `Checkpoint evidence: ${evidenceList(checkpoint.evidence)}`,
+    ]),
+    ...(resumeContext === null ? ['Checkpoint resume context: none recorded'] : [
+      `Checkpoint changed files: ${resumeList('changedFiles')}`,
+      `Checkpoint commands: ${resumeCommands}`,
+      `Checkpoint decisions: ${resumeList('decisions')}`,
+      `Checkpoint failed attempts: ${resumeList('failedAttempts')}`,
+      `Checkpoint pending validation: ${resumeList('pendingValidation')}`,
+      `Checkpoint resume prerequisites: ${resumeList('resumePrerequisites')}`,
+      `Checkpoint state facts: ${evidenceList(resumeContext.stateFacts)}`,
+      `Checkpoint artifacts: ${evidenceList(resumeContext.artifacts)}`,
+    ]),
     capsule === null ? 'Context capsule: none published' : `Context capsule: ${String(capsule.id ?? '')} (goal rev ${String(capsule.sourceGoalRevision ?? '')}, intent rev ${String(capsule.sourceUserIntentRevision ?? '')})`,
     ...(capsulePayload === null ? [] : [
       `Capsule user steering: ${capsuleList('userSteering')}`,
       `Capsule completed work: ${capsuleList('completedWork')}`,
       `Capsule remaining work: ${capsuleList('remainingWork')}`,
       `Capsule decisions: ${capsuleList('decisions')}`,
+      `Capsule validation: ${evidenceList(capsulePayload.validation, 10)}`,
+      `Capsule artifacts: ${evidenceList(capsulePayload.artifacts, 10)}`,
       `Capsule next action: ${String(capsulePayload.nextAction ?? '')}`,
     ]),
   ].join('\n');

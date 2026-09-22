@@ -36,9 +36,9 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 
 1. Call `run_goal` before the first mutation of non-trivial multi-step work. Reuse the stable workspace and `goalKey`; do not create a second active goal for the same objective.
 2. Use the normal 600-second lease and keep the lease token private.
-3. Read the durable checkpoint and continue useful fenced work.
-4. At a real milestone call `checkpoint_goal`.
-5. Call `prepare_scheduled_continuation` to **ensure one recurring watchdog exists**. Do not call it merely because another checkpoint occurred if confirmed coverage already exists.
+3. Read the durable checkpoint and continue useful fenced work. Prefer the latest checkpoint `resumeContext` over guessing from a short summary: inspect changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, artifacts, blockers, tracked tasks, and the next action.
+4. At a real milestone call `checkpoint_goal`. A meaningful milestone or handoff checkpoint must include reconstruction-grade `resumeContext`: changed files; exact commands with `passed`/`failed`/`running` status, exit code and concise result; decisions; failed attempts that should not be repeated; pending validation; resume prerequisites; state facts; and artifacts. `summary` is only a headline and must never be the sole recovery record.
+5. Call `prepare_scheduled_continuation` to **ensure one recurring watchdog exists** only when scheduled continuation remains enabled. Do not call it merely because another checkpoint occurred if confirmed coverage already exists, and never create/re-enable scheduling after the user disables it.
 6. For a new v4.53 watchdog, use the returned schedule verbatim. It must describe `occurrence=interval`, `intervalMinutes=60`, an explicit IANA `TZID`, and the current chat destination.
 7. Create the exact Native ChatGPT task through the host surface and immediately record `created` with the real native task ID and host-reported absolute `dueAt`.
 8. Record `runsOn: cloud` only when the host explicitly proves cloud execution. If task identity/schedule is confirmed but execution mode is not exposed, record `runsOn: unverified`; never invent cloud proof.

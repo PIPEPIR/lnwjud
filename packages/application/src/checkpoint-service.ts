@@ -5,6 +5,8 @@ import { AtomicFileWriter, MAX_FILE_WRITE_BYTES } from '@lnwjud/filesystem';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { WorkspacePathGuard, type Checkpoint, type CheckpointFile, type CheckpointRepository, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
+import { createGuardedWriteValidator } from './guarded-write.js';
+import { runMutationTransaction } from './mutation-transaction.js';
 
 export interface CheckpointServicePort {
   createForFiles(actor: FileActor, workspaceId: string, paths: readonly string[]): Promise<Result<Checkpoint>>;
@@ -118,7 +120,11 @@ export class CheckpointService implements CheckpointServicePort {
     const workspace = await this.getWorkspace(workspaceId);
     if (!workspace.ok) return workspace;
 
-    const resolvedFiles: { readonly file: CheckpointFile; readonly absolutePath: string }[] = [];
+    const resolvedFiles: {
+      readonly file: CheckpointFile;
+      readonly absolutePath: string;
+      readonly validateDestination: () => Promise<Result<void>>;
+    }[] = [];
     for (const file of checkpoint.files) {
       const resolved = await this.guard.resolveForWrite(workspace.value, file.path);
       if (!resolved.ok) return resolved;
@@ -128,7 +134,11 @@ export class CheckpointService implements CheckpointServicePort {
         const expected = options.expectedCurrentHashes[file.path];
         if (expected !== undefined && currentHash !== expected) return err(appError('INVALID_INPUT', 'Checkpoint restore conflict detected'));
       }
-      resolvedFiles.push({ file, absolutePath: resolved.value.realPath ?? resolved.value.absolutePath });
+      resolvedFiles.push({
+        file,
+        absolutePath: resolved.value.realPath ?? resolved.value.absolutePath,
+        validateDestination: createGuardedWriteValidator(this.guard, workspace.value, file.path, resolved.value, authorization),
+      });
     }
 
     const profile = options.profile ?? this.profileProvider();
@@ -137,13 +147,22 @@ export class CheckpointService implements CheckpointServicePort {
     if (decision === 'ASK' && !isApplicationAuthorized(authorization, options.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires permission'));
     const rollback = await this.createForFiles(actor, workspaceId, checkpoint.files.map((file) => file.path));
     if (!rollback.ok) return rollback;
-    const restoredPaths: string[] = [];
-    for (const resolved of resolvedFiles) {
-      const result = await this.writer.write(resolved.absolutePath, resolved.file.content);
-      if (!result.ok) return result;
-      restoredPaths.push(resolved.file.path);
-    }
-    return ok({ restoredPaths, rollbackCheckpointId: rollback.value.id });
+    const rollbackFiles = new Map(rollback.value.files.map((file) => [file.path, file.content] as const));
+    const transaction = await runMutationTransaction(resolvedFiles.map((resolved) => ({
+      label: resolved.file.path,
+      commit: (): Promise<Result<void>> => this.writer.write(resolved.absolutePath, resolved.file.content, {
+        validateDestination: resolved.validateDestination,
+      }),
+      rollback: (): Promise<Result<void>> => {
+        const original = rollbackFiles.get(resolved.file.path);
+        if (original === undefined) {
+          return Promise.resolve(err(appError('INTERNAL_ERROR', 'Rollback checkpoint is missing a file required for restore recovery', true)));
+        }
+        return this.writer.write(resolved.absolutePath, original, { validateDestination: resolved.validateDestination });
+      },
+    })));
+    if (!transaction.ok) return transaction;
+    return ok({ restoredPaths: resolvedFiles.map((resolved) => resolved.file.path), rollbackCheckpointId: rollback.value.id });
   }
 
   private async readCheckpointFile(filePath: string, relativePath: string): Promise<Result<CheckpointFile>> {

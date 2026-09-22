@@ -56,6 +56,31 @@ export interface GoalEvidence {
   readonly value: string;
 }
 
+export type GoalCommandStatus = 'passed' | 'failed' | 'running';
+
+export interface GoalCommandRecord {
+  readonly command: string;
+  readonly status: GoalCommandStatus;
+  readonly exitCode?: number | undefined;
+  readonly result?: string | undefined;
+}
+
+/**
+ * Reconstruction-grade state persisted atomically with a milestone checkpoint.
+ * It complements the short summary with the concrete facts a new worker needs
+ * to continue without guessing or redoing already-settled work.
+ */
+export interface GoalCheckpointResumeContext {
+  readonly changedFiles: readonly string[];
+  readonly commands: readonly GoalCommandRecord[];
+  readonly decisions: readonly string[];
+  readonly failedAttempts: readonly string[];
+  readonly pendingValidation: readonly string[];
+  readonly resumePrerequisites: readonly string[];
+  readonly stateFacts: readonly GoalEvidence[];
+  readonly artifacts: readonly GoalEvidence[];
+}
+
 export type GoalAcceptanceStatus = 'pending' | 'completed' | 'blocked';
 
 export interface GoalAcceptanceCriterion {
@@ -132,6 +157,7 @@ export interface GoalCheckpointRecord {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly resumeContext?: GoalCheckpointResumeContext;
   readonly createdAt: string;
 }
 
@@ -244,6 +270,7 @@ export interface CheckpointGoalRecordRequest {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly resumeContext?: GoalCheckpointResumeContext;
   readonly ponytailMode: GoalPonytailMode | null;
   readonly releaseLease: boolean;
   readonly now: string;
