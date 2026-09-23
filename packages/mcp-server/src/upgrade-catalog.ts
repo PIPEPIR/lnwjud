@@ -124,7 +124,7 @@ export const UPGRADE_TOOL_CATALOG: readonly UpgradeToolCatalogEntry[] = [
   read('mcp_health', 21, 'Return external MCP connection health.', ['mcp', 'gateway', 'health']),
   read('mcp_resources', 21, 'List resources exposed by connected MCP servers when the child server supports resources/list.', ['mcp', 'gateway', 'resources'], { availability: 'optional', requirements: ['configured external MCP server with resources capability'] }),
   execute('task_create', 22, 'Create a durable background task through the local shell task runtime. When the task belongs to a durable goal, pass goalId (or the current goalLease envelope) so terminal goals reject stale task creation before launch. Pass executable (or command), arguments, cwd, timeout_seconds, and workspaceId as needed.', ['task', 'runtime'], { supportsCancel: true }),
-  read('task_status', 22, 'Read durable managed task state by taskId.', ['task', 'runtime']),
+  read('task_status', 22, 'Read durable managed task state with bounded recent output by taskId; use task_result for the full captured result.', ['task', 'runtime']),
   execute('task_cancel', 22, 'Cancel a durable managed task by taskId using the same verified process-tree termination path as shell tasks.', ['task', 'runtime'], { supportsCancel: true }),
   read('task_result', 22, 'Read the current durable managed task result and captured output by taskId.', ['task', 'runtime']),
   read('task_list', 22, 'List durable managed tasks owned by the current client/session/workspace.', ['task', 'runtime']),

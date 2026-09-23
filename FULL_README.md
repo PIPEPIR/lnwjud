@@ -1423,7 +1423,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 177 | `mcp_health` | READ | default | operational | service_dispatch | Return external MCP connection health. |
 | 178 | `mcp_resources` | READ | default | dependency_gated | service_dispatch | List resources exposed by connected MCP servers when the child server supports resources/list. |
 | 179 | `task_create` | EXECUTE | default | operational | service_dispatch | Create a durable background task through the local shell task runtime. When the task belongs to a durable goal, pass goalId (or the current goalLease envelope) so terminal goals reject stale task creation before launch. Pass executable (or command), arguments, cwd, timeout_seconds, and workspaceId as needed. |
-| 180 | `task_status` | READ | default | operational | service_dispatch | Read durable managed task state by taskId. |
+| 180 | `task_status` | READ | default | operational | service_dispatch | Read durable managed task state with bounded recent output by taskId; use task_result for the full captured result. |
 | 181 | `task_cancel` | EXECUTE | default | operational | service_dispatch | Cancel a durable managed task by taskId using the same verified process-tree termination path as shell tasks. |
 | 182 | `task_result` | READ | default | operational | service_dispatch | Read the current durable managed task result and captured output by taskId. |
 | 183 | `task_list` | READ | default | operational | service_dispatch | List durable managed tasks owned by the current client/session/workspace. |
