@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { ipcChannels, type LnwjudApi, type ToolCatalogItem, type ToolCatalogSnapshot, type UserSettings } from '@lnwjud/ipc-contracts';
+import { EMPTY_REMOTE_MCP_STATUS, ipcChannels, type LnwjudApi, type ToolCatalogItem, type ToolCatalogSnapshot, type UserSettings } from '@lnwjud/ipc-contracts';
 
 const electron = vi.hoisted(() => ({
   exposed: undefined as LnwjudApi | undefined,
@@ -110,6 +110,23 @@ describe('preload Tool Catalog validation', () => {
     electron.invoke.mockResolvedValueOnce({ opened: true });
     await expect(electron.exposed!.openExternalSetupPage({ target: 'ngrok_authtoken' })).resolves.toEqual({ opened: true });
     expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.openExternalSetupPage, { target: 'ngrok_authtoken' });
+  });
+
+  it('routes Remote MCP transport selection through preload and preserves transport-specific status fields', async () => {
+    electron.invoke.mockResolvedValueOnce({
+      ...EMPTY_REMOTE_MCP_STATUS,
+      provider: 'cloudflare',
+      transport: 'cloudflare',
+      installed: true,
+      configuredGatewayUrl: 'http://127.0.0.1:18766',
+      configuredPublicOrigin: 'https://mcp.example.com',
+    });
+    await expect(electron.exposed!.setRemoteMcpTransport({ transport: 'cloudflare' })).resolves.toMatchObject({
+      provider: 'cloudflare',
+      transport: 'cloudflare',
+      configuredGatewayUrl: 'http://127.0.0.1:18766',
+    });
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.setRemoteMcpTransport, { transport: 'cloudflare' });
   });
 
   it('accepts the unclean desktop-session incident classification from IPC', async () => {

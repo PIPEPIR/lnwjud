@@ -338,6 +338,42 @@ describe('upgrade runtime', () => {
     expect(calls).toEqual([]);
   });
 
+  it('bounds task_status output polling while task_result remains the full-result path', async () => {
+    const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const longOutput = `prefix-${'x'.repeat(40_000)}-tail`;
+    const services = {
+      capabilities: {
+        async execute(tool: string, input: Record<string, unknown>): Promise<ReturnType<typeof ok>> {
+          calls.push({ tool, input });
+          return ok({ task_id: 'task-1', state: 'running', stdout: longOutput });
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const runtime = new UpgradeRuntimeService(services, actor);
+
+    const status = await runtime.execute('task_status', { workspaceId: 'ws-1', taskId: 'task-1' });
+    const result = await runtime.execute('task_result', { workspaceId: 'ws-1', taskId: 'task-1' });
+
+    expect(status).toMatchObject({ ok: true, value: { status_output_truncated: true } });
+    if (status.ok) {
+      const value = status.value as Record<string, unknown>;
+      expect(value.stdout).toHaveLength(32_768);
+      expect(value.stdout).toEqual(expect.stringMatching(/-tail$/));
+    }
+    expect(result).toMatchObject({ ok: true, value: { stdout: longOutput } });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      tool: 'shell',
+      input: { operation: 'status', task_id: 'task-1', tail_lines: 80, include_stdout: true, include_stderr: true },
+    });
+    expect(calls[1]).toMatchObject({
+      tool: 'shell',
+      input: { operation: 'result', task_id: 'task-1', include_stdout: true, include_stderr: true },
+    });
+    expect(calls[1]?.input).not.toHaveProperty('tail_lines');
+  });
+
   it('keeps Git worktree spawning path-scoped and dry-run first', async () => {
     const calls: unknown[] = [];
     const runtime = new UpgradeRuntimeService({
@@ -469,7 +505,7 @@ describe('upgrade runtime', () => {
     expect(calls).toEqual([
       { app: 'powerpoint', action: 'read', file_path: 'C:\\work\\deck.pptx' },
       { app: 'powerpoint', action: 'save_as', file_path: 'C:\\work\\deck.pptx', target_path: 'C:\\work\\copy.pptx', userConfirmed: true },
-      { app: 'outlook', action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 100 },
+      { app: 'outlook', action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 100, timeout_seconds: 60 },
     ]);
   });
 

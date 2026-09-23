@@ -722,7 +722,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   };
   const withNgrokInstallIfNeeded = async <T>(operation: () => Promise<T>): Promise<T> => {
     const status = await remoteMcpController.status();
-    return status.installed
+    return status.transport !== 'ngrok' || status.installed
       ? operation()
       : withInstallActivity('ngrok', 'Installing ngrok…', operation);
   };
@@ -1472,8 +1472,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     getRemoteMcpStatus: () => remoteMcpController.status(),
     installRemoteMcpProvider: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.installProvider()); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
     saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
-    setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] static domain ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'}`); return status; },
-    startRemoteMcp: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.start()); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
+    setRemoteMcpPublicOrigin: async (request) => { const status = await remoteMcpController.savePublicOrigin(request.publicOrigin); logHub.feed('mcp', 'info', `[REMOTE MCP] public origin ${status.configuredPublicOrigin === null ? 'cleared' : 'configured'} for ${status.transport}`); return status; },
+    setRemoteMcpTransport: async (request) => { const status = await remoteMcpController.setTransport(request.transport); logHub.feed('mcp', 'info', `[REMOTE MCP] transport selected: ${status.transport}`); return status; },
+    startRemoteMcp: async () => { const status = await withNgrokInstallIfNeeded(() => remoteMcpController.start()); logHub.feed('mcp', 'info', `[REMOTE MCP] ${status.transport} online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     resetRemoteMcpOAuth: async () => { const status = await remoteMcpController.resetOAuthTrust(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
     setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {

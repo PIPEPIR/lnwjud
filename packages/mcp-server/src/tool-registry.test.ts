@@ -422,6 +422,9 @@ describe('MCP tool registry', () => {
     const registry = new ToolRegistry({}, actor);
     const byName = new Map(registry.list().map((tool) => [tool.name, tool]));
     expect(byName.get('read_file')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    const searchText = byName.get('search_text');
+    expect(searchText?.inputSchema).toBeInstanceOf(z.ZodObject);
+    if (searchText?.inputSchema instanceof z.ZodObject) expect(searchText.inputSchema.parse({ query: 'failureLegacyBotName()' })).toMatchObject({ query: 'failureLegacyBotName()', regex: false });
     expect(byName.get('delete_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('git')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('write_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });

@@ -41,7 +41,7 @@ export interface WindowsNativeBackendOptions {
   readonly unrestricted?: boolean;
 }
 
-type NativePathField = 'file_path' | 'output_path' | 'target_path' | 'merge_paths';
+type NativePathField = 'file_path' | 'output_path' | 'target_path' | 'source_path' | 'image_path' | 'merge_paths' | 'attachments';
 
 const PATH_FIELDS: Readonly<Record<WindowsCapabilityName, readonly NativePathField[]>> = {
   accessibility: [],
@@ -54,7 +54,7 @@ const PATH_FIELDS: Readonly<Record<WindowsCapabilityName, readonly NativePathFie
   clipboard: [],
   audio: ['file_path', 'output_path'],
   screen_record: ['output_path'],
-  office: ['file_path', 'target_path', 'merge_paths'],
+  office: ['file_path', 'target_path', 'source_path', 'image_path', 'merge_paths', 'attachments'],
 };
 
 export class WindowsNativeCapabilityBackend implements CapabilityBackend {
@@ -77,6 +77,9 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
         ? input.operation
         : '';
     if (action === 'status') {
+      if (this.capability === 'office' && typeof input.app === 'string' && input.app.trim().length > 0) {
+        return this.bridge.execute({ capability: this.capability, input }, signal);
+      }
       if (this.bridge.status !== undefined) return this.bridge.status();
       // Older injected test/dev bridges do not expose a probe. Keep the
       // provider visible without pretending that a UI action was executed.
@@ -204,10 +207,10 @@ function requiresExplicitConfirmation(capability: WindowsCapabilityName, input: 
     case 'screen_record': return action !== 'status';
     case 'office': {
       const app = typeof input.app === 'string' ? input.app : '';
-      if (app === 'excel') return action !== 'read' && action !== 'sheets';
-      if (app === 'word') return action !== 'read_text';
-      if (app === 'powerpoint') return action !== 'read';
-      if (app === 'outlook') return action !== 'list_folders' && action !== 'list_messages';
+      if (app === 'excel') return !['read', 'sheets', 'list_sheets', 'inspect_workbook', 'used_range', 'read_range', 'read_values', 'read_formulas', 'workbook_properties', 'calculation_status', 'formula_errors', 'list_macros', 'search'].includes(action);
+      if (app === 'word') return !['read_text', 'inspect_document', 'read_range', 'get_structure', 'get_sections', 'get_paragraphs', 'get_headings', 'get_tables', 'get_bookmarks', 'get_hyperlinks', 'get_comments', 'get_revisions', 'search', 'document_properties', 'page_setup', 'protection_status', 'read_comments'].includes(action);
+      if (app === 'powerpoint') return !['read', 'inspect_presentation', 'list_slides', 'get_slide', 'get_slide_text', 'get_shapes', 'get_images', 'get_tables', 'get_charts', 'get_notes', 'get_layout', 'presentation_properties', 'slide_size', 'get_hyperlinks', 'get_transitions'].includes(action);
+      if (app === 'outlook') return !['list_folders', 'list_messages', 'get_message', 'get_headers', 'get_body', 'list_attachments', 'search', 'conversation', 'get_state', 'mailbox_status', 'list_calendars', 'get_events', 'search_events', 'get_event', 'availability', 'list_contacts', 'search_contacts', 'get_contact', 'list_task_folders', 'list_tasks', 'search_tasks', 'get_task'].includes(action);
       return true;
     }
     default: return false;

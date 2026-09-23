@@ -9,8 +9,9 @@ describe('SearchService', () => {
   it('resolves the workspace before delegating a bounded text search', async () => {
     const workspace: Workspace = { id: 'workspace-1', displayName: 'Fixture', rootPath: 'C:\\workspace', realRootPath: 'C:\\workspace', createdAt: new Date(0).toISOString() };
     let receivedRoot = '';
+    let receivedRegex: boolean | undefined;
     const adapter: SearchAdapter = {
-      async searchText(request) { receivedRoot = request.rootPath; return { ok: true, value: { matches: [], truncated: false } }; },
+      async searchText(request) { receivedRoot = request.rootPath; receivedRegex = request.regex; return { ok: true, value: { matches: [], truncated: false } }; },
       async searchFiles() { return { ok: true, value: { paths: [], truncated: false } }; },
     };
     const repository: WorkspaceRepository = {
@@ -23,11 +24,12 @@ describe('SearchService', () => {
     const result = await new SearchService(repository, adapter).searchText(
       { clientId: 'test', clientName: 'test' },
       workspace.id,
-      { query: 'needle', maxResults: 200 },
+      { query: 'needle', regex: true, maxResults: 200 },
     );
 
     expect(result).toEqual({ ok: true, value: { matches: [], truncated: false } });
     expect(receivedRoot).toBe(workspace.realRootPath);
+    expect(receivedRegex).toBe(true);
   });
 
   it('uses the parent directory as ripgrep cwd when text search path is a file', async () => {

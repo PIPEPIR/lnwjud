@@ -26,6 +26,8 @@ import { ContextEconomyRuntime } from './context-economy.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { DatabaseRuntimeService } from './database-runtime.js';
 import { DocumentRuntimeService } from './document-runtime.js';
+import { OfficeRuntimeService } from './office-runtime.js';
+import type { OfficeSemanticToolName } from './office-tool-contracts.js';
 import { LspRuntimeService } from './lsp-runtime.js';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { withCapabilityOwnerMetadata } from './request-scope.js';
@@ -40,6 +42,9 @@ import {
   upgradeToolOutputJsonSchema,
 } from './upgrade-tool-contracts.js';
 import { UpgradeRuntimeStateStore, type UpgradeRuntimeSessionState, type UpgradeRuntimeSharedState } from './upgrade-runtime-state-store.js';
+
+const MANAGED_TASK_STATUS_TAIL_LINES = 80;
+const MANAGED_TASK_STATUS_MAX_STREAM_CHARS = 32_768;
 
 interface RuntimeTask {
   readonly id: string;
@@ -195,6 +200,7 @@ export class UpgradeRuntimeService {
   private readonly database: DatabaseRuntimeService;
   private readonly lsp: LspRuntimeService;
   private readonly documents: DocumentRuntimeService;
+  private readonly office: OfficeRuntimeService;
   private readonly diagnostics: PlatformDiagnosticsProvider;
   private readonly stateStore: UpgradeRuntimeStateStore | undefined;
   private loaded = false;
@@ -221,6 +227,7 @@ export class UpgradeRuntimeService {
     this.database = new DatabaseRuntimeService(services, actor);
     this.lsp = new LspRuntimeService(services, actor);
     this.documents = new DocumentRuntimeService(services, actor);
+    this.office = new OfficeRuntimeService(services, actor);
     this.diagnostics = createPlatformDiagnosticsProvider(platform);
   }
 
@@ -496,10 +503,27 @@ export class UpgradeRuntimeService {
         return this.documents.inspectWorkbook(input, authorization);
       case 'docx_merge':
         return this.documents.docxMerge(input, signal, authorization);
+      case 'office_status':
+      case 'office_word':
+      case 'office_excel':
+      case 'office_powerpoint':
+      case 'office_outlook':
+      case 'office_calendar':
+      case 'office_contacts':
+      case 'office_tasks':
+      case 'office_onenote':
+      case 'office_onedrive':
+      case 'office_sharepoint':
+      case 'office_teams':
+      case 'office_access':
+      case 'office_visio':
+      case 'office_project':
+      case 'office_publisher':
+      case 'office_convert':
+      case 'office_batch':
+        return this.office.execute(name as OfficeSemanticToolName, input, signal, authorization);
       case 'office_ppt':
         return this.officePowerPoint(input, signal, authorization);
-      case 'office_outlook':
-        return this.officeOutlook(input, authorization);
       case 'handoff_context':
         return this.compoundContext(name, input);
       case 'benchmark_run':
@@ -939,14 +963,17 @@ export class UpgradeRuntimeService {
     const taskId = readString(input, 'taskId') ?? readString(input, 'task_id');
     if (taskId === undefined) return err(appError('INVALID_INPUT', `${name} requires taskId`));
     const operation = name === 'task_status' ? 'status' : name === 'task_result' ? 'result' : 'cancel';
-    return capabilities.execute('shell', withCapabilityOwnerMetadata({
+    const taskResult = await capabilities.execute('shell', withCapabilityOwnerMetadata({
       operation,
       task_id: taskId,
       include_stdout: true,
       include_stderr: true,
+      ...(name === 'task_status' ? { tail_lines: MANAGED_TASK_STATUS_TAIL_LINES } : {}),
       ...(workspaceId === undefined ? {} : { workspaceId }),
       ...(name === 'task_cancel' ? { userConfirmed: input.userConfirmed === true } : {}),
     }, this.actor), signal, authorization);
+    if (name !== 'task_status' || !taskResult.ok || !isRecord(taskResult.value)) return taskResult;
+    return ok(boundManagedTaskStatusOutput(taskResult.value));
   }
 
   private async agentDelegation(
@@ -2638,6 +2665,19 @@ function isSafeDiagnosticServiceName(value: string, platform: NodeJS.Platform): 
   return platform === 'win32'
     ? /^[A-Za-z0-9_.:@ -]+$/u.test(name)
     : /^[A-Za-z0-9_.:@-]+$/u.test(name);
+}
+
+function boundManagedTaskStatusOutput(value: Record<string, unknown>): Record<string, unknown> {
+  const bounded = { ...value };
+  let outputTruncated = false;
+  for (const stream of ['stdout', 'stderr'] as const) {
+    const text = value[stream];
+    if (typeof text !== 'string' || text.length <= MANAGED_TASK_STATUS_MAX_STREAM_CHARS) continue;
+    bounded[stream] = text.slice(-MANAGED_TASK_STATUS_MAX_STREAM_CHARS);
+    outputTruncated = true;
+  }
+  if (outputTruncated) bounded.status_output_truncated = true;
+  return bounded;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -5,7 +5,7 @@ import { IncrementalVerifier } from '../incremental-verifier.js';
 import { sessionTools } from './session-tools.js';
 import type { McpToolContext, McpToolDefinition } from './tool-types.js';
 
-const actor = { clientId: 'test-client', clientName: 'test' };
+const actor = { clientId: 'test-client', clientName: 'test', sessionId: 'test-session' };
 
 function findTool(context: McpToolContext, verifier: IncrementalVerifier, name: string): McpToolDefinition {
   const tool = sessionTools(context, verifier).find((candidate) => candidate.name === name);
@@ -38,14 +38,26 @@ describe('session tools', () => {
           },
         },
         capabilities: {
-          async execute(tool: string, request: { operation?: string }) {
+          async execute(tool: string, request: Record<string, unknown>) {
             expect(tool).toBe('shell');
-            expect(request.operation).toBe('list');
+            expect(request.workspaceId).toBe('workspace-1');
+            expect(request.metadata).toMatchObject({
+              'lnwjud.taskOwner.v1': { clientId: 'test-client', sessionId: 'test-session', workspaceId: 'workspace-1' },
+            });
+            if (request.operation === 'list') {
+              expect(request.limit).toBe(8);
+              return ok({
+                tasks: [
+                  { task_id: 'durable-123', state: 'completed', durable: true, started_at: '2026-08-22T01:00:00.000Z' },
+                  { task_id: 'ephemeral-1', state: 'running', durable: false },
+                ],
+              });
+            }
+            expect(request).toMatchObject({ operation: 'status', task_id: 'durable-123', tail_lines: 12 });
             return ok({
-              tasks: [
-                { task_id: 'durable-123', state: 'running', durable: true, started_at: '2026-08-22T01:00:00.000Z' },
-                { task_id: 'ephemeral-1', state: 'running', durable: false },
-              ],
+              task_id: 'durable-123', state: 'completed', durable: true,
+              started_at: '2026-08-22T01:00:00.000Z', finished_at: '2026-08-22T01:00:05.000Z', exit_code: 0,
+              stdout: `${'x'.repeat(1_400)}\nRESULT-42`,
             });
           },
         },
@@ -62,14 +74,18 @@ describe('session tools', () => {
     const value = response.value as Record<string, unknown>;
     expect(value.tracker_excerpt).toContain('RUN-SMOKE-42');
     expect(value.changed_files).toContain('packages/mcp-server/src/run-budget.ts');
-    expect(value.background_tasks).toEqual([expect.objectContaining({ task_id: 'durable-123', state: 'running' })]);
+    expect(value.background_tasks).toEqual([expect.objectContaining({ task_id: 'durable-123', state: 'completed', exit_code: 0, stdout_tail: expect.stringContaining('RESULT-42') })]);
+    expect(value.background_tasks).toEqual([expect.objectContaining({ stdout_tail: expect.stringContaining('task output truncated') })]);
     expect(value.prompt).toEqual(expect.stringContaining('Recovery state from lnwjud durable task state'));
     expect(value.recovery_state).toBe(value.prompt);
     expect(value.recovery_format).toBe('task_state');
     expect(value.persistent_instructions).toBe(false);
     expect(value.prompt).toEqual(expect.stringContaining('not persistent user or agent instructions'));
     expect(value.prompt).toEqual(expect.stringContaining('durable-123'));
-    expect(value.prompt).toEqual(expect.stringContaining('Recover durable jobs by task_id'));
+    expect(value.prompt).toEqual(expect.stringContaining('Recover live durable jobs by task_id'));
+    expect(value.prompt).toEqual(expect.stringContaining('do not rerun completed work'));
+    expect(value.prompt).toEqual(expect.stringContaining('RESULT-42'));
+    expect(value.recovery_receipt).toMatchObject({ mode: 'workspace_fallback', rerun_completed_work: false, task_receipts: [expect.objectContaining({ task_id: 'durable-123', state: 'completed' })] });
     expect(value.prompt).toEqual(expect.stringContaining('Do not redo completed phases'));
     expect(value.prompt).toEqual(expect.stringContaining('Never use browser/DOM automation'));
     expect(value.prompt).not.toEqual(expect.stringContaining('Before ending'));
@@ -144,6 +160,57 @@ describe('session tools', () => {
     expect(value.prompt).toEqual(expect.stringContaining('Capsule validation: task: focused tests passed'));
     expect(value.prompt).toEqual(expect.stringContaining('Capsule artifacts: path: capsule-artifact.txt'));
     expect(value.prompt).toEqual(expect.stringContaining('Never use browser/DOM automation'));
+  });
+
+  it('falls back to the latest terminal durable goal and returns its persisted receipt without rerunning work', async () => {
+    const listRequests: Array<Record<string, unknown>> = [];
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async listGoals(_actor: unknown, request: Record<string, unknown>) {
+            listRequests.push(request);
+            if (request.status === 'active') return ok({ goals: [] });
+            return ok({ goals: [{
+              goalId: 'goal-terminal', goalKey: 'release-fix', workspaceId: 'workspace-1', objective: 'Finish release fix', status: 'completed', revision: 4,
+              userIntentRevision: 0, currentPhase: 'completed', plan: { steps: [{ id: 'ship', title: 'Ship', status: 'completed', summary: 'Done' }] },
+              acceptanceCriteria: [], blockers: [], trackedTasks: [], nextAction: '', currentContextCapsuleId: undefined,
+              completedSteps: [], pendingSteps: [], activeTaskIds: [], lastCheckpoint: { revision: 4, summary: 'Everything finished.', evidence: [{ kind: 'hash', value: 'deadbeef' }] },
+              updatedAt: '2026-09-23T03:13:23.070Z', terminalSummary: 'Release fix completed and verified.',
+              terminalEvidence: [{ kind: 'task', value: 'CI 35813031616 succeeded' }], terminalAt: '2026-09-23T03:13:23.070Z',
+            }] });
+          },
+          async listContextCapsules() { return ok([]); },
+        },
+        git: {
+          async status() { return ok({ entries: [] }); },
+          async diff() { return ok({ patch: '', truncated: false }); },
+        },
+        capabilities: { async execute() { return ok({ tasks: [] }); } },
+      },
+    } as unknown as McpToolContext;
+
+    const response = await findTool(context, new IncrementalVerifier(), 'session_handoff').execute(
+      { workspaceId: 'workspace-1' },
+      new AbortController().signal,
+    );
+
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    const value = response.value as Record<string, unknown>;
+    expect(listRequests).toEqual([
+      { workspaceId: 'workspace-1', status: 'active', limit: 5 },
+      { workspaceId: 'workspace-1', limit: 1 },
+    ]);
+    expect(value.goal_state).toMatchObject({ goalId: 'goal-terminal', status: 'completed', terminalSummary: 'Release fix completed and verified.' });
+    expect(value.recovery_receipt).toMatchObject({
+      mode: 'report_terminal_goal', rerun_completed_work: false, goal_id: 'goal-terminal', goal_status: 'completed', terminal_summary: 'Release fix completed and verified.',
+    });
+    expect(value.prompt).toEqual(expect.stringContaining('Goal status: completed'));
+    expect(value.prompt).toEqual(expect.stringContaining('Terminal summary: Release fix completed and verified.'));
+    expect(value.prompt).toEqual(expect.stringContaining('Terminal evidence: task: CI 35813031616 succeeded'));
+    expect(value.prompt).toEqual(expect.stringContaining('do not rerun completed work'));
   });
 
   it('returns verify_incremental cache hit for unchanged diff and miss after the diff changes', async () => {

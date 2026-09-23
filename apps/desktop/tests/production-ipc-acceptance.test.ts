@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APP_VERSION, ipcChannels, type TunnelStatus } from '@lnwjud/ipc-contracts';
+import { APP_VERSION, EMPTY_REMOTE_MCP_STATUS, ipcChannels, type TunnelStatus } from '@lnwjud/ipc-contracts';
 
 const electronHarness = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, payload?: unknown) => Promise<unknown>>(),
@@ -105,6 +105,18 @@ describe('production desktop IPC acceptance', () => {
     expect(services.startTunnel).toHaveBeenCalledOnce();
     expect(services.getTunnelStatus).toHaveBeenCalledOnce();
     expect(services.stopTunnel).toHaveBeenCalledOnce();
+  });
+
+  it('routes and validates Remote MCP transport selection through production IPC', async () => {
+    const services = desktopServices();
+    registerIpcHandlers(() => ({}) as never, services);
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+    const handler = requiredHandler(ipcChannels.setRemoteMcpTransport);
+
+    await expect(handler(trusted, { transport: 'cloudflare' })).resolves.toMatchObject({ transport: 'cloudflare', provider: 'cloudflare' });
+    expect(services.setRemoteMcpTransport).toHaveBeenCalledWith({ transport: 'cloudflare' });
+    await expect(handler(trusted, { transport: 'invalid' })).rejects.toThrow(/transport/);
+    await expect(handler({ senderFrame: { url: 'https://example.invalid/' } }, { transport: 'local' })).rejects.toThrow('IPC sender rejected');
   });
 
   it('routes and validates AI delete and STDIO security policy changes', async () => {
@@ -293,6 +305,13 @@ function desktopServices(): DesktopIpcServices {
       return tunnelStatus;
     }),
     getTunnelStatus: vi.fn(async () => tunnelStatus),
+    setRemoteMcpTransport: vi.fn(async (request) => ({
+      ...EMPTY_REMOTE_MCP_STATUS,
+      provider: request.transport,
+      transport: request.transport,
+      installed: request.transport !== 'ngrok',
+      oauthProtected: request.transport !== 'local',
+    })),
     setTunnelClientPath: vi.fn(async (request) => ({ clientPath: request.clientPath })),
     setLocale: vi.fn(async (request) => ({ locale: request.locale })),
     launchManagedBrowser: vi.fn(async () => ({ ready: true, port: 9222, launched: false })),

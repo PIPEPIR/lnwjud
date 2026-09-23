@@ -8,6 +8,44 @@ function Get-Field {
   return $property.Value
 }
 
+function ConvertTo-ExcelRangeValues {
+  param([object]$Values, [object]$Range)
+  if ($null -eq $Values) { return $null }
+  if (-not ($Values -is [System.Array])) { return $Values }
+
+  $rowCount = [int]$Range.Rows.Count
+  $columnCount = [int]$Range.Columns.Count
+  $top = @($Values)
+  if ($top.Count -eq 0) { throw 'values must not be empty' }
+
+  $nested = $top[0] -is [System.Array]
+  if ($nested) {
+    if ($top.Count -ne $rowCount) { throw "values row count $($top.Count) does not match target range row count $rowCount" }
+    $matrix = New-Object 'object[,]' $rowCount, $columnCount
+    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex += 1) {
+      $cells = @($top[$rowIndex])
+      if ($cells.Count -ne $columnCount) { throw "values column count $($cells.Count) does not match target range column count $columnCount at row $($rowIndex + 1)" }
+      for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex += 1) {
+        $matrix[$rowIndex, $columnIndex] = $cells[$columnIndex]
+      }
+    }
+    return ,$matrix
+  }
+
+  if ($rowCount -eq 1 -and $top.Count -eq $columnCount) {
+    $matrix = New-Object 'object[,]' 1, $columnCount
+    for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex += 1) { $matrix[0, $columnIndex] = $top[$columnIndex] }
+    return ,$matrix
+  }
+  if ($columnCount -eq 1 -and $top.Count -eq $rowCount) {
+    $matrix = New-Object 'object[,]' $rowCount, 1
+    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex += 1) { $matrix[$rowIndex, 0] = $top[$rowIndex] }
+    return ,$matrix
+  }
+  if ($top.Count -eq 1) { return $top[0] }
+  throw ("values shape does not match target range {0}x{1}" -f $rowCount, $columnCount)
+}
+
 function Success {
   param([object]$Value)
   return [ordered]@{ ok = $true; value = $Value }
@@ -767,8 +805,59 @@ function Release-ComObject {
   } catch { }
 }
 
+function Resolve-OutlookFolder {
+  param([object]$Namespace, [string]$FolderPath, [int]$DefaultFolderKind)
+  if ([string]::IsNullOrWhiteSpace($FolderPath)) { return $Namespace.GetDefaultFolder($DefaultFolderKind) }
+  $segments = @($FolderPath.Trim('\').Split('\') | Where-Object { $_.Length -gt 0 })
+  $folder = $null
+  if ($segments.Count -ge 2) {
+    try {
+      $folder = $Namespace.Folders.Item([string]$segments[0])
+      for ($index = 1; $index -lt $segments.Count; $index += 1) { $folder = $folder.Folders.Item([string]$segments[$index]) }
+    } catch { $folder = $null }
+  }
+  if ($null -eq $folder -and $segments.Count -eq 1) {
+    foreach ($store in $Namespace.Folders) {
+      try { $folder = $store.Folders.Item([string]$segments[0]); if ($null -ne $folder) { break } } catch { }
+    }
+  }
+  if ($null -eq $folder) { throw "Outlook folder was not found: $FolderPath" }
+  return $folder
+}
+
+function Add-OutlookRecipients {
+  param([object]$Mail, [object]$Values, [int]$Type)
+  if ($null -eq $Values) { return }
+  foreach ($address in @($Values)) {
+    $text = [string]$address
+    if ($text.Length -eq 0) { continue }
+    $recipient = $Mail.Recipients.Add($text)
+    $recipient.Type = $Type
+    [void]$recipient.Resolve()
+  }
+}
+
 function Invoke-OfficeAction {
   param([string]$App, [string]$Action, [object]$Parameters)
+  if ($Action -eq 'status') {
+    $progIds = @{
+      excel = 'Excel.Application'; word = 'Word.Application'; powerpoint = 'PowerPoint.Application'; outlook = 'Outlook.Application'
+      access = 'Access.Application'; visio = 'Visio.Application'; project = 'MSProject.Application'; publisher = 'Publisher.Application'
+    }
+    $progId = [string]$progIds[$App]
+    if ($progId.Length -eq 0) { throw "Unsupported office app: $App" }
+    $application = $null
+    try {
+      $application = New-Object -ComObject $progId
+      $version = try { [string]$application.Version } catch { '' }
+      return [ordered]@{ app = $App; action = 'status'; available = $true; ready = $true; provider = 'windows-office-com'; version = $version }
+    } finally {
+      if ($null -ne $application) {
+        if ($App -ne 'outlook') { try { $application.Quit() } catch { } }
+        Release-ComObject $application
+      }
+    }
+  }
   $filePath = [string](Get-Field $Parameters 'file_path')
   if ($App -eq 'excel') {
     $excel = $null
@@ -776,7 +865,11 @@ function Invoke-OfficeAction {
       $excel = New-Object -ComObject Excel.Application
       $excel.Visible = $false
       $excel.DisplayAlerts = $false
-      switch ($Action) {
+      $excelAction = $Action
+      if ($excelAction -in @('read_range', 'read_values')) { $excelAction = 'read' }
+      elseif ($excelAction -eq 'write_values') { $excelAction = 'write' }
+      elseif ($excelAction -eq 'list_sheets') { $excelAction = 'sheets' }
+      switch ($excelAction) {
         'read' {
           if ($filePath.Length -eq 0) { throw 'file_path is required' }
           if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
@@ -799,7 +892,9 @@ function Invoke-OfficeAction {
           try {
             $sheetName = Get-Field $Parameters 'sheet'
             $worksheet = if ($null -eq $sheetName -or $sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
-            $null = $worksheet.Range($range).Value2 = $values
+            $target = $worksheet.Range($range)
+            $excelValues = ConvertTo-ExcelRangeValues $values $target
+            $null = $target.Value2 = $excelValues
             $workbook.Save()
             return [ordered]@{ app = 'excel'; action = 'write'; file_path = $filePath; range = $range; saved = $true }
           } finally { $workbook.Close($true) }
@@ -832,6 +927,474 @@ function Invoke-OfficeAction {
             return [ordered]@{ app = 'excel'; action = 'sheets'; file_path = $filePath; sheets = $sheets }
           } finally { $workbook.Close($false) }
         }
+        'create' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $workbook = $excel.Workbooks.Add()
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet')
+            if ($sheetName.Length -gt 0) { $workbook.Worksheets.Item(1).Name = $sheetName }
+            $workbook.SaveAs($filePath)
+            return [ordered]@{ app = 'excel'; action = 'create'; file_path = $filePath; saved = $true }
+          } finally { $workbook.Close($false) }
+        }
+        'inspect_workbook' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $sheets = @()
+            foreach ($worksheet in $workbook.Worksheets) {
+              $used = $worksheet.UsedRange
+              $sheets += [ordered]@{ name = [string]$worksheet.Name; used_range = [string]$used.Address($false, $false); rows = [int]$used.Rows.Count; columns = [int]$used.Columns.Count }
+            }
+            return [ordered]@{ app = 'excel'; action = 'inspect_workbook'; file_path = $filePath; sheet_count = [int]$workbook.Worksheets.Count; sheets = $sheets; read_only = [bool]$workbook.ReadOnly }
+          } finally { $workbook.Close($false) }
+        }
+        'used_range' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet')
+            $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $used = $worksheet.UsedRange
+            return [ordered]@{ app = 'excel'; action = 'used_range'; sheet = [string]$worksheet.Name; range = [string]$used.Address($false, $false); rows = [int]$used.Rows.Count; columns = [int]$used.Columns.Count }
+          } finally { $workbook.Close($false) }
+        }
+        'read_formulas' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet')
+            $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            return [ordered]@{ app = 'excel'; action = 'read_formulas'; sheet = [string]$worksheet.Name; range = $range; formulas = @($worksheet.Range($range).Formula) }
+          } finally { $workbook.Close($false) }
+        }
+        'write_formulas' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $formulas = Get-Field $Parameters 'formulas'; if ($null -eq $formulas) { throw 'formulas is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet')
+            $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $target = $worksheet.Range($range)
+            $excelFormulas = ConvertTo-ExcelRangeValues $formulas $target
+            $target.Formula = $excelFormulas
+            $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = 'write_formulas'; sheet = [string]$worksheet.Name; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'add_sheet' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $worksheet = $workbook.Worksheets.Add()
+            $name = [string](Get-Field $Parameters 'name'); if ($name.Length -gt 0) { $worksheet.Name = $name }
+            $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = 'add_sheet'; sheet = [string]$worksheet.Name; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'delete_sheet' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $sheetName = [string](Get-Field $Parameters 'sheet'); if ($sheetName.Length -eq 0) { throw 'sheet is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $workbook.Worksheets.Item($sheetName).Delete(); $workbook.Save(); return [ordered]@{ app = 'excel'; action = 'delete_sheet'; sheet = $sheetName; saved = $true } }
+          finally { $workbook.Close($true) }
+        }
+        'rename_sheet' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $sheetName = [string](Get-Field $Parameters 'sheet'); $newName = [string](Get-Field $Parameters 'new_name')
+          if ($sheetName.Length -eq 0 -or $newName.Length -eq 0) { throw 'sheet and new_name are required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $workbook.Worksheets.Item($sheetName).Name = $newName; $workbook.Save(); return [ordered]@{ app = 'excel'; action = 'rename_sheet'; sheet = $newName; saved = $true } }
+          finally { $workbook.Close($true) }
+        }
+        'autofit' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $range = [string](Get-Field $Parameters 'range')
+            $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            if ($range.Length -eq 0) { $worksheet.UsedRange.Columns.AutoFit() | Out-Null; $worksheet.UsedRange.Rows.AutoFit() | Out-Null } else { $worksheet.Range($range).Columns.AutoFit() | Out-Null; $worksheet.Range($range).Rows.AutoFit() | Out-Null }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = 'autofit'; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'set_number_format' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $parametersValue = Get-Field $Parameters 'parameters'; $format = [string](Get-Field $parametersValue 'format')
+          if ($format.Length -eq 0) { throw 'parameters.format is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $worksheet.Range($range).NumberFormat = $format; $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = 'set_number_format'; range = $range; format = $format; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'recalculate' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $excel.CalculateFullRebuild(); $workbook.Save(); return [ordered]@{ app = 'excel'; action = 'recalculate'; saved = $true } }
+          finally { $workbook.Close($true) }
+        }
+        'save' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $workbook.Save(); return [ordered]@{ app = 'excel'; action = 'save'; file_path = $filePath; saved = $true } }
+          finally { $workbook.Close($true) }
+        }
+        'export_pdf' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try { $workbook.ExportAsFixedFormat(0, $target); return [ordered]@{ app = 'excel'; action = 'export_pdf'; source = $filePath; target = $target; exported = $true } }
+          finally { $workbook.Close($false) }
+        }
+        'export_csv' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $workbook.SaveAs($target, 6); return [ordered]@{ app = 'excel'; action = 'export_csv'; source = $filePath; target = $target; exported = $true } }
+          finally { $workbook.Close($false) }
+        }
+        'export_tsv' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $workbook.SaveAs($target, 20); return [ordered]@{ app = 'excel'; action = 'export_tsv'; source = $filePath; target = $target; exported = $true } }
+          finally { $workbook.Close($false) }
+        }
+        'workbook_properties' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try { return [ordered]@{ app = 'excel'; action = 'workbook_properties'; file_path = $filePath; name = [string]$workbook.Name; sheet_count = [int]$workbook.Worksheets.Count; read_only = [bool]$workbook.ReadOnly } }
+          finally { $workbook.Close($false) }
+        }
+        'calculation_status' {
+          return [ordered]@{ app = 'excel'; action = 'calculation_status'; calculation_state = [int]$excel.CalculationState; calculation_mode = [int]$excel.Calculation }
+        }
+        { $_ -in @('read_number_formats', 'read_styles') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $target = $worksheet.Range($range)
+            if ($Action -eq 'read_number_formats') { return [ordered]@{ app = 'excel'; action = $Action; sheet = [string]$worksheet.Name; range = $range; number_formats = @($target.NumberFormat) } }
+            return [ordered]@{ app = 'excel'; action = $Action; sheet = [string]$worksheet.Name; range = $range; font = [ordered]@{ name = [string]$target.Font.Name; size = [double]$target.Font.Size; bold = [int]$target.Font.Bold; italic = [int]$target.Font.Italic }; fill_color = [int64]$target.Interior.Color; horizontal_alignment = [int]$target.HorizontalAlignment; vertical_alignment = [int]$target.VerticalAlignment }
+          } finally { $workbook.Close($false) }
+        }
+        'read_tables' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $tables = @()
+            foreach ($worksheet in $workbook.Worksheets) {
+              foreach ($table in $worksheet.ListObjects) { $tables += [ordered]@{ sheet = [string]$worksheet.Name; name = [string]$table.Name; range = [string]$table.Range.Address($false,$false); rows = [int]$table.Range.Rows.Count; columns = [int]$table.Range.Columns.Count; style = [string]$table.TableStyle } }
+            }
+            return [ordered]@{ app = 'excel'; action = $Action; tables = $tables }
+          } finally { $workbook.Close($false) }
+        }
+        'read_charts' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $charts = @()
+            foreach ($worksheet in $workbook.Worksheets) {
+              foreach ($chartObject in $worksheet.ChartObjects()) { $charts += [ordered]@{ sheet = [string]$worksheet.Name; name = [string]$chartObject.Name; type = [int]$chartObject.Chart.ChartType; left = [double]$chartObject.Left; top = [double]$chartObject.Top; width = [double]$chartObject.Width; height = [double]$chartObject.Height } }
+            }
+            return [ordered]@{ app = 'excel'; action = $Action; charts = $charts }
+          } finally { $workbook.Close($false) }
+        }
+        'read_pivots' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $pivots = @()
+            foreach ($worksheet in $workbook.Worksheets) { foreach ($pivot in $worksheet.PivotTables()) { $pivots += [ordered]@{ sheet = [string]$worksheet.Name; name = [string]$pivot.Name; range = [string]$pivot.TableRange2.Address($false,$false) } } }
+            return [ordered]@{ app = 'excel'; action = $Action; pivots = $pivots }
+          } finally { $workbook.Close($false) }
+        }
+        'search' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $query = [string](Get-Field $Parameters 'name'); if ($query.Length -eq 0) { $query = [string](Get-Field (Get-Field $Parameters 'parameters') 'query') }; if ($query.Length -eq 0) { throw 'name or parameters.query is required' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $hits = @()
+            foreach ($worksheet in $workbook.Worksheets) {
+              $range = $worksheet.UsedRange
+              foreach ($cell in $range.Cells) {
+                if ($hits.Count -ge 500) { break }
+                $value = [string]$cell.Text
+                if ($value.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += [ordered]@{ sheet = [string]$worksheet.Name; address = [string]$cell.Address($false,$false); value = $value } }
+              }
+              if ($hits.Count -ge 500) { break }
+            }
+            return [ordered]@{ app = 'excel'; action = $Action; query = $query; hits = $hits; truncated = ($hits.Count -ge 500) }
+          } finally { $workbook.Close($false) }
+        }
+        { $_ -in @('fill_range', 'clear_contents', 'clear_formats', 'merge_cells', 'unmerge_cells') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $target = $worksheet.Range($range)
+            if ($Action -eq 'fill_range') {
+              $fillValues = Get-Field $Parameters 'values'
+              if ($null -eq $fillValues) { throw 'values is required' }
+              $target.Value2 = ConvertTo-ExcelRangeValues $fillValues $target
+            }
+            elseif ($Action -eq 'clear_contents') { $target.ClearContents() | Out-Null }
+            elseif ($Action -eq 'clear_formats') { $target.ClearFormats() | Out-Null }
+            elseif ($Action -eq 'merge_cells') { $target.Merge() }
+            else { $target.UnMerge() }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'copy_range' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); $options = Get-Field $Parameters 'parameters'; $destination = [string](Get-Field $options 'destination')
+          if ($range.Length -eq 0 -or $destination.Length -eq 0) { throw 'range and parameters.destination are required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $worksheet.Range($range).Copy($worksheet.Range($destination)); $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = $Action; source = $range; destination = $destination; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('insert_rows', 'delete_rows', 'insert_columns', 'delete_columns') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $target = $worksheet.Range($range)
+            if ($Action -eq 'insert_rows') { $target.EntireRow.Insert() | Out-Null }
+            elseif ($Action -eq 'delete_rows') { $target.EntireRow.Delete() | Out-Null }
+            elseif ($Action -eq 'insert_columns') { $target.EntireColumn.Insert() | Out-Null }
+            else { $target.EntireColumn.Delete() | Out-Null }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('set_row_height', 'set_column_width', 'set_font', 'set_fill', 'set_alignment') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }; $options = Get-Field $Parameters 'parameters'
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $target = $worksheet.Range($range)
+            if ($Action -eq 'set_row_height') { $target.RowHeight = [double](Get-Field $options 'height') }
+            elseif ($Action -eq 'set_column_width') { $target.ColumnWidth = [double](Get-Field $options 'width') }
+            elseif ($Action -eq 'set_font') {
+              $name = Get-Field $options 'name'; if ($null -ne $name) { $target.Font.Name = [string]$name }
+              $size = Get-Field $options 'size'; if ($null -ne $size) { $target.Font.Size = [double]$size }
+              $bold = Get-Field $options 'bold'; if ($null -ne $bold) { $target.Font.Bold = [bool]$bold }
+              $italic = Get-Field $options 'italic'; if ($null -ne $italic) { $target.Font.Italic = [bool]$italic }
+            }
+            elseif ($Action -eq 'set_fill') { $target.Interior.Color = [int64](Get-Field $options 'color') }
+            else {
+              $horizontal = Get-Field $options 'horizontal'; if ($null -ne $horizontal) { $target.HorizontalAlignment = [int]$horizontal }
+              $vertical = Get-Field $options 'vertical'; if ($null -ne $vertical) { $target.VerticalAlignment = [int]$vertical }
+              $wrap = Get-Field $options 'wrap_text'; if ($null -ne $wrap) { $target.WrapText = [bool]$wrap }
+            }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('create_table', 'resize_table', 'style_table') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $options = Get-Field $Parameters 'parameters'; $name = [string](Get-Field $Parameters 'name')
+            if ($Action -eq 'create_table') {
+              $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+              $table = $worksheet.ListObjects.Add(1, $worksheet.Range($range), $null, 1)
+              if ($name.Length -gt 0) { $table.Name = $name }
+            } else {
+              if ($name.Length -eq 0) { throw 'name is required' }
+              $table = $worksheet.ListObjects.Item($name)
+              if ($Action -eq 'resize_table') { $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }; $table.Resize($worksheet.Range($range)) }
+            }
+            $style = [string](Get-Field $options 'style'); if ($style.Length -gt 0) { $table.TableStyle = $style }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; name = [string]$table.Name; range = [string]$table.Range.Address($false,$false); saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('sort', 'filter', 'clear_filter') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0 -and $Action -ne 'clear_filter') { throw 'range is required' }
+          $options = Get-Field $Parameters 'parameters'
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            if ($Action -eq 'clear_filter') { if ($worksheet.AutoFilterMode) { $worksheet.AutoFilterMode = $false } }
+            elseif ($Action -eq 'filter') {
+              $field = [int](Get-Field $options 'field'); if ($field -le 0) { $field = 1 }
+              $criteria = Get-Field $options 'criteria'; if ($null -eq $criteria) { throw 'parameters.criteria is required' }
+              $worksheet.Range($range).AutoFilter($field, $criteria) | Out-Null
+            } else {
+              $key = [string](Get-Field $options 'key_range'); if ($key.Length -eq 0) { $key = $range }
+              $order = [int](Get-Field $options 'order'); if ($order -ne 2) { $order = 1 }
+              $worksheet.Range($range).Sort($worksheet.Range($key), $order) | Out-Null
+            }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'freeze_panes' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $rows = [int](Get-Field $options 'rows'); $columns = [int](Get-Field $options 'columns')
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $worksheet.Activate()
+            $excel.ActiveWindow.FreezePanes = $false; $excel.ActiveWindow.SplitRow = [Math]::Max(0,$rows); $excel.ActiveWindow.SplitColumn = [Math]::Max(0,$columns); $excel.ActiveWindow.FreezePanes = ($rows -gt 0 -or $columns -gt 0)
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; rows = $rows; columns = $columns; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('set_data_validation', 'delete_data_validation') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }; $options = Get-Field $Parameters 'parameters'
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $target = $worksheet.Range($range)
+            $target.Validation.Delete()
+            if ($Action -eq 'set_data_validation') {
+              $kind = [string](Get-Field $options 'type'); $formula = [string](Get-Field $options 'formula1'); if ($formula.Length -eq 0) { throw 'parameters.formula1 is required' }
+              $formula2 = [string](Get-Field $options 'formula2')
+              $validationType = if ($kind -eq 'whole') { 1 } elseif ($kind -eq 'decimal') { 2 } else { 3 }
+              $operatorRaw = Get-Field $options 'operator'
+              $operator = if ($formula2.Length -gt 0) { 1 } else { 3 }
+              if ($null -ne $operatorRaw) {
+                if ($operatorRaw -is [int] -or $operatorRaw -is [long] -or $operatorRaw -is [double]) { $operator = [int]$operatorRaw }
+                else {
+                  switch (([string]$operatorRaw).ToLowerInvariant()) {
+                    'between' { $operator = 1 }
+                    'not_between' { $operator = 2 }
+                    'equal' { $operator = 3 }
+                    'not_equal' { $operator = 4 }
+                    'greater' { $operator = 5 }
+                    'less' { $operator = 6 }
+                    'greater_or_equal' { $operator = 7 }
+                    'less_or_equal' { $operator = 8 }
+                    default { throw 'parameters.operator is invalid' }
+                  }
+                }
+              }
+              if ($validationType -eq 3) { $target.Validation.Add($validationType, 1, 1, $formula) }
+              elseif ($formula2.Length -gt 0) { $target.Validation.Add($validationType, 1, $operator, $formula, $formula2) }
+              else { $target.Validation.Add($validationType, 1, $operator, $formula) }
+            }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'add_comment' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }; $text = [string](Get-Field (Get-Field $Parameters 'parameters') 'text')
+          $workbook = $excel.Workbooks.Open($filePath)
+          try { $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $cell = $worksheet.Range($range); if ($null -ne $cell.Comment) { $cell.Comment.Delete() }; [void]$cell.AddComment($text); $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; range = $range; saved = $true } }
+          finally { $workbook.Close($true) }
+        }
+        'insert_image' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $imagePath = [string](Get-Field $Parameters 'image_path'); if ($imagePath.Length -eq 0 -or -not (Test-Path $imagePath -PathType Leaf)) { throw 'image_path is required and must exist' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { $range = 'A1' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }; $anchor = $worksheet.Range($range)
+            $shape = $worksheet.Shapes.AddPicture($imagePath, $false, $true, [double]$anchor.Left, [double]$anchor.Top, -1, -1)
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; shape = [string]$shape.Name; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('create_chart', 'update_chart', 'delete_chart') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $name = [string](Get-Field $Parameters 'name')
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = [string](Get-Field $Parameters 'sheet'); $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            if ($Action -eq 'create_chart') {
+              $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+              $left = [double](Get-Field $options 'left'); if ($left -eq 0) { $left = 320 }; $top = [double](Get-Field $options 'top'); if ($top -eq 0) { $top = 20 }
+              $width = [double](Get-Field $options 'width'); if ($width -le 0) { $width = 480 }; $height = [double](Get-Field $options 'height'); if ($height -le 0) { $height = 280 }
+              $chartObject = $worksheet.ChartObjects().Add($left,$top,$width,$height); if ($name.Length -gt 0) { $chartObject.Name = $name }
+              $chartObject.Chart.SetSourceData($worksheet.Range($range))
+              $chartType = Get-Field $options 'chart_type'; if ($null -ne $chartType) { $chartObject.Chart.ChartType = [int]$chartType }
+            } else {
+              if ($name.Length -eq 0) { throw 'name is required' }
+              $chartObject = $worksheet.ChartObjects($name)
+              if ($Action -eq 'delete_chart') { $chartObject.Delete(); $chartObject = $null }
+              else {
+                $range = [string](Get-Field $Parameters 'range'); if ($range.Length -gt 0) { $chartObject.Chart.SetSourceData($worksheet.Range($range)) }
+                $chartType = Get-Field $options 'chart_type'; if ($null -ne $chartType) { $chartObject.Chart.ChartType = [int]$chartType }
+              }
+            }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; name = $name; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        { $_ -in @('create_pivot', 'refresh_pivot', 'update_pivot') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $name = [string](Get-Field $Parameters 'name')
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            if ($Action -eq 'create_pivot') {
+              $sheetName = [string](Get-Field $Parameters 'sheet'); $sourceSheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+              $sourceAddress = [string](Get-Field $Parameters 'range'); if ($sourceAddress.Length -eq 0) { throw 'range is required' }
+              $targetSheetName = [string](Get-Field $options 'target_sheet'); $targetSheet = if ($targetSheetName.Length -eq 0) { $sourceSheet } else { $workbook.Worksheets.Item($targetSheetName) }
+              $destination = [string](Get-Field $options 'destination'); if ($destination.Length -eq 0) { $destination = 'A1' }
+              if ($name.Length -eq 0) { $name = 'Pivot_' + [Guid]::NewGuid().ToString('N').Substring(0,8) }
+              $sourceRange = $sourceSheet.Range($sourceAddress)
+              # Excel documents recommend a workbook/worksheet/range string here; passing a Range
+              # object can fail unpredictably across Office builds and leave a PivotTable without
+              # usable PivotFields. External R1C1 keeps the cache source unambiguous.
+              $sourceData = [string]$sourceRange.Address($true, $true, -4150, $true)
+              $cache = $workbook.PivotCaches().Create(1, $sourceData)
+              $pivot = $cache.CreatePivotTable($targetSheet.Range($destination), $name)
+              foreach ($fieldName in @(Get-Field $options 'row_fields')) {
+                if ([string]$fieldName -eq '') { continue }
+                $field = $pivot.PivotFields([string]$fieldName); $field.Orientation = 1; $field.Position = $pivot.RowFields().Count
+              }
+              foreach ($fieldName in @(Get-Field $options 'column_fields')) {
+                if ([string]$fieldName -eq '') { continue }
+                $field = $pivot.PivotFields([string]$fieldName); $field.Orientation = 2; $field.Position = $pivot.ColumnFields().Count
+              }
+              foreach ($fieldName in @(Get-Field $options 'data_fields')) {
+                if ([string]$fieldName -eq '') { continue }
+                [void]$pivot.AddDataField($pivot.PivotFields([string]$fieldName), ('Sum of ' + [string]$fieldName), -4157)
+              }
+            } else {
+              if ($name.Length -eq 0) { throw 'name is required' }
+              $pivot = $null
+              foreach ($worksheet in $workbook.Worksheets) {
+                try { $pivot = $worksheet.PivotTables($name); if ($null -ne $pivot) { break } } catch { }
+              }
+              if ($null -eq $pivot) { throw "Pivot table was not found: $name" }
+              $pivot.RefreshTable() | Out-Null
+            }
+            $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = $Action; name = [string]$pivot.Name; range = [string]$pivot.TableRange2.Address($false,$false); saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'formula_errors' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath, 0, $true)
+          try {
+            $errors = @()
+            foreach ($worksheet in $workbook.Worksheets) {
+              foreach ($cell in $worksheet.UsedRange.Cells) {
+                if ($errors.Count -ge 500) { break }
+                $text = [string]$cell.Text
+                if ($text -match '^#(NULL!|DIV/0!|VALUE!|REF!|NAME\?|NUM!|N/A|GETTING_DATA)') { $errors += [ordered]@{ sheet = [string]$worksheet.Name; address = [string]$cell.Address($false,$false); value = $text; formula = [string]$cell.Formula } }
+              }
+              if ($errors.Count -ge 500) { break }
+            }
+            return [ordered]@{ app = 'excel'; action = $Action; errors = $errors; truncated = ($errors.Count -ge 500) }
+          } finally { $workbook.Close($false) }
+        }
+        { $_ -in @('protect', 'unprotect') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $sheetName = [string](Get-Field $Parameters 'sheet'); $password = [string](Get-Field $Parameters 'password')
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $worksheet = if ($sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            if ($Action -eq 'protect') { $worksheet.Protect($password) } else { $worksheet.Unprotect($password) }
+            $workbook.Save(); return [ordered]@{ app = 'excel'; action = $Action; sheet = [string]$worksheet.Name; protected = [bool]$worksheet.ProtectContents; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
         default { throw "Unsupported excel action: $Action" }
       }
     } finally {
@@ -843,7 +1406,10 @@ function Invoke-OfficeAction {
     try {
       $word = New-Object -ComObject Word.Application
       $word.Visible = $false
-      switch ($Action) {
+      $word.DisplayAlerts = 0
+      $wordAction = $Action
+      if ($wordAction -eq 'replace_text') { $wordAction = 'replace' }
+      switch ($wordAction) {
         'read_text' {
           if ($filePath.Length -eq 0) { throw 'file_path is required' }
           if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
@@ -894,6 +1460,346 @@ function Invoke-OfficeAction {
             return [ordered]@{ app = 'word'; action = 'merge'; source = $filePath; merged = @($mergePaths); target = $target; saved = $true }
           } finally { $document.Close($false) }
         }
+        'create' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $document = $word.Documents.Add()
+          try {
+            $text = [string](Get-Field $Parameters 'text')
+            if ($text.Length -gt 0) { $document.Content.Text = $text }
+            $document.SaveAs2($filePath)
+            return [ordered]@{ app = 'word'; action = 'create'; file_path = $filePath; saved = $true }
+          } finally { $document.Close($false) }
+        }
+        'inspect_document' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            return [ordered]@{
+              app = 'word'; action = 'inspect_document'; file_path = $filePath
+              characters = [int]$document.Characters.Count; paragraphs = [int]$document.Paragraphs.Count
+              sections = [int]$document.Sections.Count; tables = [int]$document.Tables.Count
+              words = [int]$document.Words.Count; pages = [int]$document.ComputeStatistics(2)
+              protection_type = [int]$document.ProtectionType
+            }
+          } finally { $document.Close($false) }
+        }
+        'get_structure' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            return [ordered]@{ app = 'word'; action = 'get_structure'; paragraphs = [int]$document.Paragraphs.Count; sections = [int]$document.Sections.Count; tables = [int]$document.Tables.Count; bookmarks = [int]$document.Bookmarks.Count; fields = [int]$document.Fields.Count; comments = [int]$document.Comments.Count; revisions = [int]$document.Revisions.Count }
+          } finally { $document.Close($false) }
+        }
+        'get_paragraphs' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $paragraphs = @(); $count = 0
+            foreach ($paragraph in $document.Paragraphs) {
+              if ($count -ge 500) { break }; $count += 1
+              $paragraphs += [ordered]@{ index = $count; text = [string]$paragraph.Range.Text; style = try { [string]$paragraph.Range.Style.NameLocal } catch { '' } }
+            }
+            return [ordered]@{ app = 'word'; action = 'get_paragraphs'; paragraphs = $paragraphs; truncated = ([int]$document.Paragraphs.Count -gt $count) }
+          } finally { $document.Close($false) }
+        }
+        'get_headings' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $headings = @(); $index = 0
+            foreach ($paragraph in $document.Paragraphs) {
+              $index += 1; $style = try { [string]$paragraph.Range.Style.NameLocal } catch { '' }
+              if ($style -match 'Heading|หัวเรื่อง') { $headings += [ordered]@{ paragraph = $index; style = $style; text = [string]$paragraph.Range.Text } }
+            }
+            return [ordered]@{ app = 'word'; action = 'get_headings'; headings = $headings }
+          } finally { $document.Close($false) }
+        }
+        'get_tables' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $tables = @(); $index = 0
+            foreach ($table in $document.Tables) {
+              $index += 1; $tables += [ordered]@{ index = $index; rows = [int]$table.Rows.Count; columns = [int]$table.Columns.Count; text = [string]$table.Range.Text }
+            }
+            return [ordered]@{ app = 'word'; action = 'get_tables'; tables = $tables }
+          } finally { $document.Close($false) }
+        }
+        'get_sections' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $sections = @(); $index = 0
+            foreach ($section in $document.Sections) { $index += 1; $sections += [ordered]@{ index = $index; start = [int]$section.Range.Start; end = [int]$section.Range.End } }
+            return [ordered]@{ app = 'word'; action = 'get_sections'; sections = $sections }
+          } finally { $document.Close($false) }
+        }
+        'search' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $query = [string](Get-Field $Parameters 'find'); if ($query.Length -eq 0) { $query = [string](Get-Field $Parameters 'text') }
+          if ($query.Length -eq 0) { throw 'find or text is required' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $content = [string]$document.Content.Text; $hits = @(); $offset = 0
+            while ($hits.Count -lt 200) {
+              $foundAt = $content.IndexOf($query, $offset, [System.StringComparison]::OrdinalIgnoreCase)
+              if ($foundAt -lt 0) { break }
+              $hits += [ordered]@{ start = $foundAt; end = ($foundAt + $query.Length) }
+              $offset = $foundAt + [Math]::Max(1, $query.Length)
+            }
+            return [ordered]@{ app = 'word'; action = 'search'; query = $query; hits = $hits; truncated = ($hits.Count -ge 200) }
+          } finally { $document.Close($false) }
+        }
+        'document_properties' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try { return [ordered]@{ app = 'word'; action = 'document_properties'; name = [string]$document.Name; full_name = [string]$document.FullName; saved = [bool]$document.Saved; read_only = [bool]$document.ReadOnly; protection_type = [int]$document.ProtectionType } }
+          finally { $document.Close($false) }
+        }
+        'protection_status' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try { return [ordered]@{ app = 'word'; action = 'protection_status'; protection_type = [int]$document.ProtectionType } }
+          finally { $document.Close($false) }
+        }
+        'append_text' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $text = [string](Get-Field $Parameters 'text'); $document = $word.Documents.Open($filePath)
+          try { $range = $document.Content; $range.Collapse(0); $range.InsertAfter($text); $document.Save(); return [ordered]@{ app = 'word'; action = 'append_text'; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        'prepend_text' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $text = [string](Get-Field $Parameters 'text'); $document = $word.Documents.Open($filePath)
+          try { $range = $document.Range(0, 0); $range.InsertBefore($text); $document.Save(); return [ordered]@{ app = 'word'; action = 'prepend_text'; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        'insert_text' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $text = [string](Get-Field $Parameters 'text'); $rangeSpec = Get-Field $Parameters 'range'; $start = [int](Get-Field $rangeSpec 'start')
+          $document = $word.Documents.Open($filePath)
+          try { $range = $document.Range($start, $start); $range.InsertAfter($text); $document.Save(); return [ordered]@{ app = 'word'; action = 'insert_text'; start = $start; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        'save' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath)
+          try { $document.Save(); return [ordered]@{ app = 'word'; action = 'save'; file_path = $filePath; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        'export_pdf' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try { $document.ExportAsFixedFormat($target, 17); return [ordered]@{ app = 'word'; action = 'export_pdf'; source = $filePath; target = $target; exported = $true } }
+          finally { $document.Close($false) }
+        }
+        'export_text' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try { $document.SaveAs2($target, 2); return [ordered]@{ app = 'word'; action = 'export_text'; source = $filePath; target = $target; exported = $true } }
+          finally { $document.Close($false) }
+        }
+        'read_range' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $rangeSpec = Get-Field $Parameters 'range'; if ($null -eq $rangeSpec) { throw 'range is required' }
+          $start = [int](Get-Field $rangeSpec 'start'); $endValue = Get-Field $rangeSpec 'end'
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $end = if ($null -eq $endValue) { [int]$document.Content.End } else { [int]$endValue }
+            if ($start -lt 0 -or $end -lt $start -or $end -gt [int]$document.Content.End) { throw 'range is outside the document' }
+            return [ordered]@{ app = 'word'; action = $Action; start = $start; end = $end; text = [string]$document.Range($start, $end).Text }
+          } finally { $document.Close($false) }
+        }
+        'get_images' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $images = @(); $index = 0
+            foreach ($image in $document.InlineShapes) { $index += 1; $images += [ordered]@{ index = $index; kind = 'inline'; type = [int]$image.Type; width = [double]$image.Width; height = [double]$image.Height; start = [int]$image.Range.Start; end = [int]$image.Range.End } }
+            foreach ($shape in $document.Shapes) { $index += 1; $images += [ordered]@{ index = $index; kind = 'floating'; name = [string]$shape.Name; type = [int]$shape.Type; width = [double]$shape.Width; height = [double]$shape.Height } }
+            return [ordered]@{ app = 'word'; action = $Action; images = $images }
+          } finally { $document.Close($false) }
+        }
+        'get_headers_footers' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $items = @(); $sectionIndex = 0
+            foreach ($section in $document.Sections) {
+              $sectionIndex += 1
+              foreach ($kind in @(1,2,3)) {
+                try { $items += [ordered]@{ section = $sectionIndex; kind = $kind; header = [string]$section.Headers.Item($kind).Range.Text; footer = [string]$section.Footers.Item($kind).Range.Text } } catch { }
+              }
+            }
+            return [ordered]@{ app = 'word'; action = $Action; items = $items }
+          } finally { $document.Close($false) }
+        }
+        'get_bookmarks' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $items = @(); foreach ($bookmark in $document.Bookmarks) { $items += [ordered]@{ name = [string]$bookmark.Name; start = [int]$bookmark.Range.Start; end = [int]$bookmark.Range.End } }
+            return [ordered]@{ app = 'word'; action = $Action; bookmarks = $items }
+          } finally { $document.Close($false) }
+        }
+        'get_hyperlinks' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $items = @(); foreach ($link in $document.Hyperlinks) { $items += [ordered]@{ text = [string]$link.TextToDisplay; address = [string]$link.Address; sub_address = [string]$link.SubAddress; start = [int]$link.Range.Start } }
+            return [ordered]@{ app = 'word'; action = $Action; hyperlinks = $items }
+          } finally { $document.Close($false) }
+        }
+        { $_ -in @('get_comments', 'read_comments') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $items = @(); $index = 0
+            foreach ($comment in $document.Comments) { $index += 1; $items += [ordered]@{ index = $index; author = [string]$comment.Author; initials = [string]$comment.Initial; text = [string]$comment.Range.Text; scope = [string]$comment.Scope.Text } }
+            return [ordered]@{ app = 'word'; action = $Action; comments = $items }
+          } finally { $document.Close($false) }
+        }
+        'get_revisions' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $items = @(); $index = 0
+            foreach ($revision in $document.Revisions) { $index += 1; $items += [ordered]@{ index = $index; author = [string]$revision.Author; type = [int]$revision.Type; text = [string]$revision.Range.Text; start = [int]$revision.Range.Start; end = [int]$revision.Range.End } }
+            return [ordered]@{ app = 'word'; action = $Action; revisions = $items }
+          } finally { $document.Close($false) }
+        }
+        'insert_table' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $tableSpec = Get-Field $Parameters 'table'; if ($null -eq $tableSpec) { throw 'table is required' }
+          $rows = [int](Get-Field $tableSpec 'rows'); $columns = [int](Get-Field $tableSpec 'columns')
+          if ($rows -le 0 -or $columns -le 0) { throw 'table.rows and table.columns must be positive integers' }
+          $rangeSpec = Get-Field $Parameters 'range'
+          $document = $word.Documents.Open($filePath)
+          try {
+            if ($null -eq $rangeSpec) { $range = $document.Content; $range.Collapse(0) } else { $start = [int](Get-Field $rangeSpec 'start'); $range = $document.Range($start, $start) }
+            $table = $document.Tables.Add($range, $rows, $columns)
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; table = [int]$document.Tables.Count; rows = $rows; columns = $columns; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'update_table_cells' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $tableSpec = Get-Field $Parameters 'table'; if ($null -eq $tableSpec) { throw 'table is required' }
+          $tableIndex = [int](Get-Field $tableSpec 'index'); $row = [int](Get-Field $tableSpec 'row'); $column = [int](Get-Field $tableSpec 'column')
+          if ($tableIndex -le 0 -or $row -le 0 -or $column -le 0) { throw 'table.index, table.row and table.column are required' }
+          $text = [string](Get-Field $Parameters 'text')
+          $document = $word.Documents.Open($filePath)
+          try { $document.Tables.Item($tableIndex).Cell($row, $column).Range.Text = $text; $document.Save(); return [ordered]@{ app = 'word'; action = $Action; table = $tableIndex; row = $row; column = $column; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        { $_ -in @('add_row', 'delete_row', 'add_column', 'delete_column') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $tableSpec = Get-Field $Parameters 'table'; $tableIndex = [int](Get-Field $tableSpec 'index'); if ($tableIndex -le 0) { throw 'table.index is required' }
+          $document = $word.Documents.Open($filePath)
+          try {
+            $table = $document.Tables.Item($tableIndex)
+            if ($Action -eq 'add_row') { [void]$table.Rows.Add() }
+            elseif ($Action -eq 'delete_row') { $row = [int](Get-Field $tableSpec 'row'); if ($row -le 0) { throw 'table.row is required' }; $table.Rows.Item($row).Delete() }
+            elseif ($Action -eq 'add_column') { [void]$table.Columns.Add() }
+            else { $column = [int](Get-Field $tableSpec 'column'); if ($column -le 0) { throw 'table.column is required' }; $table.Columns.Item($column).Delete() }
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; table = $tableIndex; rows = [int]$table.Rows.Count; columns = [int]$table.Columns.Count; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'insert_image' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $imagePath = [string](Get-Field $Parameters 'image_path'); if ($imagePath.Length -eq 0 -or -not (Test-Path $imagePath -PathType Leaf)) { throw 'image_path is required and must exist' }
+          $rangeSpec = Get-Field $Parameters 'range'
+          $document = $word.Documents.Open($filePath)
+          try {
+            if ($null -eq $rangeSpec) { $range = $document.Content; $range.Collapse(0) } else { $start = [int](Get-Field $rangeSpec 'start'); $range = $document.Range($start, $start) }
+            $shape = $document.InlineShapes.AddPicture($imagePath, $false, $true, $range)
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; width = [double]$shape.Width; height = [double]$shape.Height; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'update_header_footer' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $sectionIndex = [int](Get-Field $options 'section'); if ($sectionIndex -le 0) { $sectionIndex = 1 }
+          $kind = [int](Get-Field $options 'kind'); if ($kind -le 0) { $kind = 1 }
+          $target = [string](Get-Field $options 'target'); if ($target.Length -eq 0) { $target = 'header' }
+          $text = [string](Get-Field $Parameters 'text')
+          $document = $word.Documents.Open($filePath)
+          try {
+            $section = $document.Sections.Item($sectionIndex)
+            if ($target -eq 'footer') { $section.Footers.Item($kind).Range.Text = $text } else { $section.Headers.Item($kind).Range.Text = $text }
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; section = $sectionIndex; target = $target; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'add_comment' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $rangeSpec = Get-Field $Parameters 'range'; if ($null -eq $rangeSpec) { throw 'range is required' }
+          $start = [int](Get-Field $rangeSpec 'start'); $end = [int](Get-Field $rangeSpec 'end'); $text = [string](Get-Field $Parameters 'text')
+          $document = $word.Documents.Open($filePath)
+          try { [void]$document.Comments.Add($document.Range($start, $end), $text); $document.Save(); return [ordered]@{ app = 'word'; action = $Action; comments = [int]$document.Comments.Count; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        'set_track_changes' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $enabledValue = Get-Field $options 'enabled'; if ($null -eq $enabledValue) { throw 'parameters.enabled is required' }
+          $document = $word.Documents.Open($filePath)
+          try { $document.TrackRevisions = [bool]$enabledValue; $document.Save(); return [ordered]@{ app = 'word'; action = $Action; enabled = [bool]$document.TrackRevisions; saved = $true } }
+          finally { $document.Close($true) }
+        }
+        { $_ -in @('accept_revision', 'reject_revision') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $index = [int](Get-Field $Parameters 'index'); if ($index -le 0) { throw 'index is required' }
+          $document = $word.Documents.Open($filePath)
+          try {
+            $revision = $document.Revisions.Item($index)
+            if ($Action -eq 'accept_revision') { $revision.Accept() } else { $revision.Reject() }
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; index = $index; remaining = [int]$document.Revisions.Count; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'set_font' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $rangeSpec = Get-Field $Parameters 'range'; $style = Get-Field $Parameters 'style'; if ($null -eq $style) { throw 'style is required' }
+          $document = $word.Documents.Open($filePath)
+          try {
+            if ($null -eq $rangeSpec) { $range = $document.Content } else { $range = $document.Range([int](Get-Field $rangeSpec 'start'), [int](Get-Field $rangeSpec 'end')) }
+            $name = Get-Field $style 'name'; if ($null -ne $name) { $range.Font.Name = [string]$name }
+            $size = Get-Field $style 'size'; if ($null -ne $size) { $range.Font.Size = [double]$size }
+            $bold = Get-Field $style 'bold'; if ($null -ne $bold) { $range.Font.Bold = if ([bool]$bold) { -1 } else { 0 } }
+            $italic = Get-Field $style 'italic'; if ($null -ne $italic) { $range.Font.Italic = if ([bool]$italic) { -1 } else { 0 } }
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'apply_style' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $rangeSpec = Get-Field $Parameters 'range'; $style = Get-Field $Parameters 'style'; $styleName = [string](Get-Field $style 'name')
+          if ($styleName.Length -eq 0) { throw 'style.name is required' }
+          $document = $word.Documents.Open($filePath)
+          try {
+            if ($null -eq $rangeSpec) { $range = $document.Content } else { $range = $document.Range([int](Get-Field $rangeSpec 'start'), [int](Get-Field $rangeSpec 'end')) }
+            $range.Style = $styleName; $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; style = $styleName; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        { $_ -in @('protect', 'unprotect') } {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $options = Get-Field $Parameters 'parameters'; $password = [string](Get-Field $options 'password')
+          $document = $word.Documents.Open($filePath)
+          try {
+            if ($Action -eq 'protect') {
+              $kind = [int](Get-Field $options 'type'); if ($kind -lt 0) { $kind = 2 }
+              if ($password.Length -gt 0) { $document.Protect($kind, $false, $password) } else { $document.Protect($kind) }
+            } else {
+              if ($password.Length -gt 0) { $document.Unprotect($password) } else { $document.Unprotect() }
+            }
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = $Action; protection_type = [int]$document.ProtectionType; saved = $true }
+          } finally { $document.Close($true) }
+        }
         default { throw "Unsupported word action: $Action" }
       }
     } finally {
@@ -916,14 +1822,299 @@ function Invoke-OfficeAction {
               $index += 1
               $texts = @()
               foreach ($shape in $slide.Shapes) {
-                if ($shape.HasTextFrame -and $shape.TextFrame.HasText) {
-                  $texts += [string]$shape.TextFrame.TextRange.Text
-                }
+                if ($shape.HasTextFrame -and $shape.TextFrame.HasText) { $texts += [string]$shape.TextFrame.TextRange.Text }
               }
               $slides += [ordered]@{ slide = $index; texts = $texts }
             }
             return [ordered]@{ app = 'powerpoint'; action = 'read'; file_path = $filePath; slide_count = $index; slides = $slides }
           } finally { $presentation.Close() }
+        }
+        'create' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $presentation = $powerpoint.Presentations.Add()
+          try {
+            $text = [string](Get-Field $Parameters 'text')
+            if ($text.Length -gt 0) {
+              $slide = $presentation.Slides.Add(1, 12)
+              [void]$slide.Shapes.AddTextbox(1, 48, 48, 620, 360).TextFrame.TextRange.InsertAfter($text)
+            }
+            $presentation.SaveAs($filePath)
+            return [ordered]@{ app = 'powerpoint'; action = 'create'; file_path = $filePath; slide_count = [int]$presentation.Slides.Count; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        { $_ -in @('inspect_presentation', 'list_slides') } {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try {
+            $slides = @()
+            foreach ($slide in $presentation.Slides) {
+              $texts = @()
+              foreach ($shape in $slide.Shapes) {
+                if ($shape.HasTextFrame -and $shape.TextFrame.HasText) { $texts += [string]$shape.TextFrame.TextRange.Text }
+              }
+              $slides += [ordered]@{ slide = [int]$slide.SlideIndex; name = [string]$slide.Name; shape_count = [int]$slide.Shapes.Count; texts = $texts }
+            }
+            return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; slide_count = [int]$presentation.Slides.Count; slides = $slides; width = [double]$presentation.PageSetup.SlideWidth; height = [double]$presentation.PageSetup.SlideHeight }
+          } finally { $presentation.Close() }
+        }
+        { $_ -in @('get_slide', 'get_slide_text', 'get_shapes', 'get_notes', 'get_layout') } {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try {
+            if ($slideIndex -gt [int]$presentation.Slides.Count) { throw 'slide is outside the presentation range' }
+            $slide = $presentation.Slides.Item($slideIndex)
+            if ($Action -eq 'get_notes') {
+              $notes = ''
+              try { $notes = [string]$slide.NotesPage.Shapes.Placeholders.Item(2).TextFrame.TextRange.Text } catch { }
+              return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; slide = $slideIndex; notes = $notes }
+            }
+            if ($Action -eq 'get_layout') {
+              return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; slide = $slideIndex; layout = [int]$slide.Layout; name = [string]$slide.Name }
+            }
+            $shapes = @()
+            $texts = @()
+            foreach ($shape in $slide.Shapes) {
+              $textValue = ''
+              try { if ($shape.HasTextFrame -and $shape.TextFrame.HasText) { $textValue = [string]$shape.TextFrame.TextRange.Text; $texts += $textValue } } catch { }
+              $shapes += [ordered]@{ index = [int]$shape.Id; name = [string]$shape.Name; type = [int]$shape.Type; left = [double]$shape.Left; top = [double]$shape.Top; width = [double]$shape.Width; height = [double]$shape.Height; text = $textValue }
+            }
+            return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; slide = $slideIndex; texts = $texts; shapes = if ($Action -eq 'get_slide_text') { @() } else { $shapes } }
+          } finally { $presentation.Close() }
+        }
+        'presentation_properties' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try {
+            return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; name = [string]$presentation.Name; slide_count = [int]$presentation.Slides.Count; width = [double]$presentation.PageSetup.SlideWidth; height = [double]$presentation.PageSetup.SlideHeight }
+          } finally { $presentation.Close() }
+        }
+        'slide_size' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try { return [ordered]@{ app = 'powerpoint'; action = $Action; width = [double]$presentation.PageSetup.SlideWidth; height = [double]$presentation.PageSetup.SlideHeight } }
+          finally { $presentation.Close() }
+        }
+        'add_slide' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $requested = [int](Get-Field $Parameters 'slide')
+            $position = if ($requested -gt 0) { [Math]::Min($requested, [int]$presentation.Slides.Count + 1) } else { [int]$presentation.Slides.Count + 1 }
+            $options = Get-Field $Parameters 'parameters'; $layout = 12
+            if ($null -ne $options) { $layoutValue = Get-Field $options 'layout'; if ($null -ne $layoutValue) { $layout = [int]$layoutValue } }
+            $slide = $presentation.Slides.Add($position, $layout)
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = [int]$slide.SlideIndex; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'duplicate_slide' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $range = $presentation.Slides.Item($slideIndex).Duplicate()
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = [int]$range.Item(1).SlideIndex; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'delete_slide' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try { $presentation.Slides.Item($slideIndex).Delete(); $presentation.Save(); return [ordered]@{ app = 'powerpoint'; action = $Action; deleted = $true; slide = $slideIndex } }
+          finally { $presentation.Close() }
+        }
+        'reorder_slide' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); $targetSlide = [int](Get-Field $Parameters 'target_slide')
+          if ($slideIndex -le 0 -or $targetSlide -le 0) { throw 'slide and target_slide must be positive integers' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try { $presentation.Slides.Item($slideIndex).MoveTo($targetSlide); $presentation.Save(); return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; target_slide = $targetSlide; saved = $true } }
+          finally { $presentation.Close() }
+        }
+        'edit_text' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $shapeId = Get-Field $Parameters 'shape'; if ($null -eq $shapeId) { throw 'shape is required' }
+          $text = [string](Get-Field $Parameters 'text')
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $slide = $presentation.Slides.Item($slideIndex)
+            $shape = $null
+            try { $shape = $slide.Shapes.Item([string]$shapeId) } catch { try { $shape = $slide.Shapes.Item([int]$shapeId) } catch { } }
+            if ($null -eq $shape) { throw 'PowerPoint shape was not found' }
+            if (-not $shape.HasTextFrame) { throw 'PowerPoint shape does not support text' }
+            $shape.TextFrame.TextRange.Text = $text
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'add_textbox' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $text = [string](Get-Field $Parameters 'text')
+          $options = Get-Field $Parameters 'parameters'
+          $left = 48; $top = 48; $width = 620; $height = 120
+          if ($null -ne $options) {
+            foreach ($field in @('left','top','width','height')) {
+              $value = Get-Field $options $field
+              if ($null -ne $value) { Set-Variable -Name $field -Value ([double]$value) }
+            }
+          }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $shape = $presentation.Slides.Item($slideIndex).Shapes.AddTextbox(1, $left, $top, $width, $height)
+            $shape.TextFrame.TextRange.Text = $text
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'add_image' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $imagePath = [string](Get-Field $Parameters 'image_path'); if ($imagePath.Length -eq 0 -or -not (Test-Path $imagePath -PathType Leaf)) { throw 'image_path is required and must exist' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $options = Get-Field $Parameters 'parameters'
+          $left = 48; $top = 48; $width = -1; $height = -1
+          if ($null -ne $options) {
+            foreach ($field in @('left','top','width','height')) {
+              $value = Get-Field $options $field
+              if ($null -ne $value) { Set-Variable -Name $field -Value ([double]$value) }
+            }
+          }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $shape = $presentation.Slides.Item($slideIndex).Shapes.AddPicture($imagePath, $false, $true, $left, $top, $width, $height)
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        { $_ -in @('get_images', 'get_tables', 'get_charts') } {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try {
+            $items = @()
+            foreach ($slide in $presentation.Slides) {
+              foreach ($shape in $slide.Shapes) {
+                $include = $false
+                if ($Action -eq 'get_images') { $include = ([int]$shape.Type -in @(11,13)) }
+                elseif ($Action -eq 'get_tables') { try { $include = [bool]$shape.HasTable } catch { $include = $false } }
+                else { try { $include = [bool]$shape.HasChart } catch { $include = $false } }
+                if (-not $include) { continue }
+                $entry = [ordered]@{ slide = [int]$slide.SlideIndex; shape = [string]$shape.Name; type = [int]$shape.Type; left = [double]$shape.Left; top = [double]$shape.Top; width = [double]$shape.Width; height = [double]$shape.Height }
+                if ($Action -eq 'get_tables') { try { $entry.rows = [int]$shape.Table.Rows.Count; $entry.columns = [int]$shape.Table.Columns.Count } catch { } }
+                if ($Action -eq 'get_charts') { try { $entry.chart_type = [int]$shape.Chart.ChartType; $entry.has_title = [bool]$shape.Chart.HasTitle } catch { } }
+                $items += $entry
+              }
+            }
+            return [ordered]@{ app = 'powerpoint'; action = $Action; items = $items }
+          } finally { $presentation.Close() }
+        }
+        'add_table' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $options = Get-Field $Parameters 'parameters'
+          $rows = [int](Get-Field $options 'rows'); $columns = [int](Get-Field $options 'columns')
+          if ($rows -le 0 -or $columns -le 0) { throw 'parameters.rows and parameters.columns must be positive integers' }
+          $left = [double](Get-Field $options 'left'); if ($left -eq 0) { $left = 48 }
+          $top = [double](Get-Field $options 'top'); if ($top -eq 0) { $top = 120 }
+          $width = [double](Get-Field $options 'width'); if ($width -le 0) { $width = 620 }
+          $height = [double](Get-Field $options 'height'); if ($height -le 0) { $height = 280 }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $shape = $presentation.Slides.Item($slideIndex).Shapes.AddTable($rows, $columns, $left, $top, $width, $height)
+            $values = Get-Field $options 'values'
+            if ($null -ne $values) {
+              $rowIndex = 0
+              foreach ($rowValues in @($values)) {
+                $rowIndex += 1; if ($rowIndex -gt $rows) { break }
+                $columnIndex = 0
+                foreach ($value in @($rowValues)) {
+                  $columnIndex += 1; if ($columnIndex -gt $columns) { break }
+                  $shape.Table.Cell($rowIndex, $columnIndex).Shape.TextFrame.TextRange.Text = [string]$value
+                }
+              }
+            }
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; rows = $rows; columns = $columns; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'edit_table' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); $shapeId = Get-Field $Parameters 'shape'; if ($slideIndex -le 0 -or $null -eq $shapeId) { throw 'slide and shape are required' }
+          $options = Get-Field $Parameters 'parameters'; $row = [int](Get-Field $options 'row'); $column = [int](Get-Field $options 'column')
+          if ($row -le 0 -or $column -le 0) { throw 'parameters.row and parameters.column are required' }
+          $text = [string](Get-Field $Parameters 'text')
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $slide = $presentation.Slides.Item($slideIndex); $shape = $null
+            try { $shape = $slide.Shapes.Item([string]$shapeId) } catch { try { $shape = $slide.Shapes.Item([int]$shapeId) } catch { } }
+            if ($null -eq $shape -or -not $shape.HasTable) { throw 'PowerPoint table shape was not found' }
+            $shape.Table.Cell($row, $column).Shape.TextFrame.TextRange.Text = $text
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; row = $row; column = $column; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'add_chart' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $options = Get-Field $Parameters 'parameters'
+          $chartType = [int](Get-Field $options 'chart_type'); if ($chartType -eq 0) { $chartType = 51 }
+          $left = [double](Get-Field $options 'left'); if ($left -eq 0) { $left = 48 }
+          $top = [double](Get-Field $options 'top'); if ($top -eq 0) { $top = 120 }
+          $width = [double](Get-Field $options 'width'); if ($width -le 0) { $width = 620 }
+          $height = [double](Get-Field $options 'height'); if ($height -le 0) { $height = 320 }
+          # PowerPoint chart insertion requires an active presentation window on some Office 16 builds;
+          # opening WithWindow=$false makes both AddChart2 and AddChart fail with E_FAIL.
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $true)
+          try {
+            $slide = $presentation.Slides.Item($slideIndex)
+            $shape = $null
+            try { $shape = $slide.Shapes.AddChart2(-1, $chartType, $left, $top, $width, $height, $true) }
+            catch { $shape = $slide.Shapes.AddChart($chartType, $left, $top, $width, $height) }
+            $title = [string](Get-Field $options 'title')
+            if ($title.Length -gt 0) { $shape.Chart.HasTitle = $true; $shape.Chart.ChartTitle.Text = $title }
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; chart_type = [int]$shape.Chart.ChartType; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'edit_chart' {
+          if ($filePath.Length -eq 0 -or -not (Test-Path $filePath -PathType Leaf)) { throw 'PowerPoint file was not found' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); $shapeId = Get-Field $Parameters 'shape'; if ($slideIndex -le 0 -or $null -eq $shapeId) { throw 'slide and shape are required' }
+          $options = Get-Field $Parameters 'parameters'
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $slide = $presentation.Slides.Item($slideIndex); $shape = $null
+            try { $shape = $slide.Shapes.Item([string]$shapeId) } catch { try { $shape = $slide.Shapes.Item([int]$shapeId) } catch { } }
+            if ($null -eq $shape -or -not $shape.HasChart) { throw 'PowerPoint chart shape was not found' }
+            $chartType = Get-Field $options 'chart_type'; if ($null -ne $chartType) { $shape.Chart.ChartType = [int]$chartType }
+            $title = Get-Field $options 'title'; if ($null -ne $title) { $shape.Chart.HasTitle = $true; $shape.Chart.ChartTitle.Text = [string]$title }
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; shape = [string]$shape.Name; chart_type = [int]$shape.Chart.ChartType; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'set_notes' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $slideIndex = [int](Get-Field $Parameters 'slide'); if ($slideIndex -le 0) { throw 'slide must be a positive integer' }
+          $text = [string](Get-Field $Parameters 'text')
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try {
+            $presentation.Slides.Item($slideIndex).NotesPage.Shapes.Placeholders.Item(2).TextFrame.TextRange.Text = $text
+            $presentation.Save()
+            return [ordered]@{ app = 'powerpoint'; action = $Action; slide = $slideIndex; saved = $true }
+          } finally { $presentation.Close() }
+        }
+        'save' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $false, $false, $false)
+          try { $presentation.Save(); return [ordered]@{ app = 'powerpoint'; action = $Action; file_path = $filePath; saved = $true } }
+          finally { $presentation.Close() }
         }
         'save_as' {
           if ($filePath.Length -eq 0) { throw 'file_path is required' }
@@ -935,6 +2126,13 @@ function Invoke-OfficeAction {
             return [ordered]@{ app = 'powerpoint'; action = 'save_as'; source = $filePath; target = $target; saved = $true }
           } finally { $presentation.Close() }
         }
+        'export_pdf' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+          $presentation = $powerpoint.Presentations.Open($filePath, $true, $false, $false)
+          try { $presentation.SaveAs($target, 32); return [ordered]@{ app = 'powerpoint'; action = $Action; source = $filePath; target = $target; exported = $true } }
+          finally { $presentation.Close() }
+        }
         default { throw "Unsupported powerpoint action: $Action" }
       }
     } finally {
@@ -942,10 +2140,9 @@ function Invoke-OfficeAction {
     }
   }
   if ($App -eq 'outlook') {
-    # Read-only header access: subjects/senders/timestamps only. Message
-    # bodies are intentionally never returned through this bridge. Outlook
-    # is a single-instance COM server, so never call Quit() here: doing so can
-    # close the user's already-open Outlook window.
+    # Outlook is a single-instance COM server, so never call Quit() here: doing
+    # so can close the user's already-open Outlook window. Read and mutation
+    # actions remain bounded by the semantic mutation/confirmation policy.
     $outlook = $null
     $namespace = $null
     try {
@@ -1006,6 +2203,294 @@ function Invoke-OfficeAction {
           }
           return [ordered]@{ app = 'outlook'; action = 'list_messages'; folder = if ($folderPath.Length -eq 0) { 'Inbox' } else { $folderPath }; messages = $messages }
         }
+        { $_ -in @('get_message', 'get_headers', 'get_body', 'list_attachments', 'conversation') } {
+          $messageId = [string](Get-Field $Parameters 'message_id'); if ($messageId.Length -eq 0) { throw 'message_id is required' }
+          $item = $namespace.GetItemFromID($messageId)
+          if ($null -eq $item) { throw 'Outlook message was not found' }
+          $attachments = @()
+          if ($Action -eq 'list_attachments' -or $Action -eq 'get_message') {
+            foreach ($attachment in $item.Attachments) {
+              $attachments += [ordered]@{ id = [string]$attachment.Index; name = [string]$attachment.FileName; size = [int64]$attachment.Size; type = [int]$attachment.Type }
+            }
+          }
+          if ($Action -eq 'get_headers') {
+            return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; subject = [string]$item.Subject; sender = [string]$item.SenderName; sender_email = try { [string]$item.SenderEmailAddress } catch { '' }; received = try { $item.ReceivedTime.ToString('o') } catch { '' }; sent = try { $item.SentOn.ToString('o') } catch { '' }; unread = try { [bool]$item.UnRead } catch { $false } }
+          }
+          if ($Action -eq 'get_body') {
+            return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; body = [string]$item.Body; html_body = try { [string]$item.HTMLBody } catch { '' } }
+          }
+          if ($Action -eq 'conversation') {
+            $conversation = try { $item.GetConversation() } catch { $null }
+            return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; conversation_id = try { [string]$item.ConversationID } catch { '' }; available = $null -ne $conversation }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; subject = [string]$item.Subject; sender = [string]$item.SenderName; received = try { $item.ReceivedTime.ToString('o') } catch { '' }; unread = try { [bool]$item.UnRead } catch { $false }; body = [string]$item.Body; html_body = try { [string]$item.HTMLBody } catch { '' }; attachments = $attachments }
+        }
+        'search' {
+          $query = [string](Get-Field $Parameters 'query'); if ($query.Length -eq 0) { throw 'query is required' }
+          $folderPath = [string](Get-Field $Parameters 'folder')
+          $maxMessages = [int](Get-Field $Parameters 'max_messages'); if ($maxMessages -le 0) { $maxMessages = 20 }; if ($maxMessages -gt 100) { $maxMessages = 100 }
+          $folder = Resolve-OutlookFolder $namespace $folderPath 6
+          $matches = @()
+          foreach ($item in $folder.Items) {
+            if ($matches.Count -ge $maxMessages) { break }
+            $haystack = ([string]$item.Subject + ' ' + [string]$item.SenderName + ' ' + [string]$item.Body)
+            if ($haystack.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+            $matches += [ordered]@{ message_id = [string]$item.EntryID; subject = [string]$item.Subject; sender = [string]$item.SenderName; received = try { $item.ReceivedTime.ToString('o') } catch { '' }; unread = try { [bool]$item.UnRead } catch { $false } }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; query = $query; matches = $matches }
+        }
+        { $_ -in @('get_state', 'mailbox_status') } {
+          $inbox = $namespace.GetDefaultFolder(6)
+          return [ordered]@{ app = 'outlook'; action = $Action; current_user = try { [string]$namespace.CurrentUser.Name } catch { '' }; inbox_count = [int]$inbox.Items.Count; offline = try { [bool]$namespace.Offline } catch { $false } }
+        }
+        'save_attachment' {
+          $messageId = [string](Get-Field $Parameters 'message_id'); $attachmentId = [int](Get-Field $Parameters 'attachment_id'); $target = [string](Get-Field $Parameters 'target_path')
+          if ($messageId.Length -eq 0 -or $attachmentId -le 0 -or $target.Length -eq 0) { throw 'message_id, attachment_id and target_path are required' }
+          $item = $namespace.GetItemFromID($messageId)
+          $attachment = $item.Attachments.Item($attachmentId)
+          $attachment.SaveAsFile($target)
+          return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; attachment_id = $attachmentId; target = $target; saved = $true }
+        }
+        'create_draft' {
+          $mail = $outlook.CreateItem(0)
+          $mail.Subject = [string](Get-Field $Parameters 'subject')
+          $html = [string](Get-Field $Parameters 'body_html')
+          if ($html.Length -gt 0) { $mail.HTMLBody = $html } else { $mail.Body = [string](Get-Field $Parameters 'body') }
+          Add-OutlookRecipients $mail (Get-Field $Parameters 'to') 1
+          Add-OutlookRecipients $mail (Get-Field $Parameters 'cc') 2
+          Add-OutlookRecipients $mail (Get-Field $Parameters 'bcc') 3
+          foreach ($attachmentPath in @(Get-Field $Parameters 'attachments')) {
+            if ([string]$attachmentPath -ne '') { [void]$mail.Attachments.Add([string]$attachmentPath) }
+          }
+          $mail.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; draft_id = [string]$mail.EntryID; subject = [string]$mail.Subject; saved = $true; sent = $false }
+        }
+        { $_ -in @('update_draft', 'add_recipients', 'remove_recipients', 'attach_file', 'detach_file', 'set_importance', 'set_category', 'set_flag') } {
+          $draftId = [string](Get-Field $Parameters 'draft_id'); if ($draftId.Length -eq 0) { throw 'draft_id is required' }
+          $mail = $namespace.GetItemFromID($draftId); if ($null -eq $mail) { throw 'Outlook draft was not found' }
+          if ($Action -eq 'update_draft') {
+            $subject = Get-Field $Parameters 'subject'; if ($null -ne $subject) { $mail.Subject = [string]$subject }
+            $html = Get-Field $Parameters 'body_html'; $body = Get-Field $Parameters 'body'
+            if ($null -ne $html) { $mail.HTMLBody = [string]$html } elseif ($null -ne $body) { $mail.Body = [string]$body }
+          }
+          if ($Action -eq 'add_recipients') { Add-OutlookRecipients $mail (Get-Field $Parameters 'recipients') 1 }
+          if ($Action -eq 'remove_recipients') {
+            $targets = @((Get-Field $Parameters 'recipients') | ForEach-Object { ([string]$_).ToLowerInvariant() })
+            for ($index = [int]$mail.Recipients.Count; $index -ge 1; $index -= 1) {
+              $recipient = $mail.Recipients.Item($index)
+              $address = ([string]$recipient.Address).ToLowerInvariant()
+              $name = ([string]$recipient.Name).ToLowerInvariant()
+              if ($targets -contains $address -or $targets -contains $name) { $recipient.Delete() }
+            }
+          }
+          if ($Action -eq 'attach_file') {
+            foreach ($attachmentPath in @(Get-Field $Parameters 'attachments')) { if ([string]$attachmentPath -ne '') { [void]$mail.Attachments.Add([string]$attachmentPath) } }
+          }
+          if ($Action -eq 'detach_file') {
+            $attachmentId = [int](Get-Field $Parameters 'attachment_id'); if ($attachmentId -le 0) { throw 'attachment_id is required' }
+            $mail.Attachments.Item($attachmentId).Delete()
+          }
+          if ($Action -eq 'set_importance') {
+            $value = [string](Get-Field (Get-Field $Parameters 'parameters') 'importance')
+            $mail.Importance = if ($value -eq 'high') { 2 } elseif ($value -eq 'low') { 0 } else { 1 }
+          }
+          if ($Action -eq 'set_category') { $mail.Categories = (@(Get-Field $Parameters 'categories') -join ', ') }
+          if ($Action -eq 'set_flag') {
+            $flag = [string](Get-Field (Get-Field $Parameters 'parameters') 'flag')
+            if ($flag.Length -gt 0) { $mail.FlagRequest = $flag }
+          }
+          $mail.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; draft_id = [string]$mail.EntryID; saved = $true; sent = $false }
+        }
+        { $_ -in @('mark_read', 'mark_unread') } {
+          $messageId = [string](Get-Field $Parameters 'message_id'); if ($messageId.Length -eq 0) { throw 'message_id is required' }
+          $item = $namespace.GetItemFromID($messageId)
+          $item.UnRead = ($Action -eq 'mark_unread')
+          $item.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; unread = [bool]$item.UnRead }
+        }
+        { $_ -in @('move_message', 'copy_message') } {
+          $messageId = [string](Get-Field $Parameters 'message_id'); $targetFolder = [string](Get-Field $Parameters 'target_folder')
+          if ($messageId.Length -eq 0 -or $targetFolder.Length -eq 0) { throw 'message_id and target_folder are required' }
+          $item = $namespace.GetItemFromID($messageId)
+          $folder = Resolve-OutlookFolder $namespace $targetFolder 6
+          $moved = if ($Action -eq 'move_message') { $item.Move($folder) } else { $item.Copy().Move($folder) }
+          return [ordered]@{ app = 'outlook'; action = $Action; message_id = [string]$moved.EntryID; target_folder = $targetFolder }
+        }
+        'send' {
+          $draftId = [string](Get-Field $Parameters 'draft_id'); if ($draftId.Length -eq 0) { throw 'draft_id is required' }
+          $mail = $namespace.GetItemFromID($draftId)
+          $subject = [string]$mail.Subject
+          $mail.Send()
+          return [ordered]@{ app = 'outlook'; action = $Action; draft_id = $draftId; subject = $subject; sent = $true }
+        }
+        'delete' {
+          $messageId = [string](Get-Field $Parameters 'message_id'); if ($messageId.Length -eq 0) { $messageId = [string](Get-Field $Parameters 'draft_id') }
+          if ($messageId.Length -eq 0) { throw 'message_id or draft_id is required' }
+          $item = $namespace.GetItemFromID($messageId)
+          $item.Delete()
+          return [ordered]@{ app = 'outlook'; action = $Action; message_id = $messageId; deleted = $true; permanent = $false }
+        }
+        'list_calendars' {
+          $calendar = $namespace.GetDefaultFolder(9)
+          return [ordered]@{ app = 'outlook'; action = $Action; calendars = @([ordered]@{ id = [string]$calendar.EntryID; name = [string]$calendar.Name; path = [string]$calendar.FolderPath; item_count = [int]$calendar.Items.Count }) }
+        }
+        { $_ -in @('get_events', 'search_events') } {
+          $calendarPath = [string](Get-Field $Parameters 'calendar')
+          $calendar = Resolve-OutlookFolder $namespace $calendarPath 9
+          $maxResults = [int](Get-Field $Parameters 'max_results'); if ($maxResults -le 0) { $maxResults = 50 }; if ($maxResults -gt 200) { $maxResults = 200 }
+          $query = [string](Get-Field $Parameters 'query')
+          $items = $calendar.Items
+          $items.Sort('[Start]')
+          $items.IncludeRecurrences = $true
+          $events = @()
+          foreach ($event in $items) {
+            if ($events.Count -ge $maxResults) { break }
+            if ($Action -eq 'search_events' -and $query.Length -gt 0) {
+              $haystack = ([string]$event.Subject + ' ' + [string]$event.Location + ' ' + [string]$event.Body)
+              if ($haystack.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+            }
+            $events += [ordered]@{ event_id = [string]$event.EntryID; subject = [string]$event.Subject; start = try { $event.Start.ToString('o') } catch { '' }; end = try { $event.End.ToString('o') } catch { '' }; location = try { [string]$event.Location } catch { '' }; all_day = try { [bool]$event.AllDayEvent } catch { $false } }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; events = $events }
+        }
+        'get_event' {
+          $eventId = [string](Get-Field $Parameters 'event_id'); if ($eventId.Length -eq 0) { throw 'event_id is required' }
+          $event = $namespace.GetItemFromID($eventId)
+          return [ordered]@{ app = 'outlook'; action = $Action; event_id = $eventId; subject = [string]$event.Subject; body = [string]$event.Body; start = try { $event.Start.ToString('o') } catch { '' }; end = try { $event.End.ToString('o') } catch { '' }; location = try { [string]$event.Location } catch { '' }; reminder_set = try { [bool]$event.ReminderSet } catch { $false } }
+        }
+        { $_ -in @('create_event', 'update_event') } {
+          if ($Action -eq 'create_event') { $event = $outlook.CreateItem(1) } else {
+            $eventId = [string](Get-Field $Parameters 'event_id'); if ($eventId.Length -eq 0) { throw 'event_id is required' }
+            $event = $namespace.GetItemFromID($eventId)
+          }
+          $subject = Get-Field $Parameters 'subject'; if ($null -ne $subject) { $event.Subject = [string]$subject }
+          $body = Get-Field $Parameters 'body'; if ($null -ne $body) { $event.Body = [string]$body }
+          $start = Get-Field $Parameters 'start'; if ($null -ne $start) { $event.Start = [datetime]::Parse([string]$start) }
+          $end = Get-Field $Parameters 'end'; if ($null -ne $end) { $event.End = [datetime]::Parse([string]$end) }
+          $options = Get-Field $Parameters 'parameters'
+          if ($null -ne $options) {
+            $location = Get-Field $options 'location'; if ($null -ne $location) { $event.Location = [string]$location }
+            $reminder = Get-Field $options 'reminder_minutes'; if ($null -ne $reminder) { $event.ReminderSet = $true; $event.ReminderMinutesBeforeStart = [int]$reminder }
+          }
+          foreach ($address in @(Get-Field $Parameters 'attendees')) {
+            if ([string]$address -ne '') { $recipient = $event.Recipients.Add([string]$address); $recipient.Type = 1; [void]$recipient.Resolve() }
+          }
+          $event.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; event_id = [string]$event.EntryID; subject = [string]$event.Subject; saved = $true; sent = $false }
+        }
+        'delete_event' {
+          $eventId = [string](Get-Field $Parameters 'event_id'); if ($eventId.Length -eq 0) { throw 'event_id is required' }
+          $event = $namespace.GetItemFromID($eventId)
+          $event.Delete()
+          return [ordered]@{ app = 'outlook'; action = $Action; event_id = $eventId; deleted = $true }
+        }
+        'send_invite' {
+          $eventId = [string](Get-Field $Parameters 'event_id'); if ($eventId.Length -eq 0) { throw 'event_id is required' }
+          $event = $namespace.GetItemFromID($eventId)
+          $event.MeetingStatus = 1
+          $event.Send()
+          return [ordered]@{ app = 'outlook'; action = $Action; event_id = $eventId; sent = $true }
+        }
+        'list_contacts' {
+          $folder = $namespace.GetDefaultFolder(10)
+          $maxResults = [int](Get-Field $Parameters 'max_results'); if ($maxResults -le 0) { $maxResults = 100 }; if ($maxResults -gt 500) { $maxResults = 500 }
+          $contacts = @()
+          foreach ($contact in $folder.Items) {
+            if ($contacts.Count -ge $maxResults) { break }
+            $contacts += [ordered]@{ contact_id = [string]$contact.EntryID; name = [string]$contact.FullName; email = try { [string]$contact.Email1Address } catch { '' }; company = try { [string]$contact.CompanyName } catch { '' }; title = try { [string]$contact.JobTitle } catch { '' } }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; contacts = $contacts }
+        }
+        'search_contacts' {
+          $query = [string](Get-Field $Parameters 'query'); if ($query.Length -eq 0) { throw 'query is required' }
+          $folder = $namespace.GetDefaultFolder(10)
+          $maxResults = [int](Get-Field $Parameters 'max_results'); if ($maxResults -le 0) { $maxResults = 100 }; if ($maxResults -gt 500) { $maxResults = 500 }
+          $contacts = @()
+          foreach ($contact in $folder.Items) {
+            if ($contacts.Count -ge $maxResults) { break }
+            $haystack = ([string]$contact.FullName + ' ' + [string]$contact.Email1Address + ' ' + [string]$contact.CompanyName)
+            if ($haystack.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+            $contacts += [ordered]@{ contact_id = [string]$contact.EntryID; name = [string]$contact.FullName; email = try { [string]$contact.Email1Address } catch { '' }; company = try { [string]$contact.CompanyName } catch { '' } }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; contacts = $contacts }
+        }
+        'get_contact' {
+          $contactId = [string](Get-Field $Parameters 'contact_id'); if ($contactId.Length -eq 0) { throw 'contact_id is required' }
+          $contact = $namespace.GetItemFromID($contactId)
+          return [ordered]@{ app = 'outlook'; action = $Action; contact_id = $contactId; name = [string]$contact.FullName; email = try { [string]$contact.Email1Address } catch { '' }; company = try { [string]$contact.CompanyName } catch { '' }; title = try { [string]$contact.JobTitle } catch { '' }; business_phone = try { [string]$contact.BusinessTelephoneNumber } catch { '' }; mobile_phone = try { [string]$contact.MobileTelephoneNumber } catch { '' } }
+        }
+        { $_ -in @('create_contact', 'update_contact') } {
+          if ($Action -eq 'create_contact') { $contact = $outlook.CreateItem(2) } else {
+            $contactId = [string](Get-Field $Parameters 'contact_id'); if ($contactId.Length -eq 0) { throw 'contact_id is required' }
+            $contact = $namespace.GetItemFromID($contactId)
+          }
+          $name = Get-Field $Parameters 'name'; if ($null -ne $name) { $contact.FullName = [string]$name }
+          $email = Get-Field $Parameters 'email'; if ($null -ne $email) { $contact.Email1Address = [string]$email }
+          $company = Get-Field $Parameters 'company'; if ($null -ne $company) { $contact.CompanyName = [string]$company }
+          $title = Get-Field $Parameters 'title'; if ($null -ne $title) { $contact.JobTitle = [string]$title }
+          $phones = Get-Field $Parameters 'phones'
+          if ($null -ne $phones) {
+            $business = Get-Field $phones 'business'; if ($null -ne $business) { $contact.BusinessTelephoneNumber = [string]$business }
+            $mobile = Get-Field $phones 'mobile'; if ($null -ne $mobile) { $contact.MobileTelephoneNumber = [string]$mobile }
+          }
+          $contact.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; contact_id = [string]$contact.EntryID; saved = $true }
+        }
+        'delete_contact' {
+          $contactId = [string](Get-Field $Parameters 'contact_id'); if ($contactId.Length -eq 0) { throw 'contact_id is required' }
+          $contact = $namespace.GetItemFromID($contactId)
+          $contact.Delete()
+          return [ordered]@{ app = 'outlook'; action = $Action; contact_id = $contactId; deleted = $true }
+        }
+        'list_task_folders' {
+          $folder = $namespace.GetDefaultFolder(13)
+          return [ordered]@{ app = 'outlook'; action = $Action; folders = @([ordered]@{ id = [string]$folder.EntryID; name = [string]$folder.Name; path = [string]$folder.FolderPath; item_count = [int]$folder.Items.Count }) }
+        }
+        { $_ -in @('list_tasks', 'search_tasks') } {
+          $folderPath = [string](Get-Field $Parameters 'folder')
+          $folder = Resolve-OutlookFolder $namespace $folderPath 13
+          $query = [string](Get-Field $Parameters 'query')
+          $maxResults = [int](Get-Field $Parameters 'max_results'); if ($maxResults -le 0) { $maxResults = 100 }; if ($maxResults -gt 500) { $maxResults = 500 }
+          $tasks = @()
+          foreach ($task in $folder.Items) {
+            if ($tasks.Count -ge $maxResults) { break }
+            if ($Action -eq 'search_tasks' -and $query.Length -gt 0) {
+              $haystack = ([string]$task.Subject + ' ' + [string]$task.Body)
+              if ($haystack.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+            }
+            $tasks += [ordered]@{ task_id = [string]$task.EntryID; subject = [string]$task.Subject; due = try { $task.DueDate.ToString('o') } catch { '' }; status = try { [int]$task.Status } catch { -1 }; complete = try { [bool]$task.Complete } catch { $false } }
+          }
+          return [ordered]@{ app = 'outlook'; action = $Action; tasks = $tasks }
+        }
+        'get_task' {
+          $taskId = [string](Get-Field $Parameters 'task_id'); if ($taskId.Length -eq 0) { throw 'task_id is required' }
+          $task = $namespace.GetItemFromID($taskId)
+          return [ordered]@{ app = 'outlook'; action = $Action; task_id = $taskId; subject = [string]$task.Subject; body = [string]$task.Body; due = try { $task.DueDate.ToString('o') } catch { '' }; status = try { [int]$task.Status } catch { -1 }; complete = try { [bool]$task.Complete } catch { $false } }
+        }
+        { $_ -in @('create_task', 'update_task') } {
+          if ($Action -eq 'create_task') { $task = $outlook.CreateItem(3) } else {
+            $taskId = [string](Get-Field $Parameters 'task_id'); if ($taskId.Length -eq 0) { throw 'task_id is required' }
+            $task = $namespace.GetItemFromID($taskId)
+          }
+          $subject = Get-Field $Parameters 'subject'; if ($null -ne $subject) { $task.Subject = [string]$subject }
+          $body = Get-Field $Parameters 'body'; if ($null -ne $body) { $task.Body = [string]$body }
+          $due = Get-Field $Parameters 'due'; if ($null -ne $due) { $task.DueDate = [datetime]::Parse([string]$due) }
+          $task.Save()
+          return [ordered]@{ app = 'outlook'; action = $Action; task_id = [string]$task.EntryID; saved = $true }
+        }
+        { $_ -in @('complete_task', 'reopen_task') } {
+          $taskId = [string](Get-Field $Parameters 'task_id'); if ($taskId.Length -eq 0) { throw 'task_id is required' }
+          $task = $namespace.GetItemFromID($taskId)
+          if ($Action -eq 'complete_task') { $task.MarkComplete() } else { $task.Status = 0; $task.PercentComplete = 0; $task.Complete = $false; $task.Save() }
+          return [ordered]@{ app = 'outlook'; action = $Action; task_id = $taskId; complete = [bool]$task.Complete }
+        }
+        'delete_task' {
+          $taskId = [string](Get-Field $Parameters 'task_id'); if ($taskId.Length -eq 0) { throw 'task_id is required' }
+          $task = $namespace.GetItemFromID($taskId)
+          $task.Delete()
+          return [ordered]@{ app = 'outlook'; action = $Action; task_id = $taskId; deleted = $true }
+        }
         default { throw "Unsupported outlook action: $Action" }
       }
     } finally {
@@ -1033,7 +2518,7 @@ try {
     'clipboard' { Invoke-ClipboardAction ([string](Get-Field $payload 'action')) $parameters }
     'audio' { Invoke-AudioAction ([string](Get-Field $payload 'action')) $parameters }
     'screen_record' { Invoke-ScreenRecordAction ([string](Get-Field $payload 'action')) $parameters }
-    'office' { Invoke-OfficeAction ([string](Get-Field $payload 'app')) ([string](Get-Field $payload 'action')) $parameters }
+    'office' { Invoke-OfficeAction ([string](Get-Field $payload 'app')) ([string](Get-Field $payload 'action')) $payload }
     default { throw 'Unsupported Windows capability' }
   }
   $result = Success $value

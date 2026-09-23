@@ -124,7 +124,7 @@ describe('tool runtime delivery contract', () => {
     const registry = new ToolRegistry({}, actor);
     expect(PHASE_5_TO_18_TOOL_NAMES).toHaveLength(53);
     expect(PHASE_19_TO_33_TOOL_NAMES).toHaveLength(46);
-    expect(PHASE_34_TO_46_TOOL_NAMES).toHaveLength(39);
+    expect(PHASE_34_TO_46_TOOL_NAMES).toHaveLength(56);
     expect(NATIVE_AUTOMATION_TOOL_NAMES).toHaveLength(6);
     expect(Object.keys(PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES).sort()).toEqual(PHASE_5_TO_18_TOOL_NAMES);
     expect(Object.keys(PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES).sort()).toEqual(PHASE_19_TO_33_TOOL_NAMES);

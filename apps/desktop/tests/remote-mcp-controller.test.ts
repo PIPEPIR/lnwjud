@@ -6,12 +6,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_REMOTE_MCP_STATUS, type RemoteMcpStatus } from '@lnwjud/ipc-contracts';
 import { createExplicitKeySecretProtector } from '@lnwjud/shared';
-import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeConfiguredPublicOrigin, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, normalizeConfiguredPublicOrigin, posixExecutableCandidates, RemoteMcpController, resolveManagedNgrokExecutable, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, verifyExternalPublicOrigin, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
   publicOrigin: string | null;
-  configuredPublicOrigin: string | null;
+  configuredNgrokOrigin: string | null;
+  configuredExternalOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectAttempts: number;
@@ -72,14 +73,14 @@ async function completeChatGptLocalApproval(response: Response, publicOrigin: st
 describe('Remote MCP ngrok runtime', () => {
   it('starts without --url before a stable public origin has been learned', () => {
     const gateway = 'http://127.0.0.1:32123';
-    expect(buildNgrokHttpArgs(gateway)).toEqual(['http', gateway, '--log=stdout', '--log-format=json']);
+    expect(buildNgrokHttpArgs(gateway)).toEqual(['http', gateway, '--metadata=lnwjud-remote-mcp', '--log=stdout', '--log-format=json']);
     expect(buildNgrokHttpArgs(gateway).some((value) => value.startsWith('--web-addr') || value === '--url')).toBe(false);
   });
 
   it('reuses a remembered ngrok public origin with the v3 --url flag', () => {
     const gateway = 'http://127.0.0.1:32123';
     expect(buildNgrokHttpArgs(gateway, 'https://steady.ngrok-free.app')).toEqual([
-      'http', gateway, '--url', 'https://steady.ngrok-free.app', '--log=stdout', '--log-format=json',
+      'http', gateway, '--url', 'https://steady.ngrok-free.app', '--metadata=lnwjud-remote-mcp', '--log=stdout', '--log-format=json',
     ]);
   });
 
@@ -134,6 +135,24 @@ describe('Remote MCP ngrok runtime', () => {
     }
   });
 
+  it('prefers a validated user-owned managed ngrok copy on Windows', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-managed-ngrok-'));
+    try {
+      const managed = path.join(root, 'runtime-tools', 'ngrok', 'ngrok.exe');
+      await mkdir(path.dirname(managed), { recursive: true });
+      await writeFile(managed, 'fixture', 'utf8');
+      const runner = vi.fn(async (command: string, args: readonly string[]): Promise<string> => {
+        expect(command).toBe(managed);
+        expect(args).toEqual(['version']);
+        return 'ngrok version 3.30.0';
+      });
+      await expect(resolveManagedNgrokExecutable(root, 'win32', {}, runner)).resolves.toBe(managed);
+      expect(runner).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the actionable ngrok diagnostic instead of replacing it with exit 1', () => {
     const diagnostic = extractNgrokDiagnostic('ERROR:  unknown flag: --web-addr');
     expect(diagnostic).toBe('ERROR:  unknown flag: --web-addr');
@@ -160,15 +179,16 @@ describe('Remote MCP ngrok runtime', () => {
 
   it('recovers only one orphaned lnwjud-style ngrok process for the exact dead gateway target', () => {
     const target = 'http://127.0.0.1:54894';
-    const orphan = { processId: 13164, parentProcessId: 14372, parentAlive: false, commandLine: `C:\\WindowsApps\\ngrok.exe http ${target} --log=stdout --log-format=json` };
+    const orphan = { processId: 13164, parentProcessId: 14372, parentAlive: false, commandLine: `C:\\WindowsApps\\ngrok.exe http ${target} --metadata=lnwjud-remote-mcp --log=stdout --log-format=json` };
     expect(selectRecoverableStaleNgrokProcess([orphan], target)).toEqual(orphan);
     expect(selectRecoverableStaleNgrokProcess([{ ...orphan, parentAlive: true }], target)).toBeNull();
+    expect(selectRecoverableStaleNgrokProcess([{ ...orphan, commandLine: `ngrok.exe http ${target} --log=stdout --log-format=json` }], target)).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([{ ...orphan, commandLine: `ngrok.exe http ${target}` }], target)).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan], 'http://127.0.0.1:60000')).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan, { ...orphan, processId: 13165 }], target)).toBeNull();
-    const pinnedOrphan = { ...orphan, processId: 20100, commandLine: `ngrok.exe http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
+    const pinnedOrphan = { ...orphan, processId: 20100, commandLine: `ngrok.exe http ${target} --url https://steady.ngrok-free.app --metadata=lnwjud-remote-mcp --log=stdout --log-format=json` };
     expect(selectRecoverableStaleNgrokProcess([pinnedOrphan], target)).toEqual(pinnedOrphan);
-    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
+    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --url https://steady.ngrok-free.app --metadata=lnwjud-remote-mcp --log=stdout --log-format=json` };
     expect(selectRecoverableStaleNgrokProcess([posixOrphan], target)).toEqual(posixOrphan);
   });
 });
@@ -193,10 +213,22 @@ describe('Remote MCP OAuth gateway', () => {
     expect(save).not.toHaveBeenCalled();
     locked = false;
     await Promise.all([internal.ensurePersistenceLoaded(), internal.ensurePersistenceLoaded()]);
-    expect(internal.configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
+    expect(internal.configuredNgrokOrigin).toBe('https://steady.ngrok-free.app');
+    expect(internal.configuredExternalOrigin).toBeNull();
     await internal.persistState();
     expect(load).toHaveBeenCalledTimes(2);
-    expect(save).toHaveBeenCalledWith(state);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      schemaVersion: 3,
+      desiredRunning: true,
+      transport: 'ngrok',
+      externalGatewayPort: null,
+      configuredPublicOrigin: 'https://steady.ngrok-free.app',
+      configuredNgrokOrigin: 'https://steady.ngrok-free.app',
+      configuredExternalOrigin: null,
+      trustedClients: state.trustedClients,
+      refreshGrants: state.refreshGrants,
+      registeredClients: [expect.objectContaining({ clientId: 'saved-client', trusted: true })],
+    }));
   });
 
   it('migrates schema-1 state without treating an observed runtime origin as configured', async () => {
@@ -211,9 +243,10 @@ describe('Remote MCP OAuth gateway', () => {
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
-    expect(internal.configuredPublicOrigin).toBeNull();
+    expect(internal.configuredNgrokOrigin).toBeNull();
+    expect(internal.configuredExternalOrigin).toBeNull();
     await internal.persistState();
-    expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: null, trustedClients: [], refreshGrants: [] });
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 3, desiredRunning: false, transport: 'ngrok', externalGatewayPort: null, configuredPublicOrigin: null, configuredNgrokOrigin: null, configuredExternalOrigin: null, registeredClients: [], trustedClients: [], refreshGrants: [] });
   });
 
   it('ignores an invalid legacy observed public origin from encrypted schema-1 state', async () => {
@@ -233,7 +266,8 @@ describe('Remote MCP OAuth gateway', () => {
       const controller = new RemoteMcpController({ dataPath: root, getLocalMcpUrl: async (): Promise<null> => null, secretProtector });
       const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void> };
       await internal.ensurePersistenceLoaded();
-      expect(internal.configuredPublicOrigin).toBeNull();
+      expect(internal.configuredNgrokOrigin).toBeNull();
+      expect(internal.configuredExternalOrigin).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -245,7 +279,7 @@ describe('Remote MCP OAuth gateway', () => {
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const status = await controller.savePublicOrigin('steady.ngrok-free.app');
     expect(status.configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
-    expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 3, desiredRunning: false, transport: 'ngrok', externalGatewayPort: null, configuredPublicOrigin: 'https://steady.ngrok-free.app', configuredNgrokOrigin: 'https://steady.ngrok-free.app', configuredExternalOrigin: null, registeredClients: [], trustedClients: [], refreshGrants: [] });
   });
 
   it('does not replace the ngrok authtoken when encrypted Remote MCP state cannot be loaded', async () => {
@@ -278,10 +312,185 @@ describe('Remote MCP OAuth gateway', () => {
         secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
       });
       await controller.saveAuthtoken('a'.repeat(24));
-      expect(save).toHaveBeenCalledWith({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
+      expect(save).toHaveBeenCalledWith({ schemaVersion: 3, desiredRunning: false, transport: 'ngrok', externalGatewayPort: null, configuredPublicOrigin: 'https://steady.ngrok-free.app', configuredNgrokOrigin: 'https://steady.ngrok-free.app', configuredExternalOrigin: null, registeredClients: [], trustedClients: [], refreshGrants: [] });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('preserves the legacy ngrok domain while Cloudflare uses an independent external origin', async () => {
+    let persisted: RemoteMcpPersistedState | null = {
+      schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app',
+      trustedClients: [], refreshGrants: [],
+    };
+    const save = vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = state; });
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
+      persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => persisted, save },
+    });
+    const selected = await controller.setTransport('cloudflare');
+    expect(selected.transport).toBe('cloudflare');
+    expect(selected.configuredPublicOrigin).toBeNull();
+    expect(selected.configuredGatewayUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(selected.ngrokPath).toBeNull();
+
+    const external = await controller.savePublicOrigin('https://mcp.example.com');
+    expect(external.configuredPublicOrigin).toBe('https://mcp.example.com');
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
+      schemaVersion: 3,
+      transport: 'cloudflare',
+      configuredPublicOrigin: 'https://mcp.example.com',
+      configuredNgrokOrigin: 'https://steady.ngrok-free.app',
+      configuredExternalOrigin: 'https://mcp.example.com',
+      externalGatewayPort: expect.any(Number),
+    }));
+
+    expect((await controller.setTransport('ngrok')).configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
+    expect((await controller.setTransport('cloudflare')).configuredPublicOrigin).toBe('https://mcp.example.com');
+  });
+
+  it('never installs ngrok when Cloudflare, Custom URL, or Local MCP is selected', async () => {
+    for (const transport of ['cloudflare', 'custom', 'local'] as const) {
+      let persisted: RemoteMcpPersistedState | null = {
+        schemaVersion: 3,
+        desiredRunning: false,
+        transport,
+        externalGatewayPort: transport === 'local' ? null : 18766,
+        configuredPublicOrigin: transport === 'local' ? null : 'https://mcp.example.com',
+        registeredClients: [], trustedClients: [], refreshGrants: [],
+      };
+      const controller = new RemoteMcpController({
+        dataPath: 'unused',
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: {
+          load: async (): Promise<RemoteMcpPersistedState | null> => persisted,
+          save: async (state: RemoteMcpPersistedState): Promise<void> => { persisted = state; },
+        },
+      });
+      await expect(controller.installProvider()).rejects.toThrow(/only when.*transport.*ngrok/i);
+      expect((await controller.status()).transport).toBe(transport);
+    }
+  });
+
+  it('verifies external OAuth metadata against the exact configured origin', async () => {
+    const fetcher = vi.fn(async (): Promise<Response> => new Response(JSON.stringify({
+      issuer: 'https://mcp.example.com',
+      authorization_endpoint: 'https://mcp.example.com/oauth/authorize',
+      token_endpoint: 'https://mcp.example.com/oauth/token',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    await expect(verifyExternalPublicOrigin('https://mcp.example.com', 1_000, fetcher as typeof fetch)).resolves.toBe(true);
+    const wrong = vi.fn(async (): Promise<Response> => new Response(JSON.stringify({ issuer: 'https://evil.example' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    await expect(verifyExternalPublicOrigin('https://mcp.example.com', 1_000, wrong as typeof fetch)).resolves.toBe(false);
+  });
+
+  it('keeps schema-v2 users on ngrok and allows opt-in Local MCP without ngrok', async () => {
+    let persisted: RemoteMcpPersistedState | null = {
+      schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: 'https://steady.ngrok-free.app',
+      trustedClients: [], refreshGrants: [],
+    };
+    const save = vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = state; });
+    const ensureLocalMcpUrl = vi.fn(async (): Promise<string> => 'http://127.0.0.1:32123/mcp');
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
+      ensureLocalMcpUrl,
+      persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => persisted, save },
+    });
+    expect((await controller.status()).transport).toBe('ngrok');
+    const selected = await controller.setTransport('local');
+    expect(selected.transport).toBe('local');
+    expect(selected.configuredPublicOrigin).toBeNull();
+    expect(selected.configuredGatewayUrl).toBeNull();
+    const running = await controller.start();
+    expect(running).toMatchObject({ state: 'running', transport: 'local', oauthProtected: false, publicMcpUrl: null, localMcpUrl: 'http://127.0.0.1:32123/mcp' });
+    expect(ensureLocalMcpUrl).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ schemaVersion: 3, transport: 'local', configuredPublicOrigin: null, configuredNgrokOrigin: 'https://steady.ngrok-free.app', configuredExternalOrigin: null }));
+    await controller.stop();
+    expect((await controller.setTransport('ngrok')).configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
+  });
+
+  it('persists pending DCR before 201 and restores it after Desktop restart', async () => {
+    let persisted: RemoteMcpPersistedState | null = null;
+    const persistence = {
+      load: async (): Promise<RemoteMcpPersistedState | null> => persisted,
+      save: vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = structuredClone(state); }),
+    };
+    const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-persisted_123';
+    const first = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
+    const firstInternal = first as unknown as RemoteMcpTestAccess;
+    await firstInternal.ensurePersistenceLoaded();
+    await firstInternal.startGateway();
+    firstInternal.publicOrigin = firstInternal.gatewayUrl;
+    firstInternal.runState = 'running';
+    const registration = await fetch(firstInternal.gatewayUrl! + '/oauth/register', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [redirectUri] }),
+    });
+    expect(registration.status).toBe(201);
+    const registered = await registration.json() as { client_id: string };
+    expect(persisted).toMatchObject({ schemaVersion: 3, transport: 'ngrok', registeredClients: [expect.objectContaining({ clientId: registered.client_id, trusted: false })] });
+    persisted = { ...persisted!, desiredRunning: true };
+    await first.close();
+
+    const second = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
+    const startSpy = vi.spyOn(second, 'start').mockResolvedValue({ ...EMPTY_REMOTE_MCP_STATUS, state: 'running', provider: 'ngrok', transport: 'ngrok' });
+    await second.autoStartIfDesired();
+    expect(startSpy).toHaveBeenCalledOnce();
+    startSpy.mockRestore();
+    const secondInternal = second as unknown as RemoteMcpTestAccess;
+    await secondInternal.ensurePersistenceLoaded();
+    await secondInternal.startGateway();
+    secondInternal.publicOrigin = secondInternal.gatewayUrl;
+    secondInternal.runState = 'running';
+    const verifier = 'p'.repeat(64);
+    const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
+    const authorize = new URL(secondInternal.gatewayUrl! + '/oauth/authorize');
+    authorize.searchParams.set('response_type', 'code');
+    authorize.searchParams.set('client_id', registered.client_id);
+    authorize.searchParams.set('redirect_uri', redirectUri);
+    authorize.searchParams.set('state', 'persisted-state');
+    authorize.searchParams.set('code_challenge', challenge);
+    authorize.searchParams.set('code_challenge_method', 'S256');
+    const approval = await fetch(authorize, { redirect: 'manual' });
+    expect(approval.status).toBe(302);
+    expect(new URL(approval.headers.get('location')!).hostname).toBe('127.0.0.1');
+    await second.close();
+  });
+
+  it('recovers a lost legacy ChatGPT client only with exact resource and still requires local approval', async () => {
+    const controller = new RemoteMcpController({
+      dataPath: 'unused',
+      getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
+      persistence: { load: async (): Promise<null> => null, save: async (): Promise<void> => undefined },
+    });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.startGateway();
+    internal.publicOrigin = internal.gatewayUrl;
+    internal.runState = 'running';
+    const origin = internal.gatewayUrl!;
+    const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-recover_123';
+    const challenge = createHash('sha256').update('r'.repeat(64), 'ascii').digest('base64url');
+    const buildAuthorize = (resource: string): URL => {
+      const url = new URL(origin + '/oauth/authorize');
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', 'lost_client_1234567890');
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('state', 'legacy-recovery-state');
+      url.searchParams.set('code_challenge', challenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+      url.searchParams.set('resource', resource);
+      return url;
+    };
+    expect((await fetch(buildAuthorize(origin + '/wrong'), { redirect: 'manual' })).status).toBe(400);
+    expect(internal.clients.size).toBe(0);
+    const recovered = await fetch(buildAuthorize(origin + '/mcp'), { redirect: 'manual' });
+    expect(recovered.status).toBe(302);
+    const localApproval = new URL(recovered.headers.get('location')!);
+    expect(localApproval.hostname).toBe('127.0.0.1');
+    expect(localApproval.searchParams.get('code')).toBeNull();
+    expect(internal.clients.size).toBe(1);
+    await controller.close();
   });
 
   it('deduplicates concurrent Remote MCP starts and releases the start gate after completion', async () => {
@@ -311,19 +520,13 @@ describe('Remote MCP OAuth gateway', () => {
     }
   });
 
-  it('retries a persistent Remote MCP after an unexpected disconnect and manual stop cancels the pending retry', async () => {
+  it('retries desired Remote MCP before first trusted client and manual stop cancels the pending retry', async () => {
     vi.useFakeTimers();
     const persisted: RemoteMcpPersistedState = {
       schemaVersion: 2,
       desiredRunning: true,
       configuredPublicOrigin: null,
-      trustedClients: [{
-        clientId: 'chatgpt-client',
-        clientName: 'ChatGPT',
-        redirectUris: ['https://chatgpt.com/connector/oauth/plugin-fixture_123'],
-        tokenEndpointAuthMethod: 'none',
-        clientSecret: null,
-      }],
+      trustedClients: [],
       refreshGrants: [],
     };
     const controller = new RemoteMcpController({
@@ -333,7 +536,7 @@ describe('Remote MCP OAuth gateway', () => {
     });
     const internal = controller as unknown as RemoteMcpTestAccess;
     await internal.ensurePersistenceLoaded();
-    const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: true, autoStartEnabled: true };
+    const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: false, autoStartEnabled: true };
     const statusSpy = vi.spyOn(controller, 'status').mockResolvedValue(runningStatus);
     const startSpy = vi.spyOn(controller, 'start').mockImplementation(async () => {
       internal.runState = 'running';

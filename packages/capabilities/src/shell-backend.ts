@@ -163,7 +163,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     switch (parsed.value.operation) {
       case 'run': return this.run(parsed.value, signal, authorization);
       case 'list': return this.listTasks(parsed.value.owner, parsed.value.limit, parsed.value.cursor);
-      case 'status': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);
+      case 'status': return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines, parsed.value.owner);
       case 'wait': return this.wait(parsed.value);
       case 'logs': return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines, parsed.value.owner);
       case 'result': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);

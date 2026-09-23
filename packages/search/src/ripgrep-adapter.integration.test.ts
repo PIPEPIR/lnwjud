@@ -85,6 +85,35 @@ describe('RipgrepAdapter', () => {
     expect(childWasAborted).toBe(true);
   });
 
+  it('finds failureLegacyBotName() as a literal query without regex parsing', async () => {
+    let receivedArgs: readonly string[] = [];
+    const runner: ProcessRunner = {
+      async run(_command, args): Promise<ProcessRunResult> {
+        receivedArgs = args;
+        const fixed = args.includes('--fixed-strings');
+        return fixed
+          ? {
+              exitCode: 0,
+              stdout: JSON.stringify({ type: 'match', data: { path: { text: 'src\\fixture.js' }, line_number: 7, lines: { text: 'failureLegacyBotName()\n' } } }) + '\n',
+              stderr: '',
+            }
+          : { exitCode: 2, stdout: '', stderr: 'regex parse error: unclosed group' };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'failureLegacyBotName()' })).resolves.toEqual({
+      ok: true,
+      value: {
+        matches: [{ path: 'src\\fixture.js', line: 7, text: 'failureLegacyBotName()' }],
+        truncated: false,
+      },
+    });
+    expect(receivedArgs).toContain('--fixed-strings');
+    expect(receivedArgs).toContain('failureLegacyBotName()');
+  });
+
   it('passes query metacharacters as one literal argument without shell side effects', async () => {
     let executable = '';
     let receivedArgs: readonly string[] = [];
@@ -105,8 +134,28 @@ describe('RipgrepAdapter', () => {
     expect(executable).toBe('rg.exe');
     expect(receivedArgs).toContain('--no-ignore');
     expect(receivedArgs).toContain('--hidden');
+    expect(receivedArgs).toContain('--fixed-strings');
     expect(receivedArgs).toContain(query);
     expect(receivedArgs).not.toContain(receivedArgs.join(' '));
+  });
+
+  it('enables ripgrep regex semantics only when regex is explicitly true', async () => {
+    let receivedArgs: readonly string[] = [];
+    const runner: ProcessRunner = {
+      async run(_command, args): Promise<ProcessRunResult> {
+        receivedArgs = args;
+        return { exitCode: 1, stdout: '', stderr: '' };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'failureLegacyBotName\\(\\)', regex: true })).resolves.toEqual({
+      ok: true,
+      value: { matches: [], truncated: false },
+    });
+    expect(receivedArgs).not.toContain('--fixed-strings');
+    expect(receivedArgs).toContain('failureLegacyBotName\\(\\)');
   });
 
   it('uses an explicit text-search target instead of searching the whole cwd', async () => {
@@ -160,11 +209,19 @@ describe('RipgrepAdapter', () => {
     });
   });
 
-  it('reports malformed ripgrep arguments as INVALID_INPUT with bounded diagnostics', async () => {
+  it('reports malformed explicit regex as recoverable INVALID_INPUT with retry guidance', async () => {
     const runner: ProcessRunner = { async run(): Promise<ProcessRunResult> { return { exitCode: 2, stdout: '', stderr: 'regex parse error: unclosed group\n' }; } };
     const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
     const adapter = new RipgrepAdapter(resolver, runner);
-    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'broken(' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('unclosed group') } });
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'broken(', regex: true })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'INVALID_INPUT',
+        message: expect.stringContaining('unclosed group'),
+        recoverable: true,
+        details: { argumentKind: 'regex', suggestedAction: 'retry_as_literal_or_fix_regex' },
+      },
+    });
   });
 
   it('asks the process runner to stop after maxResults plus one visible match', async () => {

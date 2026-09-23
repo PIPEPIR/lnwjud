@@ -384,6 +384,30 @@ describe('ShellCapabilityBackend', () => {
     expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0, stdout: 'done' } });
   });
 
+  it('bounds status output to the requested tail while result keeps the full capture', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root] });
+
+    const started = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('one\\ntwo\\nthree')"],
+      cwd: root,
+      execution: 'background',
+      userConfirmed: true,
+    });
+    expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
+    if (!started.ok) return;
+
+    await backend.execute({ operation: 'wait', task_id: started.value.task_id, timeout_seconds: 10 });
+    const status = await backend.execute({ operation: 'status', task_id: started.value.task_id, tail_lines: 2 });
+    expect(status).toMatchObject({ ok: true, value: { state: 'completed', stdout: 'two\nthree' } });
+
+    const result = await backend.execute({ operation: 'result', task_id: started.value.task_id });
+    expect(result).toMatchObject({ ok: true, value: { stdout: 'one\ntwo\nthree' } });
+  });
+
   it('returns a running task instead of blocking an MCP call past the synchronous wait budget', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);

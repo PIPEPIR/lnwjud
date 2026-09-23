@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.4.3 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.5.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.4.3`; public release `v5.4.3` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.4.3)
+คู่มือนี้อัปเดตตาม public release `v5.5.0` บน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.5.0)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -29,7 +29,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ใน v5.4.2 native input bridge รองรับ Windows PowerShell 5.1 โดยตรงทั้งการพิมพ์ข้อความหลายตัวอักษรและการปล่อย modifier ของ hotkey แบบย้อนลำดับพร้อม `finally` cleanup (Issue #114). ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- public release ล่าสุด `lnwjud-Setup-5.4.2.exe` หรือ `lnwjud-Portable-5.4.2.exe`
+- public release ล่าสุด `lnwjud-Setup-5.5.0.exe` หรือ `lnwjud-Portable-5.5.0.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -49,7 +49,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.4.2.exe` จาก GitHub Releases
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.5.0.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -57,7 +57,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.4.2.exe`
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.5.0.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -81,7 +81,7 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 ดังนั้นผู้ใช้เลือกแบบไหนตอนดาวน์โหลดครั้งแรก ก็จะได้รับ update ของแบบนั้นต่อไป ข้อมูล/Settings ต่อผู้ใช้ Windows ยังคงใช้ชุดเดิมตามปกติ
 
-## 3A. Remote MCP ผ่าน ngrok + OAuth (แนะนำสำหรับ ChatGPT เว็บ)
+## 3A. Remote MCP ผ่าน ngrok + OAuth (ค่าเริ่มต้น/รองรับผู้ใช้เดิม)
 
 ใน v4.52.0 วิธีที่ง่ายที่สุดสำหรับ ChatGPT เว็บคือ **Remote MCP — ngrok + OAuth** ซึ่งแยกจาก OpenAI Secure MCP Tunnel เดิมอย่างชัดเจน. งาน Remote MCP/OAuth ที่พัฒนาระหว่างเลขเวอร์ชันภายใน 4.50/4.51 (ซึ่งไม่เคยเผยแพร่เป็น Release) ถูกรวมส่งมอบใน v4.52.0 ชุดเดียว. Local MCP ของ lnwjud ยังคง bind เฉพาะ loopback เช่น `http://127.0.0.1:18765/mcp`; lnwjud จะสร้าง OAuth-protected loopback gateway อีกชั้น แล้วให้ ngrok เปิดเฉพาะ gateway นั้นออกเป็น HTTPS public URL ที่ลงท้าย `/mcp`.
 
@@ -98,7 +98,35 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 Remote MCP gateway รองรับ OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, access token และ refresh token. คำขอ `/mcp` ที่ไม่มี bearer token ที่ถูกต้องจะถูกปฏิเสธ และ Authorization header จากอินเทอร์เน็ตจะไม่ถูกส่งต่อเข้า local MCP โดยตรง.
 
-## 3. เลือกวิธียืนยันตัวตนของ OpenAI Secure MCP Tunnel
+### 3B. Remote MCP ผ่าน Cloudflare
+
+โหมด **Cloudflare** เป็นตัวเลือกเพิ่มใน v5.5.0 และไม่เปลี่ยนผู้ใช้เดิมจาก ngrok อัตโนมัติ. ใช้เมื่อคุณมี Cloudflare Tunnel/reverse proxy ของตัวเองอยู่แล้ว:
+
+1. เลือก Transport = **Cloudflare** ใน Settings.
+2. lnwjud จะเปิด OAuth-protected gateway บน loopback แบบ stable และแสดง **Local gateway target** ให้คัดลอก.
+3. ตั้ง Cloudflare Tunnel/reverse proxy ของคุณให้ forward มาที่ gateway target ที่ lnwjud แสดง — ไม่ใช่ raw Local MCP URL.
+4. ใส่ public HTTPS origin ของคุณ เช่น `https://mcp.example.com` แล้วบันทึก.
+5. กด Start Remote MCP; lnwjud จะตรวจว่ public origin วิ่งกลับมาถึง gateway จริงก่อนรายงาน RUNNING.
+
+lnwjud **ไม่ได้สร้าง Cloudflare Tunnel ให้เอง** ในโหมดนี้ และจะไม่ติดตั้ง/รัน ngrok. การจัดการ Cloudflare token/domain/tunnel เป็นของผู้ใช้หรือระบบภายนอก.
+
+### 3C. Remote MCP ผ่าน Custom URL
+
+โหมด **Custom URL** ใช้กับ reverse proxy HTTPS ที่คุณจัดการเอง เช่น proxy/gateway ขององค์กร. พฤติกรรมเหมือน Cloudflare ในส่วน security boundary: lnwjud เปิด stable protected loopback gateway, ไม่ต้องใช้ ngrok authtoken และจะ verify public HTTPS origin ก่อนขึ้น RUNNING. Proxy ต้องชี้มาที่ gateway target ที่ Settings แสดง ไม่ใช่ raw Local MCP listener.
+
+### 3D. Local MCP โดยไม่ใช้ ngrok
+
+โหมด **Local MCP** เปิดเฉพาะ listener บน loopback สำหรับ MCP client ในเครื่อง/เครือข่ายที่เข้าถึง loopback ผ่านกลไกของตัวเอง. โหมดนี้:
+
+- ไม่ติดตั้งหรือรัน ngrok;
+- ไม่มี public gateway/public MCP URL;
+- ไม่ต้องมี ngrok token หรือ public OAuth;
+- แสดง Local MCP URL ชัดเจน;
+- ไม่แสดงปุ่ม Reconnect ChatGPT หรือขั้นตอนสร้าง ChatGPT Plugin ที่ไม่เกี่ยวข้อง.
+
+Local MCP เป็นตัวเลือกเพิ่ม ไม่ได้แทน OpenAI Secure MCP Tunnel หรือ Remote MCP OAuth สำหรับ ChatGPT ระยะไกล.
+
+### 3E. เลือกวิธียืนยันตัวตนของ OpenAI Secure MCP Tunnel
 
 หน้า **Settings → Secure Tunnel Authentication** แสดงวิธีที่กำลังใช้อยู่เป็น `OAUTH` หรือ `API KEY` และทุกหน้าหลัก/Logs/Doctor จะอิงค่านี้เหมือนกัน. เมื่ออยู่โหมด OAuth หน้าหลักจะแสดง OAuth account/status และไม่พาเข้า wizard สำหรับวาง Runtime API key; ฟอร์ม Runtime API key ยังอยู่เฉพาะส่วน Advanced ในฐานะ legacy fallback/troubleshooting. Transport ยังคงเป็น **OpenAI Secure MCP Tunnel** ไม่ว่า auth mode จะเป็นแบบใด.
 
@@ -133,6 +161,8 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 6. ถ้ายังไม่เชื่อม ให้กด **Reconnect Tunnel เดิม** ใน Settings หรือ **Start Tunnel** จากหน้า Home
 
 `Persistent Tunnel Identity` มีหน้าที่จำ Tunnel ID เดิม และ **ไม่ใช่คำสั่งให้ runtime ต้องเปิดตลอดเวลา**. lnwjud เก็บ desired Run/Stop state แยกจาก identity: เมื่อผู้ใช้กด **Stop Tunnel** จะบันทึกสถานะ `stopped`, ปิด reconnect supervisor/timer, หยุด runtime และตรวจยืนยันการหยุดผ่าน `tunnel-client.exe` ที่เป็น owner จริง. สถานะ Stop นี้คงอยู่แม้ปิด/เปิด lnwjud ใหม่ และ Automatic reconnect จะไม่เปิด tunnel กลับเองจนกว่าผู้ใช้จะกด **Start Tunnel** อีกครั้ง. ถ้าโปรแกรมปิดผิดปกติระหว่าง Stop แล้ว runtime เดิมยังรอดอยู่ การเปิดครั้งถัดไปจะ reconcile desired `stopped` และพยายามหยุด owner เดิมต่อแทนการเปิด client ใหม่ซ้อน.
+
+เมื่อเปิดโปรแกรม หาก Tunnel เคยตั้งค่าและ Start ไว้แล้ว และ **Persistent Tunnel Runtime** ยังเปิดอยู่ lnwjud จะเริ่ม Tunnel ให้อัตโนมัติ; ผู้ใช้ใหม่ยังต้องตั้งค่าและกด Start ครั้งแรกเอง และหากผู้ใช้กด Stop โปรแกรมจะจำสถานะหยุดข้ามการเปิดโปรแกรมจนกว่าจะกด Start Tunnel อีกครั้ง.
 
 ถ้าเปลี่ยน **Runtime API key**, **Tunnel ID** หรือ tunnel-client override ขณะที่ Persistent Tunnel Runtime เดิมทำงานอยู่ lnwjud จะรักษา ownership ให้ชัดเจน. สำหรับการเปลี่ยน tunnel-client โปรแกรมจะ validate path ใหม่ก่อน จากนั้นหยุดและยืนยัน runtime เดิมผ่าน executable owner ที่บันทึกไว้ **ก่อน** commit custom/bundled selection ใหม่; ถ้าหยุด owner เดิมไม่ได้ จะไม่ start client ตัวใหม่ซ้อน. สำหรับ Tunnel ID/credentials การ Start แบบ manual จะ reconcile alias `lnwjud` แบบ controlled ก่อน reconnect ด้วยค่าที่บันทึกใหม่. Auto reconnect จะไม่เปลี่ยนไปใช้ Tunnel ID อื่นเอง และการบันทึก key/path/profile จะไม่ override desired `stopped` ของผู้ใช้.
 
@@ -344,8 +374,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.4.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.4.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

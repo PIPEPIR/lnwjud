@@ -430,6 +430,9 @@ describe('ScheduledContinuationService', () => {
       expect(serialized).not.toContain(started.leaseToken!);
       expect(result.value.scheduleRequest).toMatchObject({ occurrence: 'interval', intervalMinutes: 60 });
       expect(result.value.scheduleRequest.schedule).toContain('RRULE:FREQ=HOURLY;INTERVAL=1');
+      expect(result.value.scheduleRequest.prompt).toContain('connected lnwjud plugin/connector');
+      expect(result.value.scheduleRequest.prompt).toContain('Do not send user-visible prose before the claim attempt');
+      expect(result.value.scheduleRequest.prompt).toContain('exact connected lnwjud mention');
       expect(result.value.scheduleRequest.prompt).toContain('claim_scheduled_continuation');
       expect(result.value.scheduleRequest.prompt).toContain('one hourly Native ChatGPT recurring watchdog');
       expect(result.value.scheduleRequest.prompt).toContain('same native task remains runnable across normal firings');
@@ -441,6 +444,8 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('make this exact recurring native task non-runnable');
       expect(result.value.scheduleRequest.prompt).toContain('never hard-code an internal operation name');
       expect(result.value.scheduleRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
+      expect(result.value.scheduleRequest.prompt).toContain('If the lnwjud connector cannot be resolved or claim_scheduled_continuation cannot be invoked');
+      expect(result.value.scheduleRequest.prompt).toContain('do not claim durable progress');
       expect(result.value.scheduleRequest.prompt).toContain('Scheduler transport failure alone never completes, fails, or blocks the durable goal');
       expect(result.value.scheduleRequest.prompt).toContain('Never report completion until finish_goal completes and get_goal is terminal');
       expect(result.value.scheduleRequest.prompt).toContain('Windows Task Scheduler');

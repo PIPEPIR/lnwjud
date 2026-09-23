@@ -397,9 +397,84 @@ describe('FileService writes', () => {
 
     await expect(service.editFile(actor, workspace.id, {
       path: path.join('src', 'file.txt'), oldText: 'same', newText: 'changed', expectedOccurrences: 1,
-    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        recoverable: true,
+        details: { conflictKind: 'MULTIPLE_MATCHES', suggestedAction: 're_read_with_more_context_and_retry', expectedOccurrences: 1, observedOccurrences: 2 },
+      },
+    });
     expect(checkpoints.calls).toEqual([]);
     await expect(readFile(target, 'utf8')).resolves.toBe('same same');
+  });
+
+  it('reports missing exact text as recoverable with current-file context and a re-read suggestion', async () => {
+    const workspace = await createWorkspace();
+    const checkpoints = checkpointService();
+    const target = path.join(workspace.rootPath, 'src', 'stale.txt');
+    await writeFile(target, 'alpha\ncurrentValue = 2\nomega\n', 'utf8');
+    const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints });
+
+    const result = await service.editFile(actor, workspace.id, {
+      path: path.join('src', 'stale.txt'),
+      oldText: 'currentValue = 1',
+      newText: 'currentValue = 3',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        recoverable: true,
+        details: {
+          conflictKind: 'TEXT_NOT_FOUND',
+          suggestedAction: 're_read_and_retry',
+          expectedOccurrences: 1,
+          observedOccurrences: 0,
+          candidateContext: expect.stringContaining('currentValue = 2'),
+        },
+      },
+    });
+    expect(checkpoints.calls).toEqual([]);
+    await expect(readFile(target, 'utf8')).resolves.toBe('alpha\ncurrentValue = 2\nomega\n');
+  });
+
+  it('detects CRLF versus LF and whitespace-only exact-edit drift without fuzzy editing', async () => {
+    const workspace = await createWorkspace();
+    const checkpoints = checkpointService();
+    const target = path.join(workspace.rootPath, 'src', 'line-endings.txt');
+    await writeFile(target, 'alpha\r\nbeta  =  value\r\ngamma\r\n', 'utf8');
+    const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints });
+
+    await expect(service.editFile(actor, workspace.id, {
+      path: path.join('src', 'line-endings.txt'),
+      oldText: 'alpha\nbeta  =  value\ngamma\n',
+      newText: 'changed',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        recoverable: true,
+        details: { conflictKind: 'STALE_CONTENT', lineEndingMismatch: 1, suggestedAction: 're_read_and_retry' },
+      },
+    });
+
+    await expect(service.editFile(actor, workspace.id, {
+      path: path.join('src', 'line-endings.txt'),
+      oldText: 'beta = value',
+      newText: 'changed',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        recoverable: true,
+        details: { conflictKind: 'STALE_CONTENT', whitespaceMismatch: 1, suggestedAction: 're_read_and_retry' },
+      },
+    });
+
+    expect(checkpoints.calls).toEqual([]);
+    await expect(readFile(target, 'utf8')).resolves.toBe('alpha\r\nbeta  =  value\r\ngamma\r\n');
   });
 
   it('creates a checkpoint and moves delete_file targets into recovery trash', async () => {

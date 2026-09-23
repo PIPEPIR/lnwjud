@@ -7,6 +7,8 @@ describe('MCP Ponytail instructions', () => {
     expect(buildMcpInstructions('off')).toBe(MCP_OUTCOME_DRIVEN_INSTRUCTIONS);
     expect(buildMcpInstructions('off')).not.toContain(BUNDLED_PONYTAIL_SKILL_ID);
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('use checkpoint_goal and session_handoff only');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('call session_handoff before any new mutation');
+    expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('do not rerun completed work');
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('Never invoke generic handoff skills');
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('use those tools directly in the current conversation');
     expect(MCP_OUTCOME_DRIVEN_INSTRUCTIONS).toContain('Do not ask or suggest switching to ChatGPT Work, Codex');

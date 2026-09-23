@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.4.3';
+export const APP_VERSION = '5.5.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -37,6 +37,7 @@ export const ipcChannels = {
   installRemoteMcpProvider: 'lnwjud:install-remote-mcp-provider',
   saveRemoteMcpAuthtoken: 'lnwjud:save-remote-mcp-authtoken',
   setRemoteMcpPublicOrigin: 'lnwjud:set-remote-mcp-public-origin',
+  setRemoteMcpTransport: 'lnwjud:set-remote-mcp-transport',
   startRemoteMcp: 'lnwjud:start-remote-mcp',
   stopRemoteMcp: 'lnwjud:stop-remote-mcp',
   resetRemoteMcpOAuth: 'lnwjud:reset-remote-mcp-oauth',
@@ -484,10 +485,13 @@ export interface TunnelOAuthLoginStatus {
 }
 
 export type RemoteMcpRunState = 'stopped' | 'installing' | 'starting' | 'running' | 'error';
+export type RemoteMcpTransport = 'ngrok' | 'cloudflare' | 'custom' | 'local';
 
 export interface RemoteMcpStatus {
   readonly state: RemoteMcpRunState;
-  readonly provider: 'ngrok';
+  /** Backward-compatible provider field; ngrok remains the default for existing state. */
+  readonly provider: RemoteMcpTransport;
+  readonly transport: RemoteMcpTransport;
   readonly installed: boolean;
   readonly automaticInstallAvailable: boolean;
   readonly automaticInstallMethod: 'windows_store' | 'homebrew' | null;
@@ -495,6 +499,8 @@ export interface RemoteMcpStatus {
   readonly ngrokPath: string | null;
   readonly localMcpUrl: string | null;
   readonly localGatewayUrl: string | null;
+  /** Stable loopback gateway endpoint for externally managed Cloudflare/custom reverse proxies. */
+  readonly configuredGatewayUrl: string | null;
   readonly publicMcpUrl: string | null;
   readonly configuredPublicOrigin: string | null;
   readonly oauthProtected: boolean;
@@ -506,6 +512,7 @@ export interface RemoteMcpStatus {
 export const EMPTY_REMOTE_MCP_STATUS: RemoteMcpStatus = {
   state: 'stopped',
   provider: 'ngrok',
+  transport: 'ngrok',
   installed: false,
   automaticInstallAvailable: false,
   automaticInstallMethod: null,
@@ -513,6 +520,7 @@ export const EMPTY_REMOTE_MCP_STATUS: RemoteMcpStatus = {
   ngrokPath: null,
   localMcpUrl: null,
   localGatewayUrl: null,
+  configuredGatewayUrl: null,
   publicMcpUrl: null,
   configuredPublicOrigin: null,
   oauthProtected: true,
@@ -527,6 +535,10 @@ export interface SaveRemoteMcpAuthtokenRequest {
 
 export interface SetRemoteMcpPublicOriginRequest {
   readonly publicOrigin: string;
+}
+
+export interface SetRemoteMcpTransportRequest {
+  readonly transport: RemoteMcpTransport;
 }
 
 export interface TunnelStatus {
@@ -1071,6 +1083,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.installRemoteMcpProvider]: undefined;
   readonly [ipcChannels.saveRemoteMcpAuthtoken]: SaveRemoteMcpAuthtokenRequest;
   readonly [ipcChannels.setRemoteMcpPublicOrigin]: SetRemoteMcpPublicOriginRequest;
+  readonly [ipcChannels.setRemoteMcpTransport]: SetRemoteMcpTransportRequest;
   readonly [ipcChannels.startRemoteMcp]: undefined;
   readonly [ipcChannels.stopRemoteMcp]: undefined;
   readonly [ipcChannels.resetRemoteMcpOAuth]: undefined;
@@ -1143,6 +1156,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.installRemoteMcpProvider]: RemoteMcpStatus;
   readonly [ipcChannels.saveRemoteMcpAuthtoken]: RemoteMcpStatus;
   readonly [ipcChannels.setRemoteMcpPublicOrigin]: RemoteMcpStatus;
+  readonly [ipcChannels.setRemoteMcpTransport]: RemoteMcpStatus;
   readonly [ipcChannels.startRemoteMcp]: RemoteMcpStatus;
   readonly [ipcChannels.stopRemoteMcp]: RemoteMcpStatus;
   readonly [ipcChannels.resetRemoteMcpOAuth]: RemoteMcpStatus;
@@ -1217,6 +1231,7 @@ export interface LnwjudApi {
   installRemoteMcpProvider(): Promise<IpcResponseMap[typeof ipcChannels.installRemoteMcpProvider]>;
   saveRemoteMcpAuthtoken(request: SaveRemoteMcpAuthtokenRequest): Promise<IpcResponseMap[typeof ipcChannels.saveRemoteMcpAuthtoken]>;
   setRemoteMcpPublicOrigin(request: SetRemoteMcpPublicOriginRequest): Promise<IpcResponseMap[typeof ipcChannels.setRemoteMcpPublicOrigin]>;
+  setRemoteMcpTransport(request: SetRemoteMcpTransportRequest): Promise<IpcResponseMap[typeof ipcChannels.setRemoteMcpTransport]>;
   startRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.startRemoteMcp]>;
   stopRemoteMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopRemoteMcp]>;
   resetRemoteMcpOAuth(): Promise<IpcResponseMap[typeof ipcChannels.resetRemoteMcpOAuth]>;
