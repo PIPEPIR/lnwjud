@@ -6,6 +6,7 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
+import { resolveReleaseSourceIdentity } from './release-source-commit.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
@@ -15,11 +16,9 @@ const packageJson = JSON.parse(await readFile(path.join(desktopRoot, 'package.js
 const version = packageJson.version;
 if (typeof version !== 'string' || version.length === 0) throw new Error('Desktop package version is unavailable');
 
-const commit = git(['rev-parse', 'HEAD']).trim();
-const githubSha = process.env.GITHUB_SHA?.trim();
-if (githubSha && githubSha.toLowerCase() !== commit.toLowerCase()) {
-  throw new Error(`GITHUB_SHA does not match checked-out commit: github=${githubSha} git=${commit}`);
-}
+const checkedOutCommit = git(['rev-parse', 'HEAD']).trim();
+const sourceIdentity = resolveReleaseSourceIdentity(checkedOutCommit, process.env);
+const commit = sourceIdentity.commit;
 const workingTreeStatusAtEvidence = git(['status', '--porcelain=v1', '--untracked-files=normal']).trim();
 const sourceDirtyAtStart = parseSourceDirtyAtStart(process.env.LNWJUD_SOURCE_DIRTY_AT_START);
 const workingTreeDirtyAtEvidence = workingTreeStatusAtEvidence.length > 0;
@@ -59,6 +58,8 @@ const provenance = {
     runId: optionalEnv('GITHUB_RUN_ID'),
     runAttempt: optionalEnv('GITHUB_RUN_ATTEMPT'),
     ref: optionalEnv('GITHUB_REF'),
+    ...(sourceIdentity.workflowTriggerCommit ? { workflowTriggerCommit: sourceIdentity.workflowTriggerCommit } : {}),
+    ...(sourceIdentity.expectationSource ? { sourceCommitExpectationSource: sourceIdentity.expectationSource } : {}),
     signingCredentialConfigured: signingConfigured(platform),
     ...(macSigning ? { macSigning } : {}),
     workingTreeDirtyAtEvidence,
