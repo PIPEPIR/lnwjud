@@ -68,6 +68,13 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
             tags: ['MCP', 'Cloudflare', 'ngrok', 'Local MCP'],
           },
           {
+            id: 'tunnel-auto-start',
+            titleKey: 'whatsNew.550.tunnelAutoStart.title',
+            descriptionKey: 'whatsNew.550.tunnelAutoStart.description',
+            badge: 'improved',
+            tags: ['Tunnel', 'startup', 'reconnect'],
+          },
+          {
             id: 'scheduled-continuation',
             titleKey: 'whatsNew.550.scheduler.title',
             descriptionKey: 'whatsNew.550.scheduler.description',

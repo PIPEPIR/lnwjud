@@ -51,15 +51,15 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.4.3
+## Current published version: v5.5.0
 
 ## Current source version: v5.5.0
 
-Latest published release: **v5.4.3**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+Latest published release: **v5.5.0**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
 ### What's new in v5.5.0
 
-v5.5.0 is the current source version and combines the Office Suite, in-app What's New, scheduled-continuation reliability work, connection-resilience improvements, and additive Remote MCP transports. Published download links remain on v5.4.3 until v5.5.0 is formally released.
+v5.5.0 combines the Office Suite, in-app What's New, scheduled-continuation reliability work, connection-resilience improvements, additive Remote MCP transports, and tunnel startup continuity for previously connected users.
 
 - **Semantic Office Suite:** Word, Excel, PowerPoint, Outlook, Calendar, Contacts and Tasks route through one provider-aware runtime. Windows COM readiness is action-level, optional/local/cloud providers fail closed when no verified implementation exists, Graph remains unavailable until real OAuth/provider acceptance exists, and legacy Office aliases remain supported.
 - **Office mutation/recovery:** Active Project, dry-run, mutation classification, pre-image recovery and dangerous-action confirmation stay in force. Macro execution stays disabled/unsupported; sending mail or invitations remains confirmation-gated.
@@ -70,6 +70,7 @@ v5.5.0 is the current source version and combines the Office Suite, in-app What'
 - **Reconnect-result recovery:** after a ChatGPT page/client interruption or missing assistant summary, `session_handoff` reads the active goal or latest terminal Durable Goal and bounded recent durable-task status/output tails. Terminal work is reported from persisted receipts instead of being relaunched merely to recreate the missing summary; task observation remains workspace/session scoped.
 - **Search/edit recovery:** `search_text` defaults to ripgrep fixed-string matching, with regex semantics available only through explicit `regex: true`; malformed explicit regex/glob input returns a recoverable structured error. `edit_file` remains exact-only and never fuzzy-edits automatically, but conflict responses now identify multiple/stale/not-found cases, detect CRLF/LF or whitespace drift, include bounded nearby context when available, and suggest re-read/retry.
 - **Remote MCP transports:** ngrok remains the default/backward-compatible mode. Cloudflare and Custom URL use an externally managed public HTTPS reverse proxy to a stable protected loopback gateway; Local MCP starts without ngrok/public OAuth. OpenAI Secure MCP Tunnel, OAuth/API-key tunnel flows and Persistent Tunnel Runtime remain separate and supported.
+- **Tunnel startup continuity:** a previously configured and started Secure MCP Tunnel starts automatically when lnwjud opens while Persistent Tunnel Runtime remains enabled. First-time setup stays manual, and an explicit Stop remains stopped across app restarts until Start Tunnel is pressed again.
 - **DCR/ngrok reliability:** pending Dynamic Client Registration is persisted before registration success so restart-before-authorize does not become `invalid_client`; schema v3 preserves existing trusted clients/refresh grants, and stale ngrok cleanup is limited to processes proven lnwjud-owned.
 
 ### What's new in v5.4.3

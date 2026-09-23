@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.4.3 release directly.</p>
+<p align="center">Choose your platform and download the current v5.5.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.4.3.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.4.3.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.3-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.3-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.3-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.4.3-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,15 +51,15 @@
 
 ---
 
-## Current published version: v5.4.3
+## Current published version: v5.5.0
 
 ## Current source version: v5.5.0
 
-Latest published release: **v5.4.3**. The download buttons above point directly to the published v5.4.3 assets. The release is built from the verified v5.4.3 source line and published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.5.0**. The download buttons above point directly to the published v5.5.0 assets. The release is built from the verified v5.5.0 source line and published only after the exact tagged main commit passes the target-native release gates.
 
 ### What's new in v5.5.0
 
-v5.5.0 is the current source version and combines the Office Suite, in-app What's New, scheduled-continuation reliability work, connection-resilience improvements, and additive Remote MCP transports. Published download links remain on v5.4.3 until v5.5.0 is formally released.
+v5.5.0 combines the Office Suite, in-app What's New, scheduled-continuation reliability work, connection-resilience improvements, additive Remote MCP transports, and tunnel startup continuity for previously connected users.
 
 - **Office Suite semantic runtime:** adds truthful Word, Excel, PowerPoint, Outlook, Calendar, Contacts and Tasks surfaces while preserving legacy Office tools. Windows COM actions are advertised only when implemented; macOS/Linux local parity, Microsoft Graph, Access/Visio/Project/Publisher and other optional providers remain not-ready when no verified provider exists. See [Office Suite v5.5.0](docs/OFFICE_SUITE.md).
 - **Office safety and real-provider acceptance:** Office mutations stay inside Active Project, permission, recovery and dangerous-action confirmation boundaries. Macros remain disabled/unsupported and sending remains confirmation-gated. The Windows acceptance harness exercises synthetic Word/Excel/PowerPoint files with bounded per-action timeouts; Outlook proceeds into bounded read/draft checks only when its COM status probe proves ready, otherwise readiness is reported as degraded instead of being faked.
@@ -69,6 +69,7 @@ v5.5.0 is the current source version and combines the Office Suite, in-app What'
 - **Reconnect-result recovery:** after a ChatGPT page/client interruption or a missing assistant summary, `session_handoff` recovers the active goal or latest terminal Durable Goal plus bounded recent durable-task status/output tails. Completed terminal work is summarized from persisted receipts instead of being rerun, while task observation remains workspace/session scoped.
 - **Search/edit recovery hardening:** `search_text` now treats the query as a literal fixed string by default and enables ripgrep regex syntax only with explicit `regex: true`. `edit_file` keeps exact-match safety but returns recoverable conflict metadata, CRLF/LF or whitespace mismatch hints, bounded candidate context, and a re-read/retry action instead of a dead-end non-recoverable error.
 - **More Remote MCP transport choices:** ngrok remains the default/backward-compatible transport. Cloudflare and Custom URL are opt-in externally managed HTTPS reverse-proxy modes, and Local MCP can run without ngrok or public OAuth. Existing OAuth, OpenAI Secure MCP Tunnel, API-key tunnel and Persistent Tunnel Runtime flows remain separate and supported.
+- **Tunnel startup continuity:** a previously configured and started Secure MCP Tunnel starts automatically when lnwjud opens while Persistent Tunnel Runtime remains enabled. First-time setup stays manual, and an explicit Stop remains stopped across app restarts until Start Tunnel is pressed again.
 - **Remote MCP persistence/recovery:** pending Dynamic Client Registration survives Desktop restart, v1/v2 saved state migrates to v3 without losing existing trusted clients/refresh grants, and stale ngrok cleanup is restricted to processes proven to be lnwjud-owned.
 
 ### What's new in v5.4.3
