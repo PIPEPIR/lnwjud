@@ -75,6 +75,13 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
             tags: ['scheduled-tasks', 'durable-goals'],
           },
           {
+            id: 'reconnect-result-recovery',
+            titleKey: 'whatsNew.550.reconnectRecovery.title',
+            descriptionKey: 'whatsNew.550.reconnectRecovery.description',
+            badge: 'fixed',
+            tags: ['reconnect', 'durable-goals', 'recovery'],
+          },
+          {
             id: 'search-edit-recovery',
             titleKey: 'whatsNew.550.searchEdit.title',
             descriptionKey: 'whatsNew.550.searchEdit.description',

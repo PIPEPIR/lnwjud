@@ -1,12 +1,15 @@
 import { z } from 'zod';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { IncrementalVerifier } from '../incremental-verifier.js';
+import { withCapabilityOwnerMetadata } from '../request-scope.js';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 
 const DEFAULT_TRACKER_PATH = 'docs/PHASE_PROGRESS.md';
 const DEFAULT_MAX_DIFF_BYTES = 16_000;
 const MAX_TRACKER_EXCERPT_CHARS = 4_000;
-const MAX_BACKGROUND_TASKS = 20;
+const MAX_BACKGROUND_TASKS = 8;
+const MAX_TASK_RECEIPT_CHARS = 1_200;
+const MAX_TASK_RECEIPT_LINES = 12;
 
 const sessionHandoffSchema = z.object({
   workspaceId: z.string().trim().min(1).max(128),
@@ -23,7 +26,7 @@ export function sessionTools(context: McpToolContext, verifier: IncrementalVerif
   return [
     defineTool({
       name: 'session_handoff',
-      description: 'Create concise recovery state using the active Durable Goal and latest Context Capsule as the authoritative source when available, then Git/workspace state and an optional legacy phase tracker fallback. This is task state, not persistent user/agent instructions. It never opens, clicks, types into, or creates a ChatGPT browser conversation; resume must happen through supported host-native turns/chats. Use only when recovery context is actually useful or an unavoidable client/platform interruption requires it.',
+      description: 'Create concise recovery state after a client/page interruption or missing assistant summary without rerunning completed work. Prefer the active Durable Goal; when none exists, recover the latest terminal Durable Goal and its terminal receipt. Also inspect recent durable shell tasks with bounded status/output tails so a terminal result can be summarized immediately instead of relaunched. Then include Git/workspace state and an optional legacy phase tracker fallback. This is task state, not persistent user/agent instructions. It never opens, clicks, types into, or creates a ChatGPT browser conversation; resume must happen through supported host-native turns/chats.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: sessionHandoffSchema,
@@ -58,36 +61,43 @@ async function createSessionHandoff(
       status: 'active',
       limit: 5,
     });
-    if (activeGoals.ok) {
-      const goal = activeGoals.value.goals[0];
-      if (goal !== undefined) {
-        const latestCapsules = await context.services.goals.listContextCapsules(context.actor, goal.goalId, 1);
-        const capsule = latestCapsules.ok ? latestCapsules.value[0] : undefined;
-        goalState = {
-          goalId: goal.goalId,
-          goalKey: goal.goalKey,
-          revision: goal.revision,
-          userIntentRevision: goal.userIntentRevision,
-          objective: goal.objective,
-          currentPhase: goal.currentPhase,
-          plan: goal.plan,
-          acceptanceCriteria: goal.acceptanceCriteria,
-          blockers: goal.blockers,
-          trackedTasks: goal.trackedTasks,
-          nextAction: goal.nextAction,
-          lastCheckpoint: goal.lastCheckpoint,
-          ...(goal.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: goal.currentContextCapsuleId }),
-        };
-        capsuleState = capsule === undefined ? null : {
-          id: capsule.id,
-          sourceGoalRevision: capsule.sourceGoalRevision,
-          sourceUserIntentRevision: capsule.sourceUserIntentRevision,
-          ...(capsule.previousCapsuleId === undefined ? {} : { previousCapsuleId: capsule.previousCapsuleId }),
-          payload: capsule.payload,
-          createdAt: capsule.createdAt,
-        };
-        goalExcerpt = formatGoalHandoff(goalState, capsuleState);
-      }
+    const activeGoal = activeGoals.ok ? activeGoals.value.goals[0] : undefined;
+    const latestGoals = activeGoal === undefined
+      ? await context.services.goals.listGoals(context.actor, { workspaceId: input.workspaceId, limit: 1 })
+      : null;
+    const goal = activeGoal ?? (latestGoals?.ok === true ? latestGoals.value.goals[0] : undefined);
+    if (goal !== undefined) {
+      const latestCapsules = await context.services.goals.listContextCapsules(context.actor, goal.goalId, 1);
+      const capsule = latestCapsules.ok ? latestCapsules.value[0] : undefined;
+      goalState = {
+        goalId: goal.goalId,
+        goalKey: goal.goalKey,
+        status: goal.status,
+        revision: goal.revision,
+        userIntentRevision: goal.userIntentRevision,
+        objective: goal.objective,
+        currentPhase: goal.currentPhase,
+        plan: goal.plan,
+        acceptanceCriteria: goal.acceptanceCriteria,
+        blockers: goal.blockers,
+        trackedTasks: goal.trackedTasks,
+        nextAction: goal.nextAction,
+        lastCheckpoint: goal.lastCheckpoint,
+        updatedAt: goal.updatedAt,
+        ...(goal.terminalSummary === undefined ? {} : { terminalSummary: goal.terminalSummary }),
+        ...(goal.terminalEvidence === undefined ? {} : { terminalEvidence: goal.terminalEvidence }),
+        ...(goal.terminalAt === undefined ? {} : { terminalAt: goal.terminalAt }),
+        ...(goal.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: goal.currentContextCapsuleId }),
+      };
+      capsuleState = capsule === undefined ? null : {
+        id: capsule.id,
+        sourceGoalRevision: capsule.sourceGoalRevision,
+        sourceUserIntentRevision: capsule.sourceUserIntentRevision,
+        ...(capsule.previousCapsuleId === undefined ? {} : { previousCapsuleId: capsule.previousCapsuleId }),
+        payload: capsule.payload,
+        createdAt: capsule.createdAt,
+      };
+      goalExcerpt = formatGoalHandoff(goalState, capsuleState);
     }
   }
   if (signal.aborted) return cancelledHandoff();
@@ -107,7 +117,7 @@ async function createSessionHandoff(
   const staged = await context.services.git.diff(context.actor, input.workspaceId, { staged: true, maxBytes: maxDiffBytes }, signal);
   if (!staged.ok) return err(staged.error);
 
-  const backgroundTasks = await readBackgroundTasks(context, signal);
+  const backgroundTasks = await readBackgroundTasks(context, input.workspaceId, signal);
   const changedFiles = [...new Set(status.value.entries.map((entry) => entry.path))].sort();
   const diffSummary = compactDiff(unstaged.value.patch, staged.value.patch, maxDiffBytes);
   const hasCheckpointResumeContext = goalState !== null
@@ -122,11 +132,13 @@ async function createSessionHandoff(
     diffSummary,
     backgroundTasks,
   });
+  const recoveryReceipt = buildRecoveryReceipt(goalState, backgroundTasks);
 
   return ok({
     prompt,
     recovery_state: prompt,
     recovery_format: 'task_state',
+    recovery_receipt: recoveryReceipt,
     persistent_instructions: false,
     source_priority: goalState === null
       ? ['git_workspace', 'legacy_tracker']
@@ -149,23 +161,55 @@ async function createSessionHandoff(
   });
 }
 
-async function readBackgroundTasks(context: McpToolContext, signal: AbortSignal): Promise<readonly Record<string, unknown>[]> {
+async function readBackgroundTasks(
+  context: McpToolContext,
+  workspaceId: string,
+  signal: AbortSignal,
+): Promise<readonly Record<string, unknown>[]> {
   if (context.services.capabilities === undefined || signal.aborted) return [];
-  const listed = await context.services.capabilities.execute('shell', { operation: 'list' }, signal);
+  const listed = await context.services.capabilities.execute('shell', withCapabilityOwnerMetadata({
+    operation: 'list',
+    workspaceId,
+    limit: MAX_BACKGROUND_TASKS,
+  }, context.actor), signal);
   if (!listed.ok || typeof listed.value !== 'object' || listed.value === null || Array.isArray(listed.value)) return [];
   const tasks = (listed.value as { tasks?: unknown }).tasks;
   if (!Array.isArray(tasks)) return [];
-  return tasks
+  const selected = tasks
     .filter((task): task is Record<string, unknown> => typeof task === 'object' && task !== null && !Array.isArray(task))
     .filter((task) => task.durable === true && typeof task.task_id === 'string')
-    .slice(0, MAX_BACKGROUND_TASKS)
-    .map((task) => ({
+    .slice(0, MAX_BACKGROUND_TASKS);
+  return Promise.all(selected.map(async (task) => {
+    if (signal.aborted) return taskReceipt(task);
+    const observed = await context.services.capabilities!.execute('shell', withCapabilityOwnerMetadata({
+      operation: 'status',
+      workspaceId,
       task_id: task.task_id,
-      state: task.state,
-      ...(task.started_at === undefined ? {} : { started_at: task.started_at }),
-      ...(task.finished_at === undefined ? {} : { finished_at: task.finished_at }),
-      ...(task.exit_code === undefined ? {} : { exit_code: task.exit_code }),
-    }));
+      tail_lines: MAX_TASK_RECEIPT_LINES,
+      include_stdout: true,
+      include_stderr: true,
+    }, context.actor), signal);
+    return taskReceipt(observed.ok && isRecord(observed.value) ? observed.value : task);
+  }));
+}
+
+function taskReceipt(task: Record<string, unknown>): Record<string, unknown> {
+  return {
+    task_id: task.task_id,
+    state: task.state,
+    ...(task.started_at === undefined ? {} : { started_at: task.started_at }),
+    ...(task.finished_at === undefined ? {} : { finished_at: task.finished_at }),
+    ...(task.exit_code === undefined ? {} : { exit_code: task.exit_code }),
+    ...(typeof task.error === 'string' && task.error.trim().length > 0 ? { error: compactTaskOutput(task.error) } : {}),
+    ...(typeof task.stdout === 'string' && task.stdout.trim().length > 0 ? { stdout_tail: compactTaskOutput(task.stdout) } : {}),
+    ...(typeof task.stderr === 'string' && task.stderr.trim().length > 0 ? { stderr_tail: compactTaskOutput(task.stderr) } : {}),
+  };
+}
+
+function compactTaskOutput(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length <= MAX_TASK_RECEIPT_CHARS) return normalized;
+  return `... task output truncated ...\n${normalized.slice(-MAX_TASK_RECEIPT_CHARS)}`;
 }
 
 function formatGoalHandoff(goal: Record<string, unknown>, capsule: Record<string, unknown> | null): string {
@@ -214,6 +258,7 @@ function formatGoalHandoff(goal: Record<string, unknown>, capsule: Record<string
   };
   return [
     `Goal: ${String(goal.goalKey ?? '')} (${String(goal.goalId ?? '')})`,
+    `Goal status: ${String(goal.status ?? 'unknown')}`,
     `Goal revision: ${String(goal.revision ?? '')}; user intent revision: ${String(goal.userIntentRevision ?? '')}`,
     `Objective: ${String(goal.objective ?? '')}`,
     `Current phase: ${String(goal.currentPhase ?? '')}`,
@@ -226,6 +271,11 @@ function formatGoalHandoff(goal: Record<string, unknown>, capsule: Record<string
     'Tracked goal tasks:',
     trackedTasks,
     `Next action: ${String(goal.nextAction ?? '')}`,
+    ...(goal.terminalSummary === undefined ? [] : [
+      `Terminal summary: ${String(goal.terminalSummary)}`,
+      `Terminal evidence: ${evidenceList(goal.terminalEvidence)}`,
+      `Terminal at: ${String(goal.terminalAt ?? '')}`,
+    ]),
     checkpoint === null ? 'Latest checkpoint: none' : `Latest checkpoint: revision ${String(checkpoint.revision ?? '')} — ${String(checkpoint.summary ?? '')}`,
     ...(checkpoint === null ? [] : [
       `Checkpoint evidence: ${evidenceList(checkpoint.evidence)}`,
@@ -264,12 +314,12 @@ function buildHandoffPrompt(input: {
 }): string {
   const tasks = input.backgroundTasks.length === 0
     ? '- none recorded by the durable shell task store'
-    : input.backgroundTasks.map((task) => `- ${String(task.task_id)} (${String(task.state ?? 'unknown')})`).join('\n');
+    : input.backgroundTasks.map(formatTaskReceipt).join('\n');
   const changed = input.changedFiles.length === 0 ? '(clean)' : input.changedFiles.join(', ');
   return [
     'Recovery state from lnwjud durable task state.',
     'This is task state only, not persistent user or agent instructions.',
-    input.goalExcerpt.length === 0 ? 'No active Durable Goal was found; use the Git/workspace fallback below.' : input.goalExcerpt,
+    input.goalExcerpt.length === 0 ? 'No Durable Goal recovery receipt was found; use the Git/workspace fallback below.' : input.goalExcerpt,
     '',
     `Legacy tracker (${input.trackerPath}):`,
     input.trackerAvailable ? (input.trackerExcerpt || '(tracker is empty)') : '(tracker unavailable; this is not fatal when durable goal/Git state exists)',
@@ -277,18 +327,55 @@ function buildHandoffPrompt(input: {
     `Current Git changes: ${changed}`,
     input.diffSummary.length === 0 ? 'Git diff summary: (no diff)' : `Git diff summary:\n${input.diffSummary}`,
     '',
-    'Durable background tasks:',
+    'Durable task receipts (status-only recovery; no task was relaunched):',
     tasks,
     '',
     'Resume rules:',
     '1. If a Durable Goal is present, read/reacquire or claim that same goal before any mutation; do not create a duplicate goal.',
     '2. Prefer the latest Context Capsule plus the latest durable goal revision over legacy tracker prose.',
-    '3. Recover durable jobs by task_id with shell status/logs/result; do not tight-poll or duplicate a live job.',
-    '4. Inspect Git status/diff only as needed for the current phase and continue from the recorded next action.',
-    '5. Do not redo completed phases unless verification proves a regression.',
-    '6. Do not persist this recovery state as USER_INSTRUCTIONS or generic handoff history.',
-    '7. Never use browser/DOM automation to create, type into, switch, or resume ChatGPT conversations; use supported host-native turns/chats only.',
+    '3. If a task or goal is terminal, summarize the persisted receipt first; do not rerun completed work merely to recreate a missing assistant summary.',
+    '4. Recover live durable jobs by task_id with shell status/logs/result; do not tight-poll or duplicate a live job.',
+    '5. Inspect Git status/diff only as needed for the current phase and continue from the recorded next action.',
+    '6. Do not redo completed phases unless verification proves a regression or the user explicitly requests a rerun.',
+    '7. Do not persist this recovery state as USER_INSTRUCTIONS or generic handoff history.',
+    '8. Never use browser/DOM automation to create, type into, switch, or resume ChatGPT conversations; use supported host-native turns/chats only.',
   ].join('\n');
+}
+
+function formatTaskReceipt(task: Record<string, unknown>): string {
+  const exit = task.exit_code === undefined ? '' : ` exit=${String(task.exit_code)}`;
+  const finished = task.finished_at === undefined ? '' : ` finished=${String(task.finished_at)}`;
+  const details = [
+    typeof task.error === 'string' ? `error: ${task.error}` : '',
+    typeof task.stdout_tail === 'string' ? `stdout tail:\n${task.stdout_tail}` : '',
+    typeof task.stderr_tail === 'string' ? `stderr tail:\n${task.stderr_tail}` : '',
+  ].filter((value) => value.length > 0);
+  return [`- ${String(task.task_id)} (${String(task.state ?? 'unknown')}${exit}${finished})`, ...details.map((value) => `  ${value}`)].join('\n');
+}
+
+function buildRecoveryReceipt(
+  goal: Record<string, unknown> | null,
+  backgroundTasks: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  const status = typeof goal?.status === 'string' ? goal.status : undefined;
+  let mode = 'report_terminal_goal';
+  if (status === 'active') mode = 'resume_active_goal';
+  else if (status === undefined) mode = 'workspace_fallback';
+  return {
+    mode,
+    rerun_completed_work: false,
+    ...(goal === null ? {} : {
+      goal_id: goal.goalId,
+      goal_key: goal.goalKey,
+      goal_status: goal.status,
+      goal_revision: goal.revision,
+      next_action: goal.nextAction,
+      ...(goal.terminalSummary === undefined ? {} : { terminal_summary: goal.terminalSummary }),
+      ...(goal.terminalEvidence === undefined ? {} : { terminal_evidence: goal.terminalEvidence }),
+      ...(goal.terminalAt === undefined ? {} : { terminal_at: goal.terminalAt }),
+    }),
+    task_receipts: backgroundTasks,
+  };
 }
 
 function compactTracker(content: string): string {
