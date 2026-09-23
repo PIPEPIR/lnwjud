@@ -13,6 +13,9 @@ import {
 } from '@lnwjud/domain';
 import type { FileActor } from './file-service.js';
 
+// Keep liveness bounded without pre-empting the durable shell provider's own bounded process/finalization probes.
+const TASK_STATE_READ_TIMEOUT_MS = 7_000;
+
 export type ManagedGoalTaskState = 'running' | 'terminal' | 'absent' | 'unknown';
 
 export interface GoalManagedTaskStateReader {
@@ -126,10 +129,19 @@ export class GoalMutationFenceService implements ScheduledContinuationWorkerLive
 
   private async readTaskState(workspaceId: string, task: GoalTrackedTask | string): Promise<ManagedGoalTaskState> {
     if (this.taskStateReader === undefined) return 'unknown';
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await this.taskStateReader.read(workspaceId, task);
+      return await Promise.race([
+        this.taskStateReader.read(workspaceId, task),
+        new Promise<ManagedGoalTaskState>((resolve) => {
+          timeout = setTimeout(() => resolve('unknown'), TASK_STATE_READ_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
     } catch {
       return 'unknown';
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
 }

@@ -77,6 +77,30 @@ describe('GoalMutationFenceService', () => {
     expect(read).toHaveBeenNthCalledWith(2, 'workspace-1', 'unknown');
   });
 
+  it('bounds a stalled managed-task liveness read so scheduled claims fail closed instead of hanging', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const read = vi.fn(async (): Promise<'running'> => new Promise(() => undefined));
+      const service = new GoalMutationFenceService(repository(), {
+        now: (): Date => new Date('2026-08-27T10:00:00.000Z'),
+        taskStateReader: { read: read as never },
+      });
+      const observed = service.observe('goal-1', [
+        { taskId: 'stalled-shell-task', provider: 'shell', role: 'blocking_job', cancelWithGoal: true },
+      ] as never);
+
+      await vi.advanceTimersByTimeAsync(7_000);
+      await expect(observed).resolves.toMatchObject({
+        trustworthy: false,
+        liveFencedCallCount: 0,
+        blockingTaskStates: [{ taskId: 'stalled-shell-task', provider: 'shell', state: 'unknown' }],
+      });
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('treats an empty process/task view with no live fenced calls as trustworthy inactivity', async (): Promise<void> => {
     const read = vi.fn();
     const service = new GoalMutationFenceService(repository(), {
