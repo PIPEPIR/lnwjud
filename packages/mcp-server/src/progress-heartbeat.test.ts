@@ -22,7 +22,7 @@ describe('withProgressHeartbeat', () => {
       return 'done';
     });
 
-    await vi.advanceTimersByTimeAsync(14_999);
+    await vi.advanceTimersByTimeAsync(7_999);
     expect(notify).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
@@ -36,10 +36,10 @@ describe('withProgressHeartbeat', () => {
       },
     });
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(8_000);
     expect(notify).toHaveBeenCalledTimes(2);
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(24_000);
     await expect(pending).resolves.toBe('done');
     const callsAfterDone = notify.mock.calls.length;
 

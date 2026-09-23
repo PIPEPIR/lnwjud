@@ -10,8 +10,8 @@ export interface ProgressNotifyContext {
   };
 }
 
-const HEARTBEAT_FIRST_MS = 15_000;
-const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_FIRST_MS = 8_000;
+const HEARTBEAT_INTERVAL_MS = 8_000;
 
 function readProgressToken(context: ProgressNotifyContext): string | number {
   const fromMeta = context.mcpReq._meta?.progressToken;
