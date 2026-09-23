@@ -63,11 +63,24 @@ jobs:
             }
 
             $rebasedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $sourceSha = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
+              throw "Unable to resolve post-rebase source commit"
+            }
+            Write-Host "Validated build source: $sourceSha (workflow trigger: $env:GITHUB_SHA)"
             "version=$rebasedVersion" >> $env:GITHUB_OUTPUT
+            "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT
             "rebased=true" >> $env:GITHUB_OUTPUT
             "needs_build=true" >> $env:GITHUB_OUTPUT
             exit 0
           }
+
+          $sourceSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
+            throw "Unable to resolve source commit"
+          }
+          Write-Host "Validated build source: $sourceSha (workflow trigger: $env:GITHUB_SHA)"
+          "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT
 
           $tag = "laya-v$currentVersion"
           $nativePreference = $PSNativeCommandUseErrorActionPreference
@@ -136,6 +149,7 @@ jobs:
         if: steps.sync.outputs.needs_build == 'true'
         shell: pwsh
         run: |
+          node --test apps/desktop/scripts/release-source-commit.test.mjs
           corepack pnpm@10.15.0 --filter @lnwjud/codex test
           corepack pnpm@10.15.0 --filter @lnwjud/codex... build
           corepack pnpm@10.15.0 --filter @lnwjud/codex typecheck
@@ -147,7 +161,12 @@ jobs:
         shell: pwsh
         env:
           LNWJUD_COSIGN_PATH: cosign
-        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+          LNWJUD_EXPECTED_COMMIT_SHA: ${{ steps.sync.outputs.source_sha }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:LNWJUD_EXPECTED_COMMIT_SHA)) {
+            throw "sync step did not provide the validated source SHA"
+          }
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 
       - name: Packaged MCP and security smoke
         if: steps.sync.outputs.needs_build == 'true'
