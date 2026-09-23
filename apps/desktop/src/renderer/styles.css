@@ -264,8 +264,9 @@ button.titlebar-version:hover {
 
 .titlebar-whats-new {
   -webkit-app-region: no-drag;
-  width: 22px;
-  height: 22px;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -273,7 +274,7 @@ button.titlebar-version:hover {
   border-radius: 50%;
   background: rgba(245, 197, 66, 0.08);
   color: var(--gold-primary);
-  font: 700 12px/1 var(--font-sans);
+  font: 700 10.5px/1 var(--font-sans);
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
