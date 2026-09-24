@@ -21,7 +21,7 @@ const electronBuilderArgs = [target === 'macos' ? '--mac' : '--linux', ...(targe
 await run('node', ['scripts/prepare-runtime-tools.mjs'], environment);
 await run('node', ['scripts/prepare-ecc-runtime.mjs'], environment);
 await run('node', [target === 'macos' ? 'scripts/build-macos-host.mjs' : 'scripts/build-linux-host.mjs'], environment);
-await run(corepack, ['pnpm@10.15.0', 'build'], environment);
+await run(corepack, ['pnpm@10.15.0', '--filter', '@lnwjud/desktop...', 'build'], environment);
 await runElectronBuilderWithRetry(electronBuilderArgs, environment);
 await run('node', ['scripts/write-release-evidence.mjs'], environment);
 await run('node', ['scripts/verify-release-evidence.mjs'], environment);

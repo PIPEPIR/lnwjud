@@ -122,7 +122,7 @@ describe('guided tunnel onboarding UI', () => {
     expect(running).toContain('tunnel_0123********cdef');
   });
 
-  it('explains that manual Start will restart a mismatched Persistent Tunnel Runtime', () => {
+  it('explains that a mismatched Persistent Tunnel Runtime must be explicitly stopped before changing Tunnel ID', () => {
     const mismatch = guideMarkup('en', tunnel({
       state: 'error',
       hasApiKey: true,
@@ -151,8 +151,8 @@ describe('guided tunnel onboarding UI', () => {
       },
     }));
     expect(mismatch).toContain('The saved configuration differs from the active Persistent Tunnel Runtime.');
-    expect(mismatch).toContain('Select Start Tunnel');
-    expect(mismatch).toContain('safely stop the previous runtime');
+    expect(mismatch).toContain('stop the current runtime explicitly');
+    expect(mismatch).toContain('Credential-only changes can reconnect in place');
   });
 
   it('never renders a raw runtime key in status or summary markup', () => {

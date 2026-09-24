@@ -63,6 +63,10 @@ v5.5.1 is a Windows startup compatibility patch that removes the packaged Electr
 
 - **Windows 10 startup compatibility:** runtime ZIP extraction now uses pure-JavaScript `unzipper`, removing the native ZIP `.node` binding that could fail at process startup.
 - **Cross-platform ZIP behavior stays guarded:** runtime-tool and tunnel-client ZIP extraction use the same implementation, while pre-extraction validation still rejects traversal, absolute paths, symlinks/special files, encrypted entries, oversized expansion, and duplicate/colliding names.
+- **Scheduled wake bundle freshness:** all desktop packaging entrypoints rebuild the recursive `@lnwjud/desktop...` workspace dependency graph before Electron packaging, so `packages/application/dist` cannot silently lag source. The packaged recurring-acquisition branch keeps `currentWakeMayReturn: false` and continues work in the same wake.
+- **Persistent Tunnel Runtime replacement is fail-safe:** credential-only reconnects preserve the live managed alias until health/readiness/control-plane checks confirm recovery. A running runtime attached to a different Tunnel ID is not automatically retired because the official tunnel client has no proven ready-before-retire overlap primitive; explicit Stop then Start is required and strict zero downtime is not claimed.
+- **Durable mutation ownership is unambiguous:** multiple simultaneous live scheduled-continuation owners in one workspace now fail closed with an actionable conflict instead of selecting one by row ordering.
+- **What's New viewport centering:** the portal-backed dialog overlay centers both axes while preserving bounded viewport height, internal scrolling, focus trap, initial focus, Escape close, ARIA semantics, and focus restoration.
 
 ### What's new in v5.5.0
 
@@ -1983,7 +1987,7 @@ launch; standalone `git_reset` / `git_clean` capabilities do not exist.
 | Child process windows are visible | This is expected for the current visible-window Windows build; use handles/logs to manage them |
 | codex_status is unavailable | Install Codex or continue with process_* and project_*; lnwjud does not inspect credentials |
 | Tunnel disconnects with context canceled / context deadline exceeded | MCP connection TTL teardown; start-lnwjud-tunnel.ps1 restarts even on exit 0. After restart, Refresh the connector or send a new ChatGPT message |
-| ChatGPT advertises old tools | Restart server/tunnel, Refresh the connector, and start a new conversation |
+| ChatGPT advertises old tools | Verify lnwjud/tunnel health, then Refresh the connector. If a new conversation sees the refreshed tools but the old conversation returns `FORBIDDEN: This conversation does not support developer MCPs`, that refusal is ChatGPT conversation-level developer-MCP binding state; lnwjud cannot grant or bypass it. Continue in a new conversation rather than repeatedly restarting a healthy local tunnel. |
 | Long tool run looks dead / silent | lnwjud emits progress heartbeats every ~15s after the first 15s; ensure tunnel-client is current and TTL is set via `--mcp.connection-max-ttl 168h0m0s` |
 
 For ambiguous failures, call health locally and run tunnel-client doctor

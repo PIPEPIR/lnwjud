@@ -63,6 +63,10 @@ v5.5.1 is a Windows startup compatibility patch that removes the packaged Electr
 
 - **Windows 10 startup compatibility:** runtime ZIP extraction now uses pure-JavaScript `unzipper`, removing the native ZIP `.node` binding that could fail at process startup with `Cannot find native binding`.
 - **Cross-platform ZIP behavior stays guarded:** runtime-tool and tunnel-client ZIP extraction use the same implementation, while pre-extraction validation still rejects traversal, absolute paths, symlinks/special files, encrypted entries, oversized expansion, and duplicate/colliding names.
+- **Scheduled wake bundle freshness:** Windows, macOS, and Linux desktop packaging now rebuild the full `@lnwjud/desktop...` dependency graph before Electron packaging, preventing a correct source tree from shipping a stale `packages/application/dist`; packaged `recurring_acquired` wakes keep `currentWakeMayReturn: false`.
+- **Persistent Tunnel Runtime replacement is fail-safe:** credential-only reconnects preserve the current managed runtime until health/readiness is confirmed, while a live runtime on a different Tunnel ID is no longer retired before a replacement can be proven ready. Because the official tunnel client still exposes no proven ready-before-retire overlap primitive, Tunnel ID replacement requires an explicit Stop before Start and does not claim zero downtime.
+- **Durable mutation ownership is fail-closed:** if stale durable state leaves more than one live scheduled-continuation owner in one workspace, lnwjud reports the ownership conflict instead of guessing which goal owns mutation rights.
+- **What's New is centered in the app viewport:** the dialog overlay now centers vertically and horizontally while retaining bounded height, internal scrolling, focus trapping, Escape handling, and dialog semantics.
 
 ### What's new in v5.5.0
 

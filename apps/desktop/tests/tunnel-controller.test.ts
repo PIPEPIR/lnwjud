@@ -604,7 +604,7 @@ describe('TunnelController lifecycle', () => {
     });
   });
 
-  it('manual Start safely stops a mismatched persistent runtime before reconnecting the saved Tunnel ID', async () => {
+  it('manual Start refuses retire-before-ready replacement when the running runtime has a different Tunnel ID', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-manual-reconfigure-'));
     temporaryRoots.push(dataPath);
     isolateTunnelProfile(dataPath);
@@ -625,19 +625,14 @@ describe('TunnelController lifecycle', () => {
       exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
       tunnelId: 'tunnel_old012345678', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
     } as const;
-    const oldStopped = { ...oldRunning, running: false, healthy: false, ready: false, pollHealthy: false, pid: null };
-    const newRunning = { ...oldRunning, tunnelId: 'tunnel_new012345678', pid: 5432 };
-    const status = vi.fn()
-      .mockResolvedValueOnce(oldRunning)
-      .mockResolvedValueOnce(oldStopped);
-    const stop = vi.fn(async () => oldStopped);
-    const connect = vi.fn(async () => newRunning);
+    const stop = vi.fn();
+    const connect = vi.fn();
     const adapter: TunnelRuntimeReconcilerAdapter = {
       runtimeAlias: (): string => 'lnwjud',
       capabilities: vi.fn(async () => capabilities),
-      status,
-      connect,
-      stop,
+      status: vi.fn(async () => oldRunning),
+      connect: connect as never,
+      stop: stop as never,
     };
     const controller = new TunnelController({
       getClientPath: (): string => clientPath,
@@ -652,12 +647,11 @@ describe('TunnelController lifecycle', () => {
     });
 
     await expect(controller.start()).resolves.toMatchObject({
-      state: 'running',
-      source: 'desktop',
-      persistent: { mode: 'native-managed', tunnelIdMasked: expect.stringContaining('tunnel_new') },
+      state: 'error',
+      message: expect.stringContaining('ready-before-retire'),
     });
-    expect(stop).toHaveBeenCalledTimes(1);
-    expect(connect).toHaveBeenCalledWith({ tunnelId: 'tunnel_new012345678', mcpServerUrl: 'http://127.0.0.1:18765/mcp' });
+    expect(stop).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it('automatic reconnect never replaces a running persistent runtime with a different Tunnel ID', async () => {
@@ -760,7 +754,7 @@ describe('TunnelController lifecycle', () => {
     controllerInternals(controller).runtimeConfigurationDirty = true;
 
     await expect(controller.start()).resolves.toMatchObject({ state: 'running', source: 'desktop' });
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(controllerInternals(controller).runtimeConfigurationDirty).toBe(false);
   });

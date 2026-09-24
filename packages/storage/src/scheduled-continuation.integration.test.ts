@@ -540,6 +540,70 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
+  it('fails closed when stale state leaves multiple live scheduled mutation owners in one workspace', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:00:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation(prepareRequest(
+        '2026-08-27T00:00:10.000Z',
+        '2026-08-27T00:25:10.000Z',
+        0,
+        'owner-one-fp',
+        'continuation-owner-one',
+      ));
+      expect(prepared.continuation.status).toBe('prepared');
+
+      database.connection.prepare(`
+        INSERT INTO goals (
+          id, workspace_id, goal_key, owner_client_id, objective, plan_json, status, revision,
+          current_phase, next_action, blockers_json, active_task_ids_json,
+          lease_owner_client_id, lease_owner_session_id, lease_token_hash, lease_generation,
+          lease_duration_seconds, lease_heartbeat_at, lease_expires_at,
+          created_at, updated_at, terminal_summary, terminal_evidence_json, terminal_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, 'created', ?, '[]', '[]', ?, ?, ?, 1, 600, ?, ?, ?, ?, NULL, NULL, NULL)
+      `).run(
+        'goal-2',
+        'workspace-1',
+        'stale-second-owner',
+        'chatgpt-web-client',
+        'Simulate stale state with a second live scheduled owner.',
+        JSON.stringify({ steps: [] }),
+        'continue',
+        'chatgpt-web-client',
+        'session-b',
+        'lease-hash-2',
+        '2026-08-27T00:02:00.000Z',
+        '2026-08-27T00:12:00.000Z',
+        '2026-08-27T00:02:00.000Z',
+        '2026-08-27T00:02:00.000Z',
+      );
+      database.connection.prepare(`
+        INSERT INTO goal_scheduled_continuations (
+          id, goal_id, source_session_id, generation, source_goal_revision, status, occurrence, destination,
+          execution_preference, confirmed_runs_on, due_at, native_task_id, request_fingerprint,
+          version, last_detail, created_at, updated_at, claimed_at, terminal_at
+        ) VALUES (?, ?, ?, 1, 0, 'scheduled', 'interval', 'current_chat', 'cloud', 'cloud', ?, ?, ?, 0, NULL, ?, ?, NULL, NULL)
+      `).run(
+        'continuation-owner-two',
+        'goal-2',
+        'session-b',
+        '2026-08-27T01:02:00.000Z',
+        'native-task-two',
+        'owner-two-fp',
+        '2026-08-27T00:02:00.000Z',
+        '2026-08-27T00:02:00.000Z',
+      );
+
+      await expect(repository.getWorkspaceMutationFence('workspace-1')).rejects.toMatchObject({
+        reason: 'conflict',
+        message: expect.stringContaining('multiple active scheduled-continuation mutation owners'),
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it('keeps useful predecessor work alive until the configured handoff and cancels the exact cloud successor on finish', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);

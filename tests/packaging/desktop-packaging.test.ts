@@ -120,6 +120,7 @@ describe('cross-platform desktop packaging', () => {
     expect(config).toContain('artifactName: lnwjud-Setup-${version}.${ext}');
     expect(config).toContain('portable:');
     expect(config).toContain('artifactName: lnwjud-Portable-${version}.${ext}');
+    expect(desktopPackage.scripts?.['package:windows']).toContain('--filter @lnwjud/desktop... build');
     expect(desktopPackage.scripts?.['package:windows']).toContain('--win nsis portable --x64');
     expect(desktopPackage.scripts?.['package:windows']).toContain('write-portable-update-manifest.mjs');
     expect(desktopPackage.scripts?.build).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
@@ -206,6 +207,7 @@ describe('cross-platform desktop packaging', () => {
     const nativePackagingScript = await readFile(path.join(desktopRoot, 'scripts', 'package-native.mjs'), 'utf8');
     const linuxHostBuildScript = await readFile(path.join(desktopRoot, 'scripts', 'build-linux-host.mjs'), 'utf8');
     expect(nativePackagingScript).toContain('prepare-runtime-tools.mjs');
+    expect(nativePackagingScript).toContain("['pnpm@10.15.0', '--filter', '@lnwjud/desktop...', 'build']");
     expect(nativePackagingScript).toContain('build-macos-host.mjs');
     expect(nativePackagingScript).toContain('build-linux-host.mjs');
     expect(nativePackagingScript).toContain('LNWJUD_RUNTIME_ARCH');
