@@ -1,8 +1,13 @@
 import { lstat, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
-import nativeExtractZip from '@electron-internal/extract-zip';
+import { Open } from 'unzipper';
 
 export type ZipExtractImplementation = (archivePath: string, options: { readonly dir: string }) => Promise<void>;
+
+async function extractZipWithUnzipper(archivePath: string, options: { readonly dir: string }): Promise<void> {
+  const archive = await Open.file(archivePath);
+  await archive.extract({ path: options.dir });
+}
 
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
@@ -20,7 +25,7 @@ const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 export async function extractZipSafely(
   archivePath: string,
   destination: string,
-  extractImpl: ZipExtractImplementation = nativeExtractZip,
+  extractImpl: ZipExtractImplementation = extractZipWithUnzipper,
 ): Promise<void> {
   const extractionRoot = path.resolve(destination);
   try {
@@ -81,7 +86,7 @@ async function validateZipArchive(archivePath: string): Promise<void> {
     if (totalUncompressedBytes > MAX_ZIP_UNCOMPRESSED_BYTES) throw new Error('ZIP archive expands beyond the total safety limit');
 
     const nameBytes = archive.subarray(cursor + 46, cursor + 46 + nameLength);
-    const entryName = decodeZipEntryName(nameBytes, flags);
+    const entryName = decodeZipEntryName(nameBytes);
     const normalizedName = validateZipEntryName(entryName);
     const collisionKey = normalizedName.replace(/\/+$/, '').toLowerCase();
     if (collisionKey.length === 0 || entryNames.has(collisionKey)) {
@@ -116,8 +121,11 @@ function findEndOfCentralDirectory(archive: Buffer): number {
   return -1;
 }
 
-function decodeZipEntryName(nameBytes: Buffer, flags: number): string {
-  return nameBytes.toString((flags & 0x0800) !== 0 ? 'utf8' : 'latin1');
+function decodeZipEntryName(nameBytes: Buffer): string {
+  // unzipper decodes central-directory names with Buffer.toString('utf8')
+  // regardless of the UTF-8 flag. Mirror that exact decoding here so the
+  // pre-extraction collision/path checks cannot disagree with extraction.
+  return nameBytes.toString('utf8');
 }
 
 function validateZipEntryName(entryName: string): string {

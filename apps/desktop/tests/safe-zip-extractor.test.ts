@@ -56,6 +56,24 @@ describe('safe ZIP extraction', () => {
     await expect(access(outside)).rejects.toThrow();
   });
 
+  it('rejects names that collide after the UTF-8 decoding used by unzipper', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-safe-zip-decoding-'));
+    roots.push(root);
+    const archivePath = path.join(root, 'decoding-collision.zip');
+    const destination = path.join(root, 'dest');
+    await mkdir(destination, { recursive: true });
+    await writeFile(archivePath, createStoredZip([
+      { name: Buffer.from([0x80, 0x2e, 0x74, 0x78, 0x74]), data: Buffer.from('first'), mode: 0o100644 },
+      { name: Buffer.from([0x81, 0x2e, 0x74, 0x78, 0x74]), data: Buffer.from('second'), mode: 0o100644 },
+    ]));
+    let extractionStarted = false;
+
+    await expect(extractZipSafely(archivePath, destination, async () => {
+      extractionStarted = true;
+    })).rejects.toThrow(/duplicate/);
+    expect(extractionStarted).toBe(false);
+  });
+
   it('rejects archives whose declared expanded size exceeds the safety limit before extraction', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-safe-zip-expansion-'));
     roots.push(root);
@@ -79,7 +97,7 @@ describe('safe ZIP extraction', () => {
 });
 
 interface StoredZipEntry {
-  readonly name: string;
+  readonly name: string | Buffer;
   readonly data: Buffer;
   readonly mode: number;
 }
@@ -90,13 +108,14 @@ function createStoredZip(entries: readonly StoredZipEntry[]): Buffer {
   let localOffset = 0;
 
   for (const entry of entries) {
-    const name = Buffer.from(entry.name, 'utf8');
+    const name = Buffer.isBuffer(entry.name) ? entry.name : Buffer.from(entry.name, 'utf8');
+    const flags = Buffer.isBuffer(entry.name) ? 0 : 0x0800;
     const checksum = crc32(entry.data);
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(0, 8);
     local.writeUInt16LE(0, 10);
     local.writeUInt16LE(0, 12);
@@ -111,7 +130,7 @@ function createStoredZip(entries: readonly StoredZipEntry[]): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE((3 << 8) | 20, 4);
     central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(flags, 8);
     central.writeUInt16LE(0, 10);
     central.writeUInt16LE(0, 12);
     central.writeUInt16LE(0, 14);

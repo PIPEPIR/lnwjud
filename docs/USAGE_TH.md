@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.5.0 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.5.1 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม public release `v5.5.0` บน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.5.0)
+คู่มือนี้อัปเดตตาม public release `v5.5.1` บน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.5.1)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -29,7 +29,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ใน v5.4.2 native input bridge รองรับ Windows PowerShell 5.1 โดยตรงทั้งการพิมพ์ข้อความหลายตัวอักษรและการปล่อย modifier ของ hotkey แบบย้อนลำดับพร้อม `finally` cleanup (Issue #114). ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- public release ล่าสุด `lnwjud-Setup-5.5.0.exe` หรือ `lnwjud-Portable-5.5.0.exe`
+- public release ล่าสุด `lnwjud-Setup-5.5.1.exe` หรือ `lnwjud-Portable-5.5.1.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -49,7 +49,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.5.0.exe` จาก GitHub Releases
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.5.1.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -57,7 +57,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.5.0.exe`
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.5.1.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -164,7 +164,7 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 
 เมื่อเปิดโปรแกรม หาก Tunnel เคยตั้งค่าและ Start ไว้แล้ว และ **Persistent Tunnel Runtime** ยังเปิดอยู่ lnwjud จะเริ่ม Tunnel ให้อัตโนมัติ; ผู้ใช้ใหม่ยังต้องตั้งค่าและกด Start ครั้งแรกเอง และหากผู้ใช้กด Stop โปรแกรมจะจำสถานะหยุดข้ามการเปิดโปรแกรมจนกว่าจะกด Start Tunnel อีกครั้ง.
 
-ถ้าเปลี่ยน **Runtime API key**, **Tunnel ID** หรือ tunnel-client override ขณะที่ Persistent Tunnel Runtime เดิมทำงานอยู่ lnwjud จะรักษา ownership ให้ชัดเจน. สำหรับการเปลี่ยน tunnel-client โปรแกรมจะ validate path ใหม่ก่อน จากนั้นหยุดและยืนยัน runtime เดิมผ่าน executable owner ที่บันทึกไว้ **ก่อน** commit custom/bundled selection ใหม่; ถ้าหยุด owner เดิมไม่ได้ จะไม่ start client ตัวใหม่ซ้อน. สำหรับ Tunnel ID/credentials การ Start แบบ manual จะ reconcile alias `lnwjud` แบบ controlled ก่อน reconnect ด้วยค่าที่บันทึกใหม่. Auto reconnect จะไม่เปลี่ยนไปใช้ Tunnel ID อื่นเอง และการบันทึก key/path/profile จะไม่ override desired `stopped` ของผู้ใช้.
+ถ้าเปลี่ยน **Runtime API key**, **Tunnel ID** หรือ tunnel-client override ขณะที่ Persistent Tunnel Runtime เดิมทำงานอยู่ lnwjud จะรักษา ownership ให้ชัดเจน. สำหรับการเปลี่ยน tunnel-client โปรแกรมจะ validate path ใหม่ก่อน จากนั้นหยุดและยืนยัน runtime เดิมผ่าน executable owner ที่บันทึกไว้ **ก่อน** commit custom/bundled selection ใหม่; ถ้าหยุด owner เดิมไม่ได้ จะไม่ start client ตัวใหม่ซ้อน. สำหรับการเปลี่ยนเฉพาะ credentials การ Start แบบ manual จะ reconnect alias `lnwjud` เดิมและถือว่าสำเร็จเมื่อ Health/Ready/control-plane poll ผ่าน. แต่ถ้า Tunnel ID เปลี่ยนขณะที่ runtime เดิมยังรันอยู่ lnwjud จะไม่หยุด runtime เดิมอัตโนมัติเพื่อสลับทันที เพราะ official tunnel-client ยังไม่มี primitive ที่พิสูจน์ ready-before-retire overlap; ให้ผู้ใช้กด Stop Tunnel เดิมก่อนแล้วจึง Start Tunnel ID ใหม่. Auto reconnect จะไม่เปลี่ยนไปใช้ Tunnel ID อื่นเอง และการบันทึก key/path/profile จะไม่ override desired `stopped` ของผู้ใช้.
 
 **หลายแชท / หลายเครื่อง:** lnwjud หนึ่ง instance + Secure Tunnel `lnwjud` หนึ่งตัวถูกออกแบบให้ใช้ร่วมกันได้หลาย ChatGPT chats/หลาย workspace พร้อมกัน จึง **ไม่ต้องและไม่ควรสร้าง profile/tunnel แยกต่อแชท**. Desktop HTTP MCP แยก concurrent MCP sessions อยู่แล้ว และตั้งแต่ v4.62.0 lnwjud จะกำหนด `MCP_MAX_CONCURRENT_REQUESTS=32` ให้ bundled tunnel-client โดยตรง พร้อม TTL 168 ชั่วโมง เพื่อให้มี headroom เมื่อหลายแชท fan-out tool calls พร้อมกัน. แต่ถ้ารัน lnwjud หลายเครื่อง เช่น Mac + Windows และต้องการให้แชทหนึ่งไป Mac อีกแชทหนึ่งไป Windows แบบแน่นอน ให้ใช้ **Tunnel ID + ChatGPT Tunnel connection แยกต่อเครื่อง**. tunnel-client รองรับ HTTP replicas ที่แชร์ Tunnel ID ได้ในเชิง transport แต่ queued work จะถูกส่งไปยัง replica ที่ poll ได้ก่อน จึงไม่ได้ผูกแชทกับเครื่องใดเครื่องหนึ่ง. Remote MCP ผ่าน ngrok + OAuth ยังเป็นวิธี Recommended และมี transport hop น้อยกว่า จึงอาจตอบสนองเร็ว/นิ่งกว่าภายใต้ burst สูงได้.
 
@@ -374,8 +374,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.5.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.5.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.1.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

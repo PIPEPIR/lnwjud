@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { fetchWithRetry } from './fetch-with-retry.mjs';
 
 const require = createRequire(import.meta.url);
-const extractZip = require('@electron-internal/extract-zip');
+const { Open: openZip } = require('unzipper');
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -54,7 +54,10 @@ async function stageRipgrep({ platform, rawArch, target, ripgrep }) {
   await rm(extractRoot, { recursive: true, force: true });
   await mkdir(extractRoot, { recursive: true });
   await assertCanonicalDirectory(extractRoot);
-  if (ripgrep.kind === 'zip') await extractZip.extract(archivePath, { dir: path.resolve(extractRoot) });
+  if (ripgrep.kind === 'zip') {
+    const archive = await openZip.file(archivePath);
+    await archive.extract({ path: path.resolve(extractRoot) });
+  }
   else await extractTarGz(archivePath, extractRoot);
 
   const executable = await findUniqueFile(extractRoot, ripgrep.executable);

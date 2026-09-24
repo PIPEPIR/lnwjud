@@ -2042,7 +2042,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
   }
 
   public async getWorkspaceMutationFence(workspaceId: string): Promise<ScheduledContinuationMutationFence | null> {
-    const value = this.database.connection.prepare(`
+    const rows = this.database.connection.prepare(`
       SELECT g.id AS goal_id, c.id AS continuation_id
       FROM goals g
       JOIN goal_scheduled_continuations c ON c.goal_id = g.id
@@ -2051,16 +2051,24 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           'prepared','scheduled','create_uncertain',
           'reschedule_required','reschedule_failed','reschedule_uncertain'
         )
-      ORDER BY c.generation DESC
-      LIMIT 1
-    `).get(workspaceId);
-    if (value === undefined) return null;
-    if (!isRecord(value) || typeof value.goal_id !== 'string' || typeof value.continuation_id !== 'string') {
-      throw corrupt('Scheduled continuation mutation fence query is invalid');
+      ORDER BY g.updated_at DESC, c.generation DESC, g.id DESC
+      LIMIT 2
+    `).all(workspaceId);
+    if (rows.length === 0) return null;
+    const normalized = rows.map((value) => {
+      if (!isRecord(value) || typeof value.goal_id !== 'string' || typeof value.continuation_id !== 'string') {
+        throw corrupt('Scheduled continuation mutation fence query is invalid');
+      }
+      return { goalId: value.goal_id, continuationId: value.continuation_id };
+    });
+    const distinctGoalIds = new Set(normalized.map((entry) => entry.goalId));
+    if (distinctGoalIds.size > 1) {
+      throw new GoalStateError('conflict', 'Workspace has multiple active scheduled-continuation mutation owners; reconcile stale goals before mutation');
     }
+    const selected = normalized[0]!;
     return {
-      goal: this.requireById(value.goal_id),
-      continuation: this.requireScheduledContinuationById(value.continuation_id),
+      goal: this.requireById(selected.goalId),
+      continuation: this.requireScheduledContinuationById(selected.continuationId),
     };
   }
 
@@ -2079,7 +2087,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         throw new GoalStateError('lease_invalid', 'Goal lease has expired');
       }
       const fence = this.selectMutationFenceContinuation(goal.id);
-      if (fence === undefined) throw new GoalStateError('conflict', 'Goal has no live scheduled-continuation fence');
+      if (fence === undefined) {
+        throw new GoalStateError('conflict', `Goal ${goal.id} is not the active scheduled-continuation mutation owner for workspace ${request.workspaceId}`);
+      }
       const effectiveDueAt = mutationFenceDueAt(fence);
       if (effectiveDueAt !== undefined && parseIso(effectiveDueAt, 'scheduled continuation handoff') <= parseIso(request.startedAt, 'mutation start')) {
         throw new GoalStateError('lease_invalid', 'Goal handoff deadline has passed');

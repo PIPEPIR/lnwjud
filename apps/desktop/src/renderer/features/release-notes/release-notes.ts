@@ -21,6 +21,58 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.5.1',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          {
+            id: 'mutation-ownership',
+            titleKey: 'whatsNew.551.mutationOwnership.title',
+            descriptionKey: 'whatsNew.551.mutationOwnership.description',
+            badge: 'fixed',
+            tags: ['durable-goals', 'mutation-safety', 'scheduler'],
+          },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'windows-startup',
+            titleKey: 'whatsNew.551.windowsStartup.title',
+            descriptionKey: 'whatsNew.551.windowsStartup.description',
+            badge: 'fixed',
+            tags: ['Windows 10', 'startup', 'ZIP'],
+          },
+          {
+            id: 'scheduled-bundle-freshness',
+            titleKey: 'whatsNew.551.scheduledBundle.title',
+            descriptionKey: 'whatsNew.551.scheduledBundle.description',
+            badge: 'fixed',
+            tags: ['packaging', 'scheduled-tasks', 'durable-goals'],
+          },
+          {
+            id: 'persistent-tunnel-reconnect',
+            titleKey: 'whatsNew.551.tunnelReconnect.title',
+            descriptionKey: 'whatsNew.551.tunnelReconnect.description',
+            badge: 'fixed',
+            tags: ['Tunnel', 'reconnect', 'Persistent Runtime'],
+          },
+          {
+            id: 'modal-centering',
+            titleKey: 'whatsNew.551.modalCentering.title',
+            descriptionKey: 'whatsNew.551.modalCentering.description',
+            badge: 'improved',
+            tags: ['release-notes', 'accessibility', 'UI'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.5.0',
     categories: [
       {

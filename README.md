@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.5.0 release directly.</p>
+<p align="center">Choose your platform and download the current v5.5.1 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.0.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.1.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.0.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.1.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,22 @@
 
 ---
 
-## Current published version: v5.5.0
+## Current published version: v5.5.1
 
-## Current source version: v5.5.0
+## Current source version: v5.5.1
 
-Latest published release: **v5.5.0**. The download buttons above point directly to the published v5.5.0 assets. The release is built from the verified v5.5.0 source line and published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.5.1**. The download buttons above point directly to the published v5.5.1 assets. The release is built from the verified v5.5.1 source line and published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.5.1
+
+v5.5.1 is a Windows startup compatibility patch that removes the packaged Electron main process's dependency on a platform-native ZIP binding.
+
+- **Windows 10 startup compatibility:** runtime ZIP extraction now uses pure-JavaScript `unzipper`, removing the native ZIP `.node` binding that could fail at process startup with `Cannot find native binding`.
+- **Cross-platform ZIP behavior stays guarded:** runtime-tool and tunnel-client ZIP extraction use the same implementation, while pre-extraction validation still rejects traversal, absolute paths, symlinks/special files, encrypted entries, oversized expansion, and duplicate/colliding names.
+- **Scheduled wake bundle freshness:** Windows, macOS, and Linux desktop packaging now rebuild the full `@lnwjud/desktop...` dependency graph before Electron packaging, preventing a correct source tree from shipping a stale `packages/application/dist`; packaged `recurring_acquired` wakes keep `currentWakeMayReturn: false`.
+- **Persistent Tunnel Runtime replacement is fail-safe:** credential-only reconnects preserve the current managed runtime until health/readiness is confirmed, while a live runtime on a different Tunnel ID is no longer retired before a replacement can be proven ready. Because the official tunnel client still exposes no proven ready-before-retire overlap primitive, Tunnel ID replacement requires an explicit Stop before Start and does not claim zero downtime.
+- **Durable mutation ownership is fail-closed:** if stale durable state leaves more than one live scheduled-continuation owner in one workspace, lnwjud reports the ownership conflict instead of guessing which goal owns mutation rights.
+- **What's New is centered in the app viewport:** the dialog overlay now centers vertically and horizontally while retaining bounded height, internal scrolling, focus trapping, Escape handling, and dialog semantics.
 
 ### What's new in v5.5.0
 
@@ -77,7 +88,6 @@ v5.5.0 combines the Office Suite, in-app What's New, scheduled-continuation reli
 - **Remote MCP public OAuth boundary hardened:** unauthenticated dynamic registrations and transient OAuth state are bounded, expired state is pruned, and first-use ChatGPT-compatible OAuth clients require an explicit local approval instead of treating redirect-URI shape as identity.
 - **Release supply chain is immutable:** privileged third-party GitHub Actions used for release publication and cosign setup are pinned to full commit SHAs, with a repository hygiene regression preventing mutable third-party action tags from returning.
 - **PDF archive extraction is containment-safe:** the vulnerable production `extract-zip@2.0.1` path is removed. Archive validation rejects path traversal, absolute paths, symlink/special-file entries, encrypted entries, and duplicate/colliding names before extraction; `pnpm audit --prod` is clean.
-- **Electron native ZIP binding is packaged explicitly:** the Desktop build stages the target-specific `@electron-internal/extract-zip` N-API binding beside the bundled main process and unpacks `.node` files from ASAR, preventing the startup `Cannot find native binding` crash on packaged Windows while preserving macOS/Linux target selection.
 - **Multi-file mutations are all-or-rollback:** `apply_patch` and checkpoint restore automatically restore earlier writes when a later write or cancellation fails, and report explicit rollback failure details instead of silently leaving a mixed tree.
 - **Workspace writes revalidate at publication time:** guarded writes detect symlink/junction/path swaps between initial validation and the final atomic rename, strengthening the workspace boundary against TOCTOU races.
 - **Dashboard idle work is reduced:** the full dashboard snapshot no longer rebuilds every 2 seconds. A 30-second reconciliation fallback is combined with focus/visibility wakeups and immediate refresh after explicit user actions.

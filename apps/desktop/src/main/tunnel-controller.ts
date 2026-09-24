@@ -1242,24 +1242,20 @@ export class TunnelController {
     const restartPersistentRuntime = allowPersistentConfigurationReplacement
       && nativeStatus.exists
       && (tunnelIdMismatch || this.runtimeConfigurationDirty);
-    if (restartPersistentRuntime) {
+    if (restartPersistentRuntime && tunnelIdMismatch && nativeStatus.running) {
+      const message = 'Tunnel ID changed while the current Persistent Tunnel Runtime is still running. Automatic retire-before-ready replacement is refused because the official tunnel-client does not expose a proven ready-before-retire overlap primitive. Stop the existing runtime explicitly, then Start Tunnel again.';
+      this.state = 'error';
+      this.message = message;
+      const status = await this.status();
+      return { ...status, state: 'error', message };
+    }
+    if (restartPersistentRuntime && this.runtimeConfigurationDirty && nativeStatus.running) {
       this.state = 'starting';
-      this.message = tunnelIdMismatch
-        ? 'Tunnel configuration changed; stopping the previous Persistent Tunnel Runtime before applying the new Tunnel ID.'
-        : 'Tunnel credentials or runtime configuration changed; restarting the Persistent Tunnel Runtime before reconnecting.';
-      try {
-        if (nativeStatus.running) nativeStatus = await adapter.stop();
-      } catch (error: unknown) {
-        const detail = error instanceof Error ? error.message : 'runtime stop failed';
-        this.state = 'error';
-        this.message = `Could not stop Persistent Tunnel Runtime before applying the saved configuration. Stop the existing runtime and retry Start Tunnel. ${detail}`;
-        return this.status();
-      }
-      throwIfStartCancelled(signal);
-      this.invalidateExternalProbeCache();
+      this.message = 'Applying updated tunnel credentials/configuration while preserving the current managed runtime until reconnect readiness is confirmed.';
     }
     // A legacy/profile process may already be running outside native alias
-    // supervision. Never create a second tunnel-client in that case.
+    // supervision. Never create a second tunnel-client in that case. A known
+    // native alias remains authoritative even if the generic external probe is live.
     if (!nativeStatus.exists && externalProbe === 'live') return null;
     if (!nativeStatus.exists && externalProbe === 'unverifiable') {
       this.state = 'error';

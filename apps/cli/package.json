@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/cli",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "private": true,
   "type": "module",
   "dependencies": {
@@ -17,7 +17,7 @@
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   },

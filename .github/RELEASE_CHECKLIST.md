@@ -2,7 +2,9 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.5.0` - Windows installer `lnwjud-Setup-5.5.0.exe` and portable executable `lnwjud-Portable-5.5.0.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.5.1` - Windows installer `lnwjud-Setup-5.5.1.exe` and portable executable `lnwjud-Portable-5.5.1.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
+
+v5.5.1 patch acceptance also requires: pure-JavaScript guarded ZIP extraction in the packaged Electron main process; recursive Desktop workspace dependency rebuild before packaging so scheduled-continuation runtime code cannot be stale; packaged recurring-acquisition behavior with `currentWakeMayReturn: false`; fail-safe Persistent Tunnel reconnect behavior that does not retire a live different-Tunnel-ID runtime before a replacement can be proven ready; fail-closed durable mutation ownership when multiple live owners exist; and the centered accessible What's New dialog with complete Thai/English v5.5.1 notes.
 
 Run the release verification from PowerShell at the repository root. The automated gate must fail fast on any non-zero stage and `git diff --check` must pass before packaging or publishing. Pull-request/non-main CI may pass `-SkipWindowsPackaging`; the exact `main` commit that will be tagged must run the full Windows gate plus the target-native macOS/Linux package matrix and produce all five SHA-scoped release artifacts. The normal source is the protected `main` push; if the merge credential suppresses that downstream Actions event, an explicit `workflow_dispatch` of `ci.yml` on the exact `main` SHA is the approved fallback and must produce the same five artifacts.
 
