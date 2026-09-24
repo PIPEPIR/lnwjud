@@ -21,6 +21,24 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.5.3',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          {
+            id: 'scheduled-connector-binding',
+            titleKey: 'whatsNew.553.connector.title',
+            descriptionKey: 'whatsNew.553.connector.description',
+            badge: 'fixed',
+            tags: ['Scheduled Tasks', 'MCP', 'connector', 'durable goals'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.5.2',
     categories: [
       {

@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.5.2 release directly.</p>
+<p align="center">Choose your platform and download the current v5.5.3 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.2.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.3.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.2.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.3.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,21 @@
 
 ---
 
-## Current published version: v5.5.2
+## Current published version: v5.5.3
 
-## Current source version: v5.5.2
+## Current source version: v5.5.3
 
-Latest published release: **v5.5.2**. The download buttons above point directly to the published v5.5.2 assets. The release is built from the verified v5.5.2 source line and published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.5.3**. The download buttons above point directly to the published v5.5.3 assets. The release is built from the verified v5.5.3 source line and published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.5.3
+
+v5.5.3 fixes the recurring Native ChatGPT Scheduled Task connector-binding path so a wake can reliably return to the same connected lnwjud plugin/connector and call `claim_scheduled_continuation`.
+
+- **Exact connector binding when available:** `prepare_scheduled_continuation` accepts an optional `connectorMention` and prefixes the exact current-chat `@connector` identity into the generated recurring task prompt.
+- **No plugin name is hard-coded:** connector identifiers are validated generically, including Unicode letters/marks, so different user/plugin names are supported without assuming `@lnwjud_tunnel_pc` or any other fixed name.
+- **Wake ordering remains fail-closed:** the scheduled prompt still requires `claim_scheduled_continuation` before user-visible prose or workspace mutation, and connector-resolution failure remains scheduler transport degradation rather than goal completion/failure.
+- **Recurring identity is unchanged:** the fix does not alter the one-hour cadence, lease duration, or same-task reuse contract.
+- **Existing host tasks are not silently rewritten:** a Native Scheduled Task created before v5.5.3 keeps its stored prompt until that host task is explicitly recreated or updated.
 
 ### What's new in v5.5.2
 
