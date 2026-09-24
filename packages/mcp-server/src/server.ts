@@ -9,7 +9,7 @@ import { RunBudgetGuard, type RunBudgetContext } from './run-budget.js';
 import { registerTasksProtocol } from './tasks-protocol.js';
 import { MODERN_TASKS_EXTENSION_ID } from './modern-tasks-protocol.js';
 import { registerModernTasksProtocol } from './modern-tasks-wire.js';
-import { ToolRegistry, type ActiveProjectScope, type AuthorizationMode, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
+import { ToolRegistry, type ActiveProjectScope, type AuthorizationMode, type HostMutationApprovalRequest, type McpApplicationServices, type McpContinuationState, type WorkspaceScope } from './tool-registry.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { BUNDLED_PONYTAIL_SKILL_ID, PonytailActivationLedger } from './ponytail-runtime.js';
 import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
@@ -64,6 +64,8 @@ export interface McpServerOptions {
   readonly incrementalVerifier?: IncrementalVerifier;
   /** Shared by transport-scoped server factories so visual observations survive the next MCP request. */
   readonly setOfMarksStore?: SetOfMarksObservationStore;
+  /** Shared by transport-scoped server factories so continuation tokens survive the next MCP request. */
+  readonly continuationState?: McpContinuationState;
   /** Compatibility result guard; it must not apply elapsed-time behavior. */
   readonly runBudgetGuard?: RunBudgetGuard;
   /**
@@ -98,6 +100,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.toolAvailabilitySnapshotProvider === undefined ? {} : { toolAvailabilitySnapshotProvider: options.toolAvailabilitySnapshotProvider }),
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
+    ...(options.continuationState === undefined ? {} : { continuationState: options.continuationState }),
   });
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   let configuredPonytailMode = DEFAULT_PONYTAIL_MODE;

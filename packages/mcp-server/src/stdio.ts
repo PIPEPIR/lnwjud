@@ -1,5 +1,6 @@
 import { serveStdio, StdioServerTransport, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { createMcpServer, type McpServerOptions } from './server.js';
+import { createMcpContinuationState } from './tool-registry.js';
 import { ModernTasksProtocol } from './modern-tasks-protocol.js';
 import { createModernTasksTransport } from './modern-tasks-transport.js';
 import { SetOfMarksObservationStore } from './set-of-marks-service.js';
@@ -29,11 +30,12 @@ export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
+  const continuationState = options.continuationState ?? createMcpContinuationState();
   const requestScope = options.requestScope ?? createStdioRequestScope();
   const modernTasks = new ModernTasksProtocol(options.services, { actor: options.actor });
   const transport = createModernTasksTransport(new StdioServerTransport(), modernTasks);
   return serveStdio(
-    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, ponytailActivationLedger, legacyTasksProtocol: false, requestScope }),
+    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, ponytailActivationLedger, continuationState, legacyTasksProtocol: false, requestScope }),
     { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic, transport },
   );
 }

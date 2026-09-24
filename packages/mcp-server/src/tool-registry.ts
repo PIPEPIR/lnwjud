@@ -37,11 +37,12 @@ import {
   type ToolAvailabilitySnapshot,
 } from '@lnwjud/shared';
 import { ActivityTracker, describeStructuredResultDetail, summarizeStructuredResultTarget, summarizeToolTarget, type ActivitySink, type TraceContext } from './activity-tracker.js';
-import { ContextEngine } from './context-engine.js';
+import { ContextEngine, type ContextContinuation, type ScanContinuation } from './context-engine.js';
 import { ContextEconomyRuntime } from './context-economy.js';
 import { hasExplicitUserConfirmation } from './destructive-policy.js';
 import { isScopedAutoApprovalAllowed, type WorkspaceScope } from './destructive-scope.js';
-import { FilePageEngine } from './file-page-engine.js';
+import { FilePageEngine, type FilePageContinuation } from './file-page-engine.js';
+import { ContinuationStore } from './continuation-store.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import {
   BUNDLED_PONYTAIL_REVIEW_SKILL_ID,
@@ -82,6 +83,20 @@ import type { McpApplicationServices, McpInternalInvocationContext, McpToolConte
 export type { McpApplicationServices } from './tools/tool-types.js';
 export type { ActiveProjectScope, WorkspaceScope } from './destructive-scope.js';
 export type AuthorizationMode = InvocationAuthorizationMode;
+
+export interface McpContinuationState {
+  readonly filePage: ContinuationStore<FilePageContinuation>;
+  readonly workspaceContext: ContinuationStore<ContextContinuation>;
+  readonly workspaceFullScan: ContinuationStore<ScanContinuation>;
+}
+
+export function createMcpContinuationState(): McpContinuationState {
+  return {
+    filePage: new ContinuationStore<FilePageContinuation>(),
+    workspaceContext: new ContinuationStore<ContextContinuation>(),
+    workspaceFullScan: new ContinuationStore<ScanContinuation>(),
+  };
+}
 
 const CODEX_DELEGATION_EXTRA_TOOL_NAMES = [
   'agent_swarm_run',
@@ -137,6 +152,8 @@ export interface ToolRegistryOptions {
   readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
   readonly incrementalVerifier?: IncrementalVerifier;
   readonly setOfMarksStore?: SetOfMarksObservationStore;
+  /** Shared by transport-scoped server factories so continuation tokens survive per-request server recreation. */
+  readonly continuationState?: McpContinuationState;
   readonly maxToolDurationMs?: number;
 }
 
@@ -233,8 +250,14 @@ export class ToolRegistry {
       isToolExposed: (name) => this.isEffectivelyExposed(name),
       setPonytailSessionSuppressed: (workspaceId, goalId, suppressed) => this.setPonytailSessionSuppressed(workspaceId, goalId, suppressed),
     };
-    const contextEngine = new ContextEngine(services, actor, contextEconomy);
-    const filePageEngine = new FilePageEngine(services, actor);
+    const contextEngine = new ContextEngine(
+      services,
+      actor,
+      contextEconomy,
+      options.continuationState?.workspaceContext,
+      options.continuationState?.workspaceFullScan,
+    );
+    const filePageEngine = new FilePageEngine(services, actor, options.continuationState?.filePage);
     const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
     const workspace = workspaceTools(context);
     const files = fileTools(context);

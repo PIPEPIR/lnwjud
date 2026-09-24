@@ -4,7 +4,7 @@ import type { FileActor, GitService, SearchService } from '@lnwjud/application';
 import { classifyContextPath } from '@lnwjud/search';
 import type { McpApplicationServices } from './tools/tool-types.js';
 import { ContextEconomyRuntime, type ContextEconomyStats, type ContextDeliveryKind } from './context-economy.js';
-import { ContinuationStore } from './continuation-store.js';
+import { ContinuationStore, scopedContinuationKey } from './continuation-store.js';
 
 export type ContextIntent = 'auto' | 'debug' | 'implement' | 'review' | 'trace' | 'explore';
 export type ContextMode = 'optimized' | 'full' | 'exhaustive';
@@ -147,7 +147,7 @@ interface WorkspaceCollection {
   readonly searchTruncated: boolean;
 }
 
-interface Continuation {
+export interface ContextContinuation {
   readonly candidates: readonly Candidate[];
   readonly request: WorkspaceContextRequest;
   readonly scannedFiles: number;
@@ -155,7 +155,7 @@ interface Continuation {
   readonly searchTruncated: boolean;
 }
 
-interface ScanContinuation {
+export interface ScanContinuation {
   readonly files: readonly { readonly workspaceId: string; readonly path: string }[];
   readonly scannedWorkspaces: number;
   readonly scannedFiles: number;
@@ -168,14 +168,17 @@ const DEFAULT_PAGE_SIZE: Record<ContextMode, number> = { optimized: 12, full: 50
 const SEARCH_LIMIT: Record<ContextMode, number> = { optimized: 100, full: 300, exhaustive: 500 };
 
 export class ContextEngine {
-  private readonly continuations = new ContinuationStore<Continuation>();
-  private readonly scanContinuations = new ContinuationStore<ScanContinuation>();
+  private readonly continuationScope: string;
 
   public constructor(
     private readonly services: McpApplicationServices,
     private readonly actor: FileActor,
     private readonly economy: ContextEconomyRuntime = new ContextEconomyRuntime(),
-  ) {}
+    private readonly continuations: ContinuationStore<ContextContinuation> = new ContinuationStore<ContextContinuation>(),
+    private readonly scanContinuations: ContinuationStore<ScanContinuation> = new ContinuationStore<ScanContinuation>(),
+  ) {
+    this.continuationScope = actor.sessionId?.trim() || actor.clientId;
+  }
 
   public async collect(request: WorkspaceContextRequest): Promise<Result<WorkspaceContextResult>> {
     this.economy.beginRequest();
@@ -205,7 +208,7 @@ export class ContextEngine {
   }
 
   public async continue(token: string, pageSize?: number): Promise<Result<WorkspaceContextResult>> {
-    const continuation = this.continuations.take(token);
+    const continuation = this.continuations.take(scopedContinuationKey(this.continuationScope, token));
     if (continuation === undefined) return err({ code: 'INVALID_INPUT', message: 'Continuation token is invalid or expired', recoverable: false });
     return this.materialize(continuation.candidates, {
       ...continuation.request,
@@ -296,7 +299,7 @@ export class ContextEngine {
     let continuationToken: string | undefined;
     if (hasMore) {
       continuationToken = randomUUID();
-      this.scanContinuations.set(continuationToken, { files: remaining, scannedWorkspaces, scannedFiles: deduped.length });
+      this.scanContinuations.set(scopedContinuationKey(this.continuationScope, continuationToken), { files: remaining, scannedWorkspaces, scannedFiles: deduped.length });
     }
     return ok({
       files: page,
@@ -308,7 +311,7 @@ export class ContextEngine {
   }
 
   public async continueFullScan(token: string, pageSize?: number): Promise<Result<WorkspaceFullScanResult>> {
-    const continuation = this.scanContinuations.take(token);
+    const continuation = this.scanContinuations.take(scopedContinuationKey(this.continuationScope, token));
     if (continuation === undefined) return err({ code: 'INVALID_INPUT', message: 'Scan continuation token is invalid or expired', recoverable: false });
     const size = normalizePageSize(pageSize ?? 200);
     const files = continuation.files.slice(0, size);
@@ -316,7 +319,7 @@ export class ContextEngine {
     let nextToken: string | undefined;
     if (remaining.length > 0) {
       nextToken = randomUUID();
-      this.scanContinuations.set(nextToken, { ...continuation, files: remaining });
+      this.scanContinuations.set(scopedContinuationKey(this.continuationScope, nextToken), { ...continuation, files: remaining });
     }
     return ok({
       files,
@@ -378,7 +381,7 @@ export class ContextEngine {
     let continuationToken: string | undefined;
     if (remaining.length > 0) {
       continuationToken = randomUUID();
-      this.scanContinuations.set(continuationToken, { files: remaining, scannedWorkspaces: 1, scannedFiles: allFiles.length });
+      this.scanContinuations.set(scopedContinuationKey(this.continuationScope, continuationToken), { files: remaining, scannedWorkspaces: 1, scannedFiles: allFiles.length });
     }
     return ok({ files, scannedWorkspaces: 1, scannedFiles: allFiles.length, hasMore: remaining.length > 0, ...(continuationToken === undefined ? {} : { continuationToken }) });
   }
@@ -524,7 +527,7 @@ export class ContextEngine {
   private async materialize(
     candidates: readonly Candidate[],
     request: WorkspaceContextRequest,
-    metadata: Pick<Continuation, 'scannedFiles' | 'totalMatches' | 'searchTruncated'>,
+    metadata: Pick<ContextContinuation, 'scannedFiles' | 'totalMatches' | 'searchTruncated'>,
   ): Promise<Result<WorkspaceContextResult>> {
     if (this.services.file === undefined) return err({ code: 'INTERNAL_ERROR', message: 'File service is unavailable', recoverable: true });
     const mode = request.mode ?? 'optimized';
@@ -545,7 +548,7 @@ export class ContextEngine {
     let continuationToken: string | undefined;
     if (hasMore) {
       continuationToken = randomUUID();
-      this.continuations.set(continuationToken, {
+      this.continuations.set(scopedContinuationKey(this.continuationScope, continuationToken), {
         candidates: remaining,
         request,
         scannedFiles: metadata.scannedFiles,

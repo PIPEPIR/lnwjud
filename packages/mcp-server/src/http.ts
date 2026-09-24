@@ -14,6 +14,7 @@ import {
   type McpServer,
 } from '@modelcontextprotocol/server';
 import { createMcpServer, type McpServerOptions } from './server.js';
+import { createMcpContinuationState } from './tool-registry.js';
 import { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { actorForRequestScope, createHttpRequestScope, createProtocolHttpRequestScope } from './request-scope.js';
 import { ModernTasksProtocol } from './modern-tasks-protocol.js';
@@ -263,6 +264,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
+  const continuationState = options.continuationState ?? createMcpContinuationState();
   const endpointFallbackSessionId = randomUUID();
   const modernServersByRequest = new WeakMap<Request, McpServer>();
   const activeModernServers = new Set<McpServer>();
@@ -274,6 +276,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       incrementalVerifier,
       setOfMarksStore,
       ponytailActivationLedger,
+      continuationState,
       legacyTasksProtocol: false,
       requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
     });
@@ -318,6 +321,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       incrementalVerifier,
       setOfMarksStore,
       ponytailActivationLedger,
+      continuationState,
       legacyTasksProtocol: true,
       requestScope: createProtocolHttpRequestScope(protocolSessionId),
     });

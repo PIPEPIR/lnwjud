@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ok } from '@lnwjud/domain';
 import type { McpApplicationServices } from './tools/tool-types.js';
-import { FilePageEngine, type FilePageRequest } from './file-page-engine.js';
+import { FilePageEngine, type FilePageContinuation, type FilePageRequest } from './file-page-engine.js';
+import { ContinuationStore } from './continuation-store.js';
 
 const actor = { clientId: 'page-test', clientName: 'page-test' };
 
@@ -51,6 +52,26 @@ describe('file page engine', () => {
         byteLength: 4,
         hasMore: false,
       },
+    });
+  });
+
+  it('scopes shared continuation state to the owning session without consuming another session token', async () => {
+    const shared = new ContinuationStore<FilePageContinuation>();
+    const owner = new FilePageEngine(services(), { ...actor, sessionId: 'session-a' }, shared);
+    const other = new FilePageEngine(services(), { ...actor, sessionId: 'session-b' }, shared);
+    const recreatedOwner = new FilePageEngine(services(), { ...actor, sessionId: 'session-a' }, shared);
+
+    const first = await owner.readPage({ workspaceId: 'workspace-1', path: 'src/file.ts', pageSize: 2 });
+    expect(first.ok).toBe(true);
+    if (!first.ok || first.value.continuationToken === undefined) return;
+
+    expect(await other.continue(first.value.continuationToken, 2)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT' },
+    });
+    expect(await recreatedOwner.continue(first.value.continuationToken, 2)).toMatchObject({
+      ok: true,
+      value: { startLine: 3, endLine: 4, content: 'three\nfour' },
     });
   });
 
