@@ -26,6 +26,18 @@ Before packaging a new public version:
 
 `scripts/set-version.mjs` synchronizes version surfaces but intentionally does **not** invent release notes. The release-note entry is a reviewed product artifact.
 
+## Current v5.5.1 release-note coverage
+
+The bundled `5.5.1` entry must describe the user-visible fixes that actually ship in this patch:
+
+- Windows 10 packaged-startup compatibility after removing the native ZIP binding from the Electron main process;
+- recursive Desktop dependency rebuild before packaging so scheduled-continuation code cannot ship from stale `packages/application/dist`;
+- fail-safe Persistent Tunnel reconnect behavior, including explicit Stop → Start for a live runtime when the Tunnel ID changes because strict ready-before-retire overlap is not available;
+- fail-closed durable mutation ownership when stale state leaves multiple live scheduled-continuation owners in one workspace;
+- centered What's New dialog positioning while preserving bounded height, scrolling, focus trap, Escape handling, ARIA dialog semantics, and focus restoration.
+
+Keep README/FULL_README release notes and Thai/English in-app copy semantically aligned with this registry. Do not add claims for fixes that are not in the packaged artifact.
+
 ## Accessibility contract
 
 The `?` trigger must remain a real focusable button. The modal must:
