@@ -422,6 +422,7 @@ describe('ScheduledContinuationService', () => {
         summary: markers.summary,
         nextAction: markers.next,
         evidence: [{ kind: 'note', value: markers.evidence }],
+        connectorMention: '@custom-lnwjud_42',
       }));
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('prepare failed');
@@ -430,6 +431,7 @@ describe('ScheduledContinuationService', () => {
       expect(serialized).not.toContain(started.leaseToken!);
       expect(result.value.scheduleRequest).toMatchObject({ occurrence: 'interval', intervalMinutes: 60 });
       expect(result.value.scheduleRequest.schedule).toContain('RRULE:FREQ=HOURLY;INTERVAL=1');
+      expect(result.value.scheduleRequest.prompt.startsWith('@custom-lnwjud_42 ')).toBe(true);
       expect(result.value.scheduleRequest.prompt).toContain('connected lnwjud plugin/connector');
       expect(result.value.scheduleRequest.prompt).toContain('Do not send user-visible prose before the claim attempt');
       expect(result.value.scheduleRequest.prompt).toContain('exact connected lnwjud mention');

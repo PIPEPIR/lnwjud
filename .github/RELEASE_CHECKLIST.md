@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.5.2` - Windows installer `lnwjud-Setup-5.5.2.exe` and portable executable `lnwjud-Portable-5.5.2.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.5.3` - Windows installer `lnwjud-Setup-5.5.3.exe` and portable executable `lnwjud-Portable-5.5.3.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
 
 v5.5.2 patch acceptance also requires: modern HTTP continuation tokens returned by `read_file_page`, `workspace_context`, and `workspace_full_scan` must remain consumable by their matching `*_continue` tool on the next request; shared continuation state must remain bounded, one-shot, TTL-limited, and session-scoped; a wrong session must not consume the owner's token; per-request MCP server teardown must remain intact; and the in-app What's New registry must contain complete Thai/English v5.5.2 notes.
 

@@ -8,6 +8,7 @@ import { defineTool, missingService, type McpToolContext, type McpToolDefinition
 const continuationId = z.string().min(1).max(128);
 const goalId = z.string().min(1).max(128);
 const leaseToken = z.string().min(1).max(256);
+const connectorMention = z.string().min(2).max(128).regex(/^@[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]*$/u);
 const evidence = z.object({
   kind: z.enum(['path', 'hash', 'task', 'note']),
   value: z.string().min(1).max(1024),
@@ -86,6 +87,7 @@ const prepareSchema = z.object({
   activeTaskIds: z.array(z.string().min(1).max(256)).max(50).optional(),
   trackedTasks: z.array(trackedTask).max(50).optional(),
   resumeContext: resumeContext.optional(),
+  connectorMention: connectorMention.optional(),
   successorDelayMinutes: z.number().int()
     .min(MIN_SUCCESSOR_DELAY_MINUTES)
     .max(MAX_SUCCESSOR_DELAY_MINUTES)
@@ -162,7 +164,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
   return [
     defineTool({
       name: 'prepare_scheduled_continuation',
-      description: 'Checkpoint durable progress and ensure exactly one live current-chat Native ChatGPT hourly recurring watchdog with cloud execution requested. At a meaningful continuation handoff include reconstruction-grade resumeContext (changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, artifacts); summary alone is not sufficient resume state. New v4.53 watchdogs use occurrence=interval and intervalMinutes=60; when successorDelayMinutes is omitted the first firing is one hour from prepare, while a legacy explicit 2–25 minute value changes only the first firing and never the hourly recurrence cadence. Reuse the same confirmed native task ID across checkpoints and ordinary wakes; never create a per-wake successor or retime the recurring cadence. If an active v4.52 one-time watchdog already exists, reuse that legacy task until it becomes historical before creating the recurring watchdog, so one-time and recurring native tasks never overlap for one goal. prepared means reservation only and is not confirmed host coverage. Record native create failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create and cleanup remain Native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation, Windows Task Scheduler, cron, shell timers, or an lnwjud-local scheduler as a substitute.',
+      description: 'Checkpoint durable progress and ensure exactly one live current-chat Native ChatGPT hourly recurring watchdog with cloud execution requested. When the current chat exposes an exact @connector mention for lnwjud, pass it as connectorMention so the generated native Scheduled Task prompt remains bound to that connector; omit it only when the host exposes no mention. At a meaningful continuation handoff include reconstruction-grade resumeContext (changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, artifacts); summary alone is not sufficient resume state. New v4.53 watchdogs use occurrence=interval and intervalMinutes=60; when successorDelayMinutes is omitted the first firing is one hour from prepare, while a legacy explicit 2–25 minute value changes only the first firing and never the hourly recurrence cadence. Reuse the same confirmed native task ID across checkpoints and ordinary wakes; never create a per-wake successor or retime the recurring cadence. If an active v4.52 one-time watchdog already exists, reuse that legacy task until it becomes historical before creating the recurring watchdog, so one-time and recurring native tasks never overlap for one goal. prepared means reservation only and is not confirmed host coverage. Record native create failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create and cleanup remain Native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation, Windows Task Scheduler, cron, shell timers, or an lnwjud-local scheduler as a substitute.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: prepareSchema,
@@ -183,6 +185,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
         ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
         ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
         ...(input.resumeContext === undefined ? {} : { resumeContext: input.resumeContext }),
+        ...(input.connectorMention === undefined ? {} : { connectorMention: input.connectorMention }),
         ...(input.successorDelayMinutes === undefined ? {} : { successorDelayMinutes: input.successorDelayMinutes }),
         executionPreference: input.executionPreference,
       }) ?? missingService(),
