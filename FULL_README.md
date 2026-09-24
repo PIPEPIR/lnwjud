@@ -51,11 +51,21 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.5.1
+## Current published version: v5.5.2
 
-## Current source version: v5.5.1
+## Current source version: v5.5.2
 
-Latest published release: **v5.5.1**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+Latest published release: **v5.5.2**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### What's new in v5.5.2
+
+v5.5.2 fixes continuation-token lifetime at the modern Streamable HTTP transport boundary, including OpenAI Secure MCP Tunnel, without retaining request-scoped MCP server instances.
+
+- **Cross-request continuation works:** `read_file_page_continue`, `workspace_context_continue`, and `workspace_full_scan_continue` can consume the token returned by the immediately preceding request.
+- **Transport-scoped, session-keyed state:** only the small bounded continuation stores outlive a request. Raw UUID tokens remain externally opaque; internal lookup is scoped to the MCP session identity.
+- **Bounded one-shot semantics remain:** the existing 10-minute TTL, bounded store capacity, and one-shot `take` behavior are unchanged.
+- **Per-request teardown remains authoritative:** the modern HTTP path still destroys each request-scoped `McpServer`/`ToolRegistry`, so the earlier listener retention/RAM-growth lifecycle bug is not reintroduced.
+- **Real transport regression:** the integration suite proves token creation in one modern HTTP request and continuation in the next for file paging, ranked workspace context, and full workspace scan, plus wrong-session non-consumption.
 
 ### What's new in v5.5.1
 
@@ -578,7 +588,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.5.1 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.5.2 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -929,8 +939,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.5.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.5.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
