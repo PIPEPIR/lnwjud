@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.5.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.5.2 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.2.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.2.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,21 @@
 
 ---
 
-## Current published version: v5.5.1
+## Current published version: v5.5.2
 
-## Current source version: v5.5.1
+## Current source version: v5.5.2
 
-Latest published release: **v5.5.1**. The download buttons above point directly to the published v5.5.1 assets. The release is built from the verified v5.5.1 source line and published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.5.2**. The download buttons above point directly to the published v5.5.2 assets. The release is built from the verified v5.5.2 source line and published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.5.2
+
+v5.5.2 fixes continuation-token lifetime across modern HTTP MCP requests, including OpenAI Secure MCP Tunnel, so long file/context reads can continue normally without manually advancing `startLine`.
+
+- **Continuation survives the next MCP request:** `read_file_page_continue`, `workspace_context_continue`, and `workspace_full_scan_continue` now reuse transport-scoped continuation state instead of losing the token when the per-request MCP server is torn down.
+- **One-shot and bounded behavior is preserved:** continuation tokens still use the existing bounded 10-minute TTL and are consumed once when successfully claimed.
+- **Session isolation stays fail-closed:** continuation state uses session-scoped internal keys, so a different session cannot consume another session's token.
+- **No lifecycle regression:** modern HTTP still tears down each request-scoped MCP server, preserving the listener/memory-leak fix introduced in the v5.3.x lifecycle hardening.
+- **Regression coverage matches the real transport:** integration tests create a token in one modern HTTP request and consume it in the next request for all three continuation APIs.
 
 ### What's new in v5.5.1
 

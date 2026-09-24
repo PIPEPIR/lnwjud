@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import type { McpApplicationServices } from './tools/tool-types.js';
-import { ContinuationStore } from './continuation-store.js';
+import { ContinuationStore, scopedContinuationKey } from './continuation-store.js';
 
 export interface FilePageRequest {
   readonly workspaceId?: string;
@@ -24,7 +24,7 @@ export interface FilePageResult {
   readonly continuationToken?: string;
 }
 
-interface Continuation {
+export interface FilePageContinuation {
   readonly workspaceId?: string;
   readonly path: string;
   readonly nextStartLine: number;
@@ -37,12 +37,15 @@ const MAX_PAGE_SIZE = 5_000;
 const MAX_RESPONSE_TARGET_BYTES = 8 * 1024 * 1024;
 
 export class FilePageEngine {
-  private readonly continuations = new ContinuationStore<Continuation>();
+  private readonly continuationScope: string;
 
   public constructor(
     private readonly services: McpApplicationServices,
     private readonly actor: FileActor,
-  ) {}
+    private readonly continuations: ContinuationStore<FilePageContinuation> = new ContinuationStore<FilePageContinuation>(),
+  ) {
+    this.continuationScope = actor.sessionId?.trim() || actor.clientId;
+  }
 
   public async readPage(request: FilePageRequest): Promise<Result<FilePageResult>> {
     const validation = validateRequest(request);
@@ -57,14 +60,14 @@ export class FilePageEngine {
   }
 
   public async continue(token: string, pageSize?: number): Promise<Result<FilePageResult>> {
-    const continuation = this.continuations.take(token);
+    const continuation = this.continuations.take(scopedContinuationKey(this.continuationScope, token));
     if (continuation === undefined) return err({ code: 'INVALID_INPUT', message: 'File continuation token is invalid or expired', recoverable: false });
     const next = pageSize === undefined ? continuation.pageSize : pageSize;
     if (!Number.isInteger(next) || next < 1 || next > MAX_PAGE_SIZE) return err({ code: 'INVALID_INPUT', message: 'File pageSize is invalid', recoverable: false });
     return this.readAt({ ...continuation, pageSize: next });
   }
 
-  private async readAt(input: Continuation): Promise<Result<FilePageResult>> {
+  private async readAt(input: FilePageContinuation): Promise<Result<FilePageResult>> {
     if (this.services.file === undefined) return err({ code: 'INTERNAL_ERROR', message: 'File service is unavailable', recoverable: true });
     const requestedEndLine = input.nextStartLine + input.pageSize;
     try {
@@ -104,7 +107,7 @@ export class FilePageEngine {
       let continuationToken: string | undefined;
       if (hasMore) {
         continuationToken = randomUUID();
-        this.continuations.set(continuationToken, {
+        this.continuations.set(scopedContinuationKey(this.continuationScope, continuationToken), {
           ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
           path: input.path,
           nextStartLine: endLine + 1,

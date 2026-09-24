@@ -21,6 +21,24 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.5.2',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'mcp-continuation-lifecycle',
+            titleKey: 'whatsNew.552.continuation.title',
+            descriptionKey: 'whatsNew.552.continuation.description',
+            badge: 'fixed',
+            tags: ['MCP', 'Secure Tunnel', 'continuation', 'large files'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.5.1',
     categories: [
       {

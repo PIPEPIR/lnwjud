@@ -105,6 +105,115 @@ describe('MCP localhost HTTP transport', () => {
     }
   }, 15_000);
 
+  it('preserves one-shot continuation tokens across modern per-request MCP server recreation', async () => {
+    await handle.close();
+    const sourceLines = ['one', 'two', 'three', 'four'];
+    const contextPaths = ['src/first.ts', 'src/second.ts', 'src/third.ts'];
+    handle = await startMcpHttp({
+      port: 0,
+      services: {
+        workspaceInfo: {
+          async info() { return ok({ id: 'workspace-1' }); },
+          async list() { return ok([{ id: 'workspace-1', kind: 'project' }]); },
+        },
+        search: {
+          async searchText() {
+            return ok({
+              matches: contextPaths.map((path, index) => ({ path, line: index + 1, text: `needle ${index + 1}` })),
+              truncated: false,
+            });
+          },
+          async searchFiles() {
+            return ok({ paths: contextPaths, truncated: false });
+          },
+        },
+        file: {
+          async readFile(_actor, _workspaceId, request) {
+            const start = request.startLine ?? 1;
+            const end = Math.min(request.endLine ?? sourceLines.length, sourceLines.length);
+            const content = sourceLines.slice(start - 1, end).join('\n');
+            return ok({
+              path: request.path,
+              content,
+              startLine: start,
+              endLine: end,
+              encoding: 'utf8' as const,
+              byteLength: Buffer.byteLength(content, 'utf8'),
+            });
+          },
+        },
+        git: {
+          async status() { return ok({ entries: [] }); },
+        },
+      },
+      actor: { clientId: 'continuation-http-test', clientName: 'continuation-http-test' },
+    });
+
+    const client = new Client(
+      { name: 'continuation-modern-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+
+    try {
+      await client.connect(transport);
+
+      const firstPage = await client.callTool({
+        name: 'read_file_page',
+        arguments: { workspaceId: 'workspace-1', path: 'large.txt', pageSize: 1 },
+      });
+      expect(firstPage.isError).not.toBe(true);
+      const pageToken = firstPage.structuredContent?.continuationToken;
+      expect(pageToken).toEqual(expect.any(String));
+
+      const secondPage = await client.callTool({
+        name: 'read_file_page_continue',
+        arguments: { continuationToken: pageToken, pageSize: 1 },
+      });
+      expect(secondPage.isError, JSON.stringify(secondPage)).not.toBe(true);
+      expect(secondPage.structuredContent).toMatchObject({ startLine: 2, endLine: 2, content: 'two' });
+
+      const reusedPage = await client.callTool({
+        name: 'read_file_page_continue',
+        arguments: { continuationToken: pageToken, pageSize: 1 },
+      });
+      expect(reusedPage.isError).toBe(true);
+      expect(JSON.stringify(reusedPage.structuredContent)).toContain('invalid or expired');
+
+      const firstContext = await client.callTool({
+        name: 'workspace_context',
+        arguments: { workspaceId: 'workspace-1', query: 'needle', mode: 'full', pageSize: 1 },
+      });
+      expect(firstContext.isError).not.toBe(true);
+      const contextToken = firstContext.structuredContent?.continuationToken;
+      expect(contextToken).toEqual(expect.any(String));
+
+      const secondContext = await client.callTool({
+        name: 'workspace_context_continue',
+        arguments: { continuationToken: contextToken, pageSize: 1 },
+      });
+      expect(secondContext.isError, JSON.stringify(secondContext)).not.toBe(true);
+      expect(secondContext.structuredContent?.files).toHaveLength(1);
+
+      const firstScan = await client.callTool({
+        name: 'workspace_full_scan',
+        arguments: { workspaceId: 'workspace-1', includeIgnored: true, pageSize: 1 },
+      });
+      expect(firstScan.isError).not.toBe(true);
+      const scanToken = firstScan.structuredContent?.continuationToken;
+      expect(scanToken).toEqual(expect.any(String));
+
+      const secondScan = await client.callTool({
+        name: 'workspace_full_scan_continue',
+        arguments: { continuationToken: scanToken, pageSize: 1 },
+      });
+      expect(secondScan.isError, JSON.stringify(secondScan)).not.toBe(true);
+      expect(secondScan.structuredContent?.files).toHaveLength(1);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
   it('advertises outcome-driven continuation without an elapsed-time cutoff', async () => {
     const client = new Client({ name: 'continuity-policy-client', version: '0.1.0' });
     const transport = new StreamableHTTPClientTransport(handle.endpoint);

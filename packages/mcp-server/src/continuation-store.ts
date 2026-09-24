@@ -12,6 +12,10 @@ interface StoredContinuation<T> {
 const DEFAULT_MAX_ENTRIES = 32;
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
+export function scopedContinuationKey(scope: string, token: string): string {
+  return `${scope.length}:${scope}:${token}`;
+}
+
 /** Bounded one-shot storage for abandoned MCP pagination tokens. */
 export class ContinuationStore<T> {
   private readonly entries = new Map<string, StoredContinuation<T>>();
