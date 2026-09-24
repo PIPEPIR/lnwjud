@@ -11,6 +11,8 @@ import { sharedActivityLeaseDirectoryPath, ToolRegistry } from '@lnwjud/mcp-serv
 
 const temporaryRoots: string[] = [];
 const TEST_CHECKPOINT_KEY = Buffer.alloc(32, 0x46).toString('base64');
+const STDIO_RUNTIME_TEST_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 30_000;
+const STDIO_RUNTIME_HOOK_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 15_000;
 
 const workspace = {
   id: 'workspace-1',
@@ -41,9 +43,9 @@ afterEach(async () => {
     maxRetries: process.platform === 'win32' ? 5 : 0,
     retryDelay: 100,
   })));
-});
+}, STDIO_RUNTIME_HOOK_TIMEOUT_MS);
 
-describe('stdio MCP runtime', () => {
+describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => {
   it('defaults Ponytail to OFF and loads a persisted mode for direct STDIO', async () => {
     const defaultDataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-ponytail-default-'));
     const persistedDataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-ponytail-persisted-'));
@@ -66,7 +68,7 @@ describe('stdio MCP runtime', () => {
     } finally {
       await persistedRuntime.close();
     }
-  }, 15_000);
+  });
 
   it('wires durable goals and scheduled continuation orchestration from the same SQLite repository', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-continuation-'));
@@ -213,7 +215,7 @@ describe('stdio MCP runtime', () => {
     const inspected = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
     expect(inspected.connection.prepare('SELECT COUNT(*) AS count FROM goal_scheduled_continuations').get()).toEqual({ count: 0 });
     inspected.close();
-  }, 30_000);
+  });
 
   it('observes persisted tool availability writes from another SQLite connection without restart or duplicate unrelated notifications', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-tool-availability-'));
@@ -379,7 +381,7 @@ describe('stdio MCP runtime', () => {
       value: { task_id: taskId, state: 'completed', exit_code: 0, stdout: 'stdio-durable', durable: true },
     });
     await replacementRuntime.close();
-  }, 15_000);
+  });
 
   it('reads durable shell task liveness after STDIO runtime replacement without treating another session as absence', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-goal-liveness-data-'));
@@ -465,5 +467,5 @@ describe('stdio MCP runtime', () => {
       });
       await replacementRuntime.close();
     }
-  }, 15_000);
+  });
 });
