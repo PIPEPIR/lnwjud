@@ -183,7 +183,7 @@ export type ClaimScheduledContinuationResult =
       readonly acquisition: 'normal' | 'expired_lease' | 'orphan_recovered';
       readonly runKey: string;
       readonly automationResume?: AutomationResumeHint;
-      readonly currentWakeMayReturn: true;
+      readonly currentWakeMayReturn: false;
       readonly nextRequiredAction: 'continue_work_with_existing_recurring_watchdog';
     }
   | {
@@ -651,7 +651,7 @@ export class ScheduledContinuationService {
           acquisition: claimed.acquisition,
           runKey: claimed.runKey,
           ...(automationResume === undefined ? {} : { automationResume }),
-          currentWakeMayReturn: true,
+          currentWakeMayReturn: false,
           nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         });
       }

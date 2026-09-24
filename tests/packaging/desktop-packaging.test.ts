@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.5.0', async () => {
+  it('[version-contract] pins the product release to v5.5.1', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.5.0');
-    expect(desktopPackage.version).toBe('5.5.0');
+    expect(rootPackage.version).toBe('5.5.1');
+    expect(desktopPackage.version).toBe('5.5.1');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.5.0');
+      expect(packageJson.version, packagePath).toBe('5.5.1');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.5.0'");
-    expect(shared).toContain("APP_VERSION = '5.5.0'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.5.1'");
+    expect(shared).toContain("APP_VERSION = '5.5.1'");
   });
 
   it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
@@ -110,7 +110,7 @@ describe('cross-platform desktop packaging', () => {
   it('declares lnwjud x64 NSIS and portable packaging with built runtime bundles', async () => {
     const configPath = path.join(desktopRoot, 'electron-builder.yml');
     const config = await readFile(configPath, 'utf8');
-    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string>; dependencies?: Record<string, string> };
 
     expect(config).toContain('productName: lnwjud');
     expect(config).toContain('output: dist/installers');
@@ -124,19 +124,26 @@ describe('cross-platform desktop packaging', () => {
     expect(desktopPackage.scripts?.['package:windows']).toContain('write-portable-update-manifest.mjs');
     expect(desktopPackage.scripts?.build).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
     expect(desktopPackage.scripts?.['build:main']).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
-    expect(desktopPackage.scripts?.build).toContain('stage-main-native-bindings.mjs');
-    expect(desktopPackage.scripts?.['build:main']).toContain('stage-main-native-bindings.mjs');
-    expect(desktopPackage.scripts?.['test:e2e']).toContain('stage-main-native-bindings.mjs');
-    expect(config).toContain('asarUnpack:');
-    expect(config).toContain('- dist/main/*.node');
-    const nativeBindingStager = await readFile(path.join(desktopRoot, 'scripts', 'stage-main-native-bindings.mjs'), 'utf8');
-    expect(nativeBindingStager).toContain('index.win32-x64-msvc.node');
-    expect(nativeBindingStager).toContain('index.win32-arm64-msvc.node');
-    expect(nativeBindingStager).toContain('index.darwin-universal.node');
-    expect(nativeBindingStager).toContain('index.linux-x64-gnu.node');
-    expect(nativeBindingStager).toContain('index.linux-x64-musl.node');
-    expect(nativeBindingStager).toContain('index.linux-arm64-gnu.node');
-    expect(nativeBindingStager).toContain('index.linux-arm64-musl.node');
+    expect(desktopPackage.scripts?.build).not.toContain('stage-main-native-bindings.mjs');
+    expect(desktopPackage.scripts?.['build:main']).not.toContain('stage-main-native-bindings.mjs');
+    expect(desktopPackage.scripts?.['test:e2e']).not.toContain('stage-main-native-bindings.mjs');
+    expect(desktopPackage.scripts?.build).toContain('--external:unzipper');
+    expect(desktopPackage.scripts?.['build:main']).toContain('--external:unzipper');
+    expect(desktopPackage.scripts?.['test:e2e']).toContain('--external:unzipper');
+    expect(config).not.toContain('asarUnpack:');
+    expect(config).not.toContain('dist/main/*.node');
+    expect(desktopPackage.dependencies?.unzipper).toBe('0.12.5');
+    expect(desktopPackage.dependencies?.['extract-zip']).toBeUndefined();
+    expect(desktopPackage.dependencies?.['@electron-internal/extract-zip']).toBeUndefined();
+    const safeZipExtractor = await readFile(path.join(desktopRoot, 'src', 'main', 'safe-zip-extractor.ts'), 'utf8');
+    expect(safeZipExtractor).toContain("from 'unzipper'");
+    expect(safeZipExtractor).not.toContain('@electron-internal/extract-zip');
+    const tunnelStager = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.mjs'), 'utf8');
+    const runtimeToolStager = await readFile(path.join(desktopRoot, 'scripts', 'prepare-runtime-tools.mjs'), 'utf8');
+    expect(tunnelStager).toContain("require('unzipper')");
+    expect(runtimeToolStager).toContain("require('unzipper')");
+    expect(tunnelStager).not.toContain('@electron-internal/extract-zip');
+    expect(runtimeToolStager).not.toContain('@electron-internal/extract-zip');
     expect(config).toContain('icon: build/icon.ico');
     expect(config).toContain('signAndEditExecutable: true');
     expect(config).not.toContain('signAndEditExecutable: false');

@@ -53,9 +53,16 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.5.0
 
-## Current source version: v5.5.0
+## Current source version: v5.5.1
 
 Latest published release: **v5.5.0**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### What's new in v5.5.1
+
+v5.5.1 is a Windows startup compatibility patch that removes the packaged Electron main process's dependency on a platform-native ZIP binding.
+
+- **Windows 10 startup compatibility:** runtime ZIP extraction now uses pure-JavaScript `unzipper`, removing the native ZIP `.node` binding that could fail at process startup.
+- **Cross-platform ZIP behavior stays guarded:** runtime-tool and tunnel-client ZIP extraction use the same implementation, while pre-extraction validation still rejects traversal, absolute paths, symlinks/special files, encrypted entries, oversized expansion, and duplicate/colliding names.
 
 ### What's new in v5.5.0
 
@@ -78,7 +85,6 @@ v5.5.0 combines the Office Suite, in-app What's New, scheduled-continuation reli
 - **Remote MCP public OAuth boundary hardened:** unauthenticated dynamic registrations and transient OAuth state are bounded, expired state is pruned, and first-use ChatGPT-compatible OAuth clients require an explicit local approval instead of treating redirect-URI shape as identity.
 - **Release supply chain is immutable:** privileged third-party GitHub Actions used for release publication and cosign setup are pinned to full commit SHAs, with a repository hygiene regression preventing mutable third-party action tags from returning.
 - **PDF archive extraction is containment-safe:** the vulnerable production `extract-zip@2.0.1` path is removed. Archive validation rejects path traversal, absolute paths, symlink/special-file entries, encrypted entries, and duplicate/colliding names before extraction; `pnpm audit --prod` is clean.
-- **Electron native ZIP binding is packaged explicitly:** the Desktop build stages the target-specific `@electron-internal/extract-zip` N-API binding beside the bundled main process and unpacks `.node` files from ASAR, preventing the startup `Cannot find native binding` crash on packaged Windows while preserving macOS/Linux target selection.
 - **Multi-file mutations are all-or-rollback:** `apply_patch` and checkpoint restore automatically restore earlier writes when a later write or cancellation fails, and report explicit rollback failure details instead of silently leaving a mixed tree.
 - **Workspace writes revalidate at publication time:** guarded writes detect symlink/junction/path swaps between initial validation and the final atomic rename, strengthening the workspace boundary against TOCTOU races.
 - **Dashboard idle work is reduced:** the full dashboard snapshot no longer rebuilds every 2 seconds. A 30-second reconciliation fallback is combined with focus/visibility wakeups and immediate refresh after explicit user actions.
@@ -919,8 +925,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.5.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.5.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.5.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.5.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

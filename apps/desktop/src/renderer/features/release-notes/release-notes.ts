@@ -21,6 +21,24 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.5.1',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'windows-startup',
+            titleKey: 'whatsNew.551.windowsStartup.title',
+            descriptionKey: 'whatsNew.551.windowsStartup.description',
+            badge: 'fixed',
+            tags: ['Windows 10', 'startup', 'ZIP'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.5.0',
     categories: [
       {

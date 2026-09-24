@@ -637,7 +637,7 @@ describe('ScheduledContinuationService', () => {
             confirmedRunsOn: 'unverified',
             nativeTaskId: 'native-task-host-mode-unreported',
           },
-          currentWakeMayReturn: true,
+          currentWakeMayReturn: false,
           nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         },
       });
@@ -684,7 +684,7 @@ describe('ScheduledContinuationService', () => {
             intervalMinutes: 60,
             nativeTaskId: 'native-task-early-wake',
           },
-          currentWakeMayReturn: true,
+          currentWakeMayReturn: false,
           nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         },
       });
@@ -974,7 +974,7 @@ describe('ScheduledContinuationService', () => {
           outcome: 'recurring_acquired',
           acquisition: 'expired_lease',
           continuation: { occurrence: 'interval', intervalMinutes: 60, nativeTaskId: 'native-liveness-order' },
-          currentWakeMayReturn: true,
+          currentWakeMayReturn: false,
         },
       });
     } finally {

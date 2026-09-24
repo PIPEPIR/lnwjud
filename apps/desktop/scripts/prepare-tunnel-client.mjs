@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { fetchWithRetry } from './fetch-with-retry.mjs';
 
 const require = createRequire(import.meta.url);
-const extractZip = require('@electron-internal/extract-zip');
+const { Open: openZip } = require('unzipper');
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -188,7 +188,8 @@ async function findUniqueFile(root, name) {
 }
 
 async function extractArchive(archivePath, destination) {
-  await extractZip.extract(archivePath, { dir: path.resolve(destination) });
+  const archive = await openZip.file(archivePath);
+  await archive.extract({ path: path.resolve(destination) });
 }
 
 function verifyVersion(executable) {
