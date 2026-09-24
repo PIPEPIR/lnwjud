@@ -57,6 +57,7 @@ export interface PrepareScheduledContinuationRequest {
   readonly activeTaskIds?: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
   readonly resumeContext?: GoalCheckpointResumeContext;
+  readonly connectorMention?: string;
   readonly successorDelayMinutes?: number;
   readonly executionPreference?: 'cloud';
 }
@@ -356,6 +357,12 @@ export class ScheduledContinuationService {
       const activeTaskIds = blockingTaskIds(trackedTasks);
       const executionPreference = request.executionPreference ?? 'cloud';
       if (executionPreference !== 'cloud') throw new Error('Scheduled continuation requires cloud execution');
+      const connectorMention = request.connectorMention === undefined
+        ? undefined
+        : safeText(request.connectorMention, MAX_ID, 'connectorMention');
+      if (connectorMention !== undefined && !/^@[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]*$/u.test(connectorMention)) {
+        throw new Error('connectorMention is invalid');
+      }
       const now = this.now();
       const nowIso = now.toISOString();
       const dueAt = new Date(now.getTime() + initialDelayMinutes * 60_000).toISOString();
@@ -375,6 +382,7 @@ export class ScheduledContinuationService {
         intervalMinutes,
         initialDelayMinutes,
         executionPreference,
+        connectorMention,
       })).digest('hex');
       const prepared = await this.goals.prepareScheduledContinuation({
         continuationId: randomUUID(),
@@ -410,7 +418,7 @@ export class ScheduledContinuationService {
           watchdogAction: 'create',
           goal,
           continuation,
-          scheduleRequest: buildScheduleRequest(continuation, prepared.goal.workspaceId, this.hostTimeZone),
+          scheduleRequest: buildScheduleRequest(continuation, prepared.goal.workspaceId, this.hostTimeZone, connectorMention),
           currentRunMayContinue: true,
           handoffReady: false,
           nativeTaskConfirmationRequired: true,
@@ -899,10 +907,12 @@ function buildScheduleRequest(
   continuation: ScheduledContinuationSnapshot,
   workspaceId: string,
   hostTimeZone: string,
+  connectorMention?: string,
 ): ScheduledContinuationRequest {
   if (continuation.occurrence === 'interval') {
     if (continuation.intervalMinutes !== 60) throw new GoalStateError('corrupt', 'Recurring watchdog must use the 60-minute interval');
-    const recurringPrompt = `Use the connected lnwjud plugin/connector for this current chat explicitly and resolve the tool namespace that exposes claim_scheduled_continuation before doing anything else. Do not send user-visible prose before the claim attempt. Your first connected lnwjud action MUST be claim_scheduled_continuation for recurring continuation ${continuation.continuationId}, goal ${continuation.goalId}, workspace ${workspaceId}. If the current host supports connector mentions, the native task creator must preserve/prefix the exact connected lnwjud mention used in this chat instead of relying on a bare tool name alone. This is one hourly Native ChatGPT recurring watchdog for the durable goal; the same native task remains runnable across normal firings and ordinary wakes must never create, retime, replace, or consume a successor task. If claim returns recurring_acquired, continue the real durable goal using the returned goal lease and the existing recurring watchdog. If claim returns worker_busy_noop or already_claimed, perform no workspace mutation and let this scheduled run return naturally; the same recurring task will wake again on its next hourly interval. If trustworthy liveness proves no real worker or blocking job and the still-valid lease heartbeat is past the bounded 60-second stale-recovery grace, claim must recover that lease in this same hourly tick as recurring_acquired rather than waiting for lease expiry or a later hourly firing. orphan_probe_noop is legacy pre-hardening compatibility only and is not a current recurring recovery step. If claim returns receipt_required, reconcile exact host metadata before mutation. If claim returns terminal_noop or terminal cleanup is requested, do not resume goal work; make this exact recurring native task non-runnable using the strongest Scheduled Task operation actually exposed by the host and record truthful cleanup evidence. If the lnwjud connector cannot be resolved or claim_scheduled_continuation cannot be invoked, treat that as scheduler transport degradation only: perform no workspace mutation, do not claim durable progress, and do not mark the goal completed/failed/blocked. Scheduler transport failure alone never completes, fails, or blocks the durable goal. Resolve Native Scheduled Task operations from the current ChatGPT host surface; never hard-code an internal operation name and never use Windows Task Scheduler, lnwjud scheduler, cron, shell timers, DOM automation, or another scheduler provider. Never report completion until finish_goal completes and get_goal is terminal.`;
+    const connectorPrefix = connectorMention === undefined ? '' : `${connectorMention} `;
+    const recurringPrompt = `${connectorPrefix}Use the connected lnwjud plugin/connector for this current chat explicitly and resolve the tool namespace that exposes claim_scheduled_continuation before doing anything else. Do not send user-visible prose before the claim attempt. Your first connected lnwjud action MUST be claim_scheduled_continuation for recurring continuation ${continuation.continuationId}, goal ${continuation.goalId}, workspace ${workspaceId}. If the current host supports connector mentions, the native task creator must preserve/prefix the exact connected lnwjud mention used in this chat instead of relying on a bare tool name alone. This is one hourly Native ChatGPT recurring watchdog for the durable goal; the same native task remains runnable across normal firings and ordinary wakes must never create, retime, replace, or consume a successor task. If claim returns recurring_acquired, continue the real durable goal using the returned goal lease and the existing recurring watchdog. If claim returns worker_busy_noop or already_claimed, perform no workspace mutation and let this scheduled run return naturally; the same recurring task will wake again on its next hourly interval. If trustworthy liveness proves no real worker or blocking job and the still-valid lease heartbeat is past the bounded 60-second stale-recovery grace, claim must recover that lease in this same hourly tick as recurring_acquired rather than waiting for lease expiry or a later hourly firing. orphan_probe_noop is legacy pre-hardening compatibility only and is not a current recurring recovery step. If claim returns receipt_required, reconcile exact host metadata before mutation. If claim returns terminal_noop or terminal cleanup is requested, do not resume goal work; make this exact recurring native task non-runnable using the strongest Scheduled Task operation actually exposed by the host and record truthful cleanup evidence. If the lnwjud connector cannot be resolved or claim_scheduled_continuation cannot be invoked, treat that as scheduler transport degradation only: perform no workspace mutation, do not claim durable progress, and do not mark the goal completed/failed/blocked. Scheduler transport failure alone never completes, fails, or blocks the durable goal. Resolve Native Scheduled Task operations from the current ChatGPT host surface; never hard-code an internal operation name and never use Windows Task Scheduler, lnwjud scheduler, cron, shell timers, DOM automation, or another scheduler provider. Never report completion until finish_goal completes and get_goal is terminal.`;
     return {
       provider: 'chatgpt_scheduled_task',
       occurrence: 'interval',

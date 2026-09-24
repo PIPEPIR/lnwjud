@@ -36,6 +36,12 @@ describe('scheduled continuation MCP tools', () => {
     const parsedDefaultPrepare = byName.get('prepare_scheduled_continuation')?.parse(validPrepare);
     expect(parsedDefaultPrepare).toMatchObject({ ok: true, value: { executionPreference: 'cloud' } });
     if (parsedDefaultPrepare?.ok) expect(parsedDefaultPrepare.value).not.toHaveProperty('successorDelayMinutes');
+    expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: '@custom-lnwjud_42' }))
+      .toMatchObject({ ok: true, value: { connectorMention: '@custom-lnwjud_42' } });
+    expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: '@ปลั๊กอิน_ทีม' }))
+      .toMatchObject({ ok: true, value: { connectorMention: '@ปลั๊กอิน_ทีม' } });
+    expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: 'custom-lnwjud_42' })).toMatchObject({ ok: false });
+    expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: '@connector name' })).toMatchObject({ ok: false });
     expect(byName.get('prepare_scheduled_continuation')?.parse({
       ...validPrepare,
       activeTaskIds: undefined,
