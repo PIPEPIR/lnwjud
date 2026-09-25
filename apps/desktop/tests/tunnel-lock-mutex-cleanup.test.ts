@@ -5,13 +5,14 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mutexHelper = vi.hoisted(() => ({ exitCodes: [] as number[] }));
+const mutexHelper = vi.hoisted(() => ({ exitCodes: [] as number[], spawnCalls: 0 }));
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
     ...actual,
     spawn: vi.fn(() => {
+      mutexHelper.spawnCalls += 1;
       const child = new EventEmitter() as EventEmitter & {
         stdin: PassThrough;
         stdout: PassThrough;
@@ -50,6 +51,7 @@ const temporaryRoots: string[] = [];
 
 afterEach(async () => {
   mutexHelper.exitCodes = [];
+  mutexHelper.spawnCalls = 0;
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -83,6 +85,31 @@ describe('tunnel lock mutex cleanup semantics', () => {
 
     await expect(claim.release()).resolves.toBe(true);
     expect(await readTunnelLock(directory)).toBeNull();
+  });
+
+  it('rejects a second starter from a verified live owner without spawning the Windows mutex helper', async () => {
+    const directory = await temporaryDirectory();
+    const expectedOwner = owner(1203, '2026-08-20T00:00:00.000Z');
+    const first = await acquireTunnelLock({
+      profileDirectory: directory,
+      owner: expectedOwner,
+      inspectProcess: async () => ({ state: 'gone' }),
+    });
+    expect(first.acquired).toBe(true);
+    if (!first.acquired) return;
+
+    mutexHelper.spawnCalls = 0;
+    const second = await acquireTunnelLock({
+      profileDirectory: directory,
+      owner: owner(1204, '2026-08-20T00:01:00.000Z'),
+      inspectProcess: async (pid) => pid === expectedOwner.pid
+        ? { state: 'live', processStartedAt: expectedOwner.processStartedAt }
+        : { state: 'gone' },
+    });
+
+    expect(second).toEqual({ acquired: false, owner: expectedOwner });
+    expect(mutexHelper.spawnCalls).toBe(0);
+    await expect(first.release()).resolves.toBe(true);
   });
 });
 
