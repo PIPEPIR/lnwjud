@@ -203,18 +203,24 @@ describe('MVP release verification gate', () => {
     for (const target of ['platform: darwin', 'arch: arm64', 'arch: x64', 'platform: linux']) expect(ci).toContain(target);
 
     expect(release).toContain('actions: read');
+    expect(release).toContain('timeout-minutes: 120');
     expect(release).toContain('gh run list');
     expect(release).toContain('--workflow ci.yml');
     expect(release).toContain('--commit "$sha"');
-    expect((release.match(/--branch main/g) ?? []).length).toBe(2);
+    expect((release.match(/--branch main/g) ?? []).length).toBe(1);
+    expect(release).toContain('candidate="$(find_ci_run push)"');
+    expect(release).toContain('candidate="$(find_ci_run workflow_dispatch)"');
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
     expect(release).toContain('native-darwin-arm64-$sha');
     expect(release).toContain('native-darwin-x64-$sha');
     expect(release).toContain('native-linux-x64-$sha');
     expect(release).toContain('native-linux-arm64-$sha');
-    expect(release).toContain('--event workflow_dispatch');
-    expect(release).toContain('successful CI push or workflow_dispatch run for exact commit');
+    expect(release).toContain('ci_wait_deadline=$((SECONDS + 3600))');
+    expect(release).toContain('while [[ -z "$run_id" ]]');
+    expect(release).toContain('Waiting for main CI to appear for exact commit');
+    expect(release).toContain('Exact-commit CI run $candidate_id completed with conclusion');
+    expect(release).toContain('sleep 20');
     expect(release).toContain('LNWJUD_RELEASE_INSTALLER_DIRECTORY');
     expect(release).toContain('node scripts/collect-release-assets.mjs');
     expect(release).toContain('release-assets/*');

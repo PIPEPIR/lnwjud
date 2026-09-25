@@ -18,7 +18,9 @@ system is never evidence for another.
    updater filenames, tool counts, and release-facing docs agree before merge.
 3. A release tag points to the exact commit already present on `main`.
 4. Never create or push the release tag before every required target-native CI
-   job for that exact `main` SHA has succeeded.
+   job for that exact `main` SHA has succeeded. As a race-condition safeguard,
+   the tag-triggered Release workflow also waits up to 60 minutes for the exact
+   `main` SHA CI run to finish; it still refuses publication if that CI run fails.
 5. The authoritative CI artifacts are named
    `windows-release-<main merge SHA>`,
    `native-darwin-arm64-<main merge SHA>`,
