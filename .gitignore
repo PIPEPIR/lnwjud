@@ -28,6 +28,8 @@ coverage/
 test-results/
 artifacts/
 .local-artifacts/
+# Legacy Remote MCP test fixture path; tests now use the OS temp directory.
+apps/desktop/unused/
 
 # Environment Variables & Secrets
 .env
