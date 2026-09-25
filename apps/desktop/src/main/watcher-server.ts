@@ -96,6 +96,60 @@ function json(response: ServerResponse, statusCode: number, value: unknown): voi
   response.end(body);
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character] ?? character);
+}
+
+function pairingPage(endpoint: string, token: string): string {
+  const safeEndpoint = escapeHtml(endpoint);
+  const safeToken = escapeHtml(token);
+  return `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LNWJUD Watcher Pairing</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#070b12;color:#f7f2e7}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 0%,#51381333,transparent 30rem),linear-gradient(180deg,#0b1019,#070b12)}main{width:min(720px,100%);border:1px solid #344155;border-radius:24px;padding:28px;background:linear-gradient(180deg,#121924fa,#0b111afa);box-shadow:0 28px 80px #000a}.brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}.mark{width:48px;height:48px;border:1px solid #765723;border-radius:15px;display:grid;place-items:center;color:#ffcf65;background:#21190c;font-size:24px}.brand strong{display:block;letter-spacing:.08em}.brand span{display:block;color:#f4b93f;font-size:.78rem;letter-spacing:.12em;margin-top:3px}.eyebrow{color:#f4b93f;font-size:.74rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}h1{font-size:clamp(1.8rem,5vw,2.7rem);margin:8px 0 10px;letter-spacing:-.03em}p{color:#a6b2c0;line-height:1.65}.notice{margin:20px 0;padding:13px 14px;border:1px solid #5f4720;border-radius:14px;background:#21190d;color:#e6c67b}.field{margin-top:16px}.label{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:7px;color:#cbd3dc;font-weight:700}.value{display:block;width:100%;padding:13px 14px;border:1px solid #2b3748;border-radius:13px;background:#080d14;color:#f3d487;font:500 .88rem ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;user-select:all}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}button,a.button{min-height:44px;border-radius:12px;padding:10px 15px;font:inherit;font-size:.92rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #39475a;background:#121a25;color:#e7edf4}.primary{border-color:#e3a936!important;background:linear-gradient(180deg,#efb743,#bd8120)!important;color:#130d04!important}button:focus-visible,a:focus-visible{outline:2px solid #ffcf65;outline-offset:3px}.foot{margin-top:22px;padding-top:18px;border-top:1px solid #263244;color:#7f8c9b;font-size:.8rem;line-height:1.6}.copied{color:#4ed28b}@media(max-width:560px){main{padding:20px;border-radius:20px}.actions>*{width:100%}}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><div class="mark" aria-hidden="true">◉</div><div><strong>LNWJUD</strong><span>WATCHER PAIRING</span></div></div>
+  <div class="eyebrow">Local pairing · จับคู่บนเครื่องนี้เท่านั้น</div>
+  <h1>Connect LNWJUD Watcher</h1>
+  <p>คัดลอก <strong>Session token</strong> ไปใส่ใน LNWJUD Watcher. หน้านี้เปิดได้เฉพาะเครื่องที่รัน LNWJUD และไม่ควรถูกเผยแพร่ผ่าน tunnel.</p>
+  <div class="notice">🔒 ห้ามนำ port <strong>17891</strong> ออก Public Internet. หากต้องดูจากมือถือหรือเครื่องอื่น ให้ tunnel เฉพาะ Watcher API port <strong>17890</strong>.</div>
+  <div class="field"><div class="label"><span>Session token</span><span id="token-status"></span></div><code class="value" id="token">${safeToken}</code></div>
+  <div class="actions"><button class="primary" id="copy-token" type="button">Copy Session token · คัดลอก Token</button></div>
+  <div class="field"><div class="label"><span>Local Watcher endpoint</span><span id="endpoint-status"></span></div><code class="value" id="endpoint">${safeEndpoint}</code></div>
+  <div class="actions"><button id="copy-endpoint" type="button">Copy endpoint</button><a class="button" href="?format=json">View JSON</a></div>
+  <div class="foot">Session token เป็นความลับสำหรับอ่านสถานะ Watcher และควรเก็บเฉพาะ session ที่ใช้งาน. ปิดหน้านี้ได้หลังคัดลอกเสร็จ.</div>
+</main>
+<script>
+async function copyValue(sourceId,statusId,buttonId){const value=document.getElementById(sourceId).textContent||'';const status=document.getElementById(statusId);const button=document.getElementById(buttonId);try{await navigator.clipboard.writeText(value);status.textContent='Copied ✓';status.className='copied';const original=button.textContent;button.textContent='Copied ✓';setTimeout(()=>{status.textContent='';button.textContent=original},1600)}catch{window.prompt('Copy manually:',value)}}
+document.getElementById('copy-token').addEventListener('click',()=>copyValue('token','token-status','copy-token'));
+document.getElementById('copy-endpoint').addEventListener('click',()=>copyValue('endpoint','endpoint-status','copy-endpoint'));
+</script>
+</body>
+</html>`;
+}
+
+function html(response: ServerResponse, statusCode: number, body: string): void {
+  response.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
+  response.end(body);
+}
+
 function listen(server: Server, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const onError = (error: Error): void => reject(error);
@@ -197,11 +251,16 @@ export async function startWatcherServer(options: WatcherServerOptions): Promise
       json(response, 404, { error: 'not_found' });
       return;
     }
-    json(response, 200, {
-      protocolVersion: 1,
+    const pair = {
+      protocolVersion: 1 as const,
       endpoint: `http://127.0.0.1:${apiPort}`,
       token: options.accessToken,
-    });
+    };
+    if (url.searchParams.get('format') !== 'json' && request.headers.accept?.includes('text/html')) {
+      html(response, 200, pairingPage(pair.endpoint, pair.token));
+      return;
+    }
+    json(response, 200, pair);
   });
 
   let pairingPort: number;

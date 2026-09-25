@@ -42,6 +42,14 @@ describe('Watcher server', () => {
       expect(pair.token).toBe(token);
       expect(pair.endpoint).toBe(server.endpoint.toString().replace(/\/$/, ''));
 
+      const pairingPage = await fetch(server.pairingEndpoint, { headers: { Accept: 'text/html' } });
+      expect(pairingPage.headers.get('content-type')).toContain('text/html');
+      expect(pairingPage.headers.get('cache-control')).toBe('no-store');
+      const pairingHtml = await pairingPage.text();
+      expect(pairingHtml).toContain('Copy Session token');
+      expect(pairingHtml).toContain(token);
+      expect(pairingHtml).toContain(pair.endpoint);
+
       const authorized = await fetch(new URL('/api/v1/snapshot', server.endpoint), {
         headers: { Authorization: `Bearer ${token}` },
       });
