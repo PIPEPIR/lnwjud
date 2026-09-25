@@ -10,12 +10,18 @@ function snapshot(activity: readonly WatcherActivityEvent[]): WatcherSnapshot {
   return {
     protocolVersion: 1,
     serverTime: new Date().toISOString(),
-    runtime: { version: 'test', status: 'running' },
+    runtime: { version: 'test', status: 'running', activeOperations: 0 },
     instance: { id: 'instance-1', name: 'test-host', platform: 'windows' },
     goal: null,
+    workspaces: [
+      { id: 'workspace-a', name: 'project-a', selected: true, activeOperations: 1, goals: [], git: { branch: 'dev', commit: 'abc123', clean: false, changedFiles: 2 } },
+      { id: 'workspace-b', name: 'project-b', selected: false, activeOperations: 1, goals: [
+        { id: 'goal-b', key: 'parallel-goal', status: 'running', currentTask: 'Ship in parallel', blockers: [], milestones: [], workspaceId: 'workspace-b', workspaceName: 'project-b' },
+      ], git: { branch: 'feature', commit: 'def456', clean: true, changedFiles: 0 } },
+    ],
     agents: [],
     activity,
-    git: { branch: 'dev', commit: 'abc123', clean: true },
+    git: { branch: 'dev', commit: 'abc123', clean: true, changedFiles: 0 },
   };
 }
 
@@ -54,7 +60,14 @@ describe('Watcher server', () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(authorized.status).toBe(200);
-      expect(await authorized.json()).toMatchObject({ protocolVersion: 1, instance: { id: 'instance-1' } });
+      expect(await authorized.json()).toMatchObject({
+        protocolVersion: 1,
+        instance: { id: 'instance-1' },
+        workspaces: [
+          { id: 'workspace-a', name: 'project-a', activeOperations: 1 },
+          { id: 'workspace-b', name: 'project-b', goals: [{ id: 'goal-b', key: 'parallel-goal' }] },
+        ],
+      });
 
       const socketUrl = new URL('/api/v1/events', server.endpoint);
       socketUrl.protocol = 'ws:';
@@ -89,6 +102,7 @@ describe('Watcher server', () => {
         status: 'running',
         actor: '@lnwjud',
         summary: 'Running project test',
+        workspaceId: 'workspace-b',
       };
       publish?.(event);
       await expect(received).resolves.toEqual(event);

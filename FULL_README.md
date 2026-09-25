@@ -51,11 +51,23 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.6.0
+## Current published version: v5.6.1
 
-## Current source version: v5.6.0
+## Current source version: v5.6.1
 
-Latest published release: **v5.6.0**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+Latest published release: **v5.6.1**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### What's new in v5.6.1
+
+v5.6.1 tightens the Watcher integration and fixes the Settings and Git scrolling behavior reported in the Desktop UI.
+
+- **Multi-project / multi-goal Watcher state:** one Protocol v1 snapshot now includes every Active Project, up to 50 active Durable Goals per project, per-project active-operation counts, and per-project sanitized Git state. The existing top-level `goal` and `git` fields remain the selected/primary-project compatibility view for older Watcher clients.
+- **More truthful Watcher agent state:** `@lnwjud` is reported independently per active project, and delegated runtime work is tagged with its workspace. LNWJUD also marks observable in-flight tool work as running even when no Durable Goal is active; this still does not claim access to ChatGPT reasoning between tool calls.
+- **Last activity age:** Watcher shows the last observed runtime activity time plus a live relative age such as “3 minutes ago” or “2 hours ago”, separate from the transport's last-sync timestamp.
+- **Richer Git snapshot:** Watcher receives branch, commit, clean/dirty state, changed-file count, latest commit subject, and latest commit time for every Active Project, while the selected project remains available through the legacy top-level Git view.
+- **Pairing page UI:** `http://127.0.0.1:17891/api/v1/pair` renders a local-only copy-friendly Session token page in browsers, while `?format=json` and non-HTML clients preserve the JSON contract.
+- **Git X/Y scrolling fixed at the ownership boundary:** the Git page no longer nests its content inside a second panel that clips the changed-file list and diff. The page can scroll naturally, the changed-file list owns its bounded scroll area, and Split/Unified Diff panes own real horizontal and vertical scrolling for long files.
+- **Settings X/Y scrolling:** Desktop main content owns both horizontal and vertical overflow, nested settings cards no longer clip long content, and the Remote MCP/Secure Tunnel details surface is visually joined instead of behaving like competing nested cards.
 
 ### What's new in v5.6.0
 
@@ -964,8 +976,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.6.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.6.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.6.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.6.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

@@ -12,42 +12,64 @@ export interface WatcherActivityEvent {
   readonly actor: string;
   readonly summary: string;
   readonly detail?: string;
+  readonly workspaceId?: string;
+}
+
+export interface WatcherGoalSnapshot {
+  readonly id: string;
+  readonly key: string;
+  readonly status: WatcherStatus;
+  readonly currentTask: string;
+  readonly blockers: readonly string[];
+  readonly milestones: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+  }>;
+  readonly workspaceId?: string;
+  readonly workspaceName?: string;
+}
+
+export interface WatcherGitSnapshot {
+  readonly branch: string;
+  readonly commit: string;
+  readonly clean: boolean;
+  readonly changedFiles: number;
+  readonly latestSubject?: string;
+  readonly latestAt?: string;
+}
+
+export interface WatcherWorkspaceSnapshot {
+  readonly id: string;
+  readonly name: string;
+  readonly selected: boolean;
+  readonly activeOperations: number;
+  readonly goals: readonly WatcherGoalSnapshot[];
+  readonly git: WatcherGitSnapshot;
 }
 
 export interface WatcherSnapshot {
   readonly protocolVersion: 1;
   readonly serverTime: string;
-  readonly runtime: { readonly version: string; readonly status: WatcherStatus };
+  readonly runtime: { readonly version: string; readonly status: WatcherStatus; readonly activeOperations: number };
   readonly instance: {
     readonly id: string;
     readonly name: string;
     readonly platform: 'windows' | 'macos' | 'linux' | 'unknown';
   };
-  readonly goal: null | {
-    readonly id: string;
-    readonly key: string;
-    readonly status: WatcherStatus;
-    readonly currentTask: string;
-    readonly blockers: readonly string[];
-    readonly milestones: ReadonlyArray<{
-      readonly id: string;
-      readonly title: string;
-      readonly status: 'pending' | 'in_progress' | 'completed' | 'blocked';
-    }>;
-  };
+  readonly goal: WatcherGoalSnapshot | null;
+  readonly workspaces: readonly WatcherWorkspaceSnapshot[];
   readonly agents: ReadonlyArray<{
     readonly id: string;
     readonly name: string;
     readonly role: string;
     readonly status: WatcherStatus;
     readonly task?: string;
+    readonly workspaceId?: string;
+    readonly workspaceName?: string;
   }>;
   readonly activity: readonly WatcherActivityEvent[];
-  readonly git: {
-    readonly branch: string;
-    readonly commit: string;
-    readonly clean: boolean;
-  };
+  readonly git: WatcherGitSnapshot;
 }
 
 export interface WatcherServerOptions {

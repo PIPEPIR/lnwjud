@@ -474,8 +474,9 @@ button.titlebar-version:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background: transparent;
 }
 
@@ -1461,13 +1462,20 @@ button.titlebar-version:hover {
 }
 
 /* Git Panel & Metrics */
+.git-page.viewport-list-page {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 100%;
+  overflow: visible;
+}
+
 .git-panel {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  height: auto;
+  flex: 0 0 auto;
+  min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .git-summary-strip {
@@ -1604,8 +1612,9 @@ button.titlebar-version:hover {
   margin-top: 8px;
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
+  min-width: 0;
 }
 
 .git-files-header {
@@ -1629,8 +1638,10 @@ button.titlebar-version:hover {
   gap: 3px;
   flex: 1;
   min-height: 0;
-  max-height: none;
+  max-height: min(38vh, 420px);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 6px;
   background: #06080c;
   border-radius: 8px;
@@ -1788,6 +1799,8 @@ button.titlebar-version:hover {
   display: flex;
   flex-direction: column;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .diff-header-bar {
@@ -1919,6 +1932,8 @@ button.titlebar-version:hover {
   display: flex;
   flex-direction: column;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .diff-pane-titles {

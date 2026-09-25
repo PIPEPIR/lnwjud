@@ -200,7 +200,7 @@ import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
 import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from './tunnel-oauth-provider.js';
 import { TunnelOAuthLoginManager } from './tunnel-oauth-login-manager.js';
 import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
-import { startWatcherServer, type WatcherActivityEvent, type WatcherServerHandle, type WatcherStatus } from './watcher-server.js';
+import { startWatcherServer, type WatcherActivityEvent, type WatcherServerHandle, type WatcherSnapshot, type WatcherStatus } from './watcher-server.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
@@ -378,6 +378,7 @@ function watcherActivityFromSink(event: ActivitySinkEvent): WatcherActivityEvent
     actor: actorName,
     summary: event.phase === 'started' ? `Running ${toolLabel}` : `Finished ${toolLabel}`,
     ...(event.targetSummary === undefined ? {} : { detail: event.targetSummary }),
+    ...(event.workspaceId === undefined ? {} : { workspaceId: event.workspaceId }),
   };
 }
 
@@ -737,84 +738,157 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       subscribeActivity: (listener) => activityTracker.subscribe((event) => listener(watcherActivityFromSink(event))),
       buildSnapshot: async (recentActivity) => {
         const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
-        const inflight = activityTracker.listInFlight().filter((entry) => selected === null || entry.workspaceId === undefined || entry.workspaceId === selected.id);
-        const activeGoal = selected === null ? undefined : (await goalRepository.listWorkspaceGoalsForHost(selected.id, 1))[0];
-        const goalBlocked = (activeGoal?.blockers.length ?? 0) > 0;
+        const activeWorkspaces = await resolveActiveProjectWorkspaces();
+        const activeWorkspaceIds = new Set(activeWorkspaces.map((workspace) => workspace.id));
+        const inflight = activityTracker.listInFlight().filter(
+          (entry) => entry.workspaceId === undefined || activeWorkspaceIds.has(entry.workspaceId),
+        );
 
-        const git = selected === null
-          ? null
-          : await Promise.all([
-              gitService.statusSummary(actor, selected.id),
-              gitService.branch(actor, selected.id),
-              gitService.log(actor, selected.id, { maxCommits: 1 }),
-            ]);
+        const workspaceStates = await Promise.all(activeWorkspaces.map(async (workspace) => {
+          const [goals, gitStatus, gitBranch, gitLog] = await Promise.all([
+            goalRepository.listWorkspaceGoalsForHost(workspace.id, 50),
+            gitService.statusSummary(actor, workspace.id),
+            gitService.branch(actor, workspace.id),
+            gitService.log(actor, workspace.id, { maxCommits: 1 }),
+          ]);
+          const workspaceInflight = inflight.filter((entry) => entry.workspaceId === workspace.id);
+          const goalSnapshots = goals.map((goal) => {
+            const blocked = goal.blockers.length > 0;
+            return {
+              id: goal.id,
+              key: goal.goalKey,
+              status: blocked ? 'blocked' as const : 'running' as const,
+              currentTask: goal.nextAction,
+              blockers: [...goal.blockers],
+              milestones: goal.plan.steps.map((step) => ({
+                id: step.id,
+                title: step.title,
+                status: step.status,
+              })),
+              workspaceId: workspace.id,
+              workspaceName: workspace.displayName,
+            };
+          });
+          const git: WatcherSnapshot['git'] = {
+            branch: gitBranch.ok ? gitBranch.value ?? '' : '',
+            commit: gitLog.ok ? gitLog.value.entries[0]?.hash.slice(0, 12) ?? '' : '',
+            clean: gitStatus.ok ? gitStatus.value.entries.length === 0 : true,
+            changedFiles: gitStatus.ok ? gitStatus.value.entries.length : 0,
+            ...(gitLog.ok && gitLog.value.entries[0]?.subject ? { latestSubject: gitLog.value.entries[0].subject.slice(0, 300) } : {}),
+            ...(gitLog.ok && gitLog.value.entries[0]?.date ? { latestAt: gitLog.value.entries[0].date } : {}),
+          };
+          return { workspace, goals, goalSnapshots, inflight: workspaceInflight, git };
+        }));
 
-        const checkpointActivity: WatcherActivityEvent[] = activeGoal === undefined
-          ? []
-          : [...activeGoal.checkpoints].reverse().slice(0, 20).map((checkpoint) => ({
+        const primaryWorkspace = workspaceStates.find((item) => item.workspace.id === selected?.id) ?? workspaceStates[0];
+        const primaryGoal = primaryWorkspace?.goalSnapshots[0] ?? null;
+        const allGoals = workspaceStates.flatMap((item) => item.goalSnapshots);
+
+        const checkpointActivity: WatcherActivityEvent[] = workspaceStates.flatMap((item) => (
+          item.goals.flatMap((goal) => (
+            [...goal.checkpoints].reverse().slice(0, 20).map((checkpoint) => ({
               id: `checkpoint:${checkpoint.id}`,
               timestamp: checkpoint.createdAt,
               kind: 'goal.checkpoint',
-              status: checkpoint.blockers.length > 0 ? 'blocked' : 'done',
+              status: checkpoint.blockers.length > 0 ? 'blocked' as const : 'done' as const,
               actor: '@lnwjud',
               summary: checkpoint.currentPhase.length > 0 ? checkpoint.currentPhase : 'Goal checkpoint',
               ...(checkpoint.nextAction.length === 0 ? {} : { detail: checkpoint.nextAction.slice(0, 500) }),
-            }));
+              workspaceId: item.workspace.id,
+            }))
+          ))
+        ));
 
-        const activity = [...recentActivity, ...checkpointActivity]
+        const activity = [
+          ...recentActivity.filter((event) => event.workspaceId === undefined || activeWorkspaceIds.has(event.workspaceId)),
+          ...checkpointActivity,
+        ]
           .filter((event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index)
           .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
           .slice(0, 100);
 
-        const codexInflight = inflight.find((entry) => /^(codex|delegate_|agent_swarm_)/.test(entry.toolName));
-        const agents = [{
-          id: 'lnwjud',
-          name: '@lnwjud',
-          role: 'Orchestrator',
-          status: activeGoal === undefined ? 'idle' as const : goalBlocked ? 'blocked' as const : 'running' as const,
-          ...(activeGoal === undefined || activeGoal.nextAction.length === 0 ? {} : { task: activeGoal.nextAction.slice(0, 500) }),
-        }];
-        if (codexInflight !== undefined) {
+        const agents = workspaceStates.flatMap((item): WatcherSnapshot['agents'] => {
+          const latestInflight = [...item.inflight].sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
+          const hasBlockedGoal = item.goalSnapshots.some((goal) => goal.status === 'blocked');
+          const hasRunnableGoal = item.goalSnapshots.some((goal) => goal.status !== 'blocked');
+          const primaryWorkspaceGoal = item.goalSnapshots[0];
+          let orchestratorTask = latestInflight?.targetSummary?.slice(0, 500)
+            ?? latestInflight?.toolName.replaceAll('_', ' ').slice(0, 500);
+          if (primaryWorkspaceGoal !== undefined && primaryWorkspaceGoal.currentTask.trim().length > 0) {
+            orchestratorTask = primaryWorkspaceGoal.currentTask.slice(0, 500);
+          }
+          let orchestratorStatus: WatcherStatus = 'idle';
+          if (item.inflight.length > 0 || hasRunnableGoal) orchestratorStatus = 'running';
+          else if (hasBlockedGoal) orchestratorStatus = 'blocked';
+          const workspaceAgents: Array<WatcherSnapshot['agents'][number]> = [{
+            id: `lnwjud:${item.workspace.id}`,
+            name: '@lnwjud',
+            role: 'Orchestrator',
+            status: orchestratorStatus,
+            ...(orchestratorTask === undefined || orchestratorTask.length === 0 ? {} : { task: orchestratorTask }),
+            workspaceId: item.workspace.id,
+            workspaceName: item.workspace.displayName,
+          }];
+
+          for (const entry of item.inflight.filter((candidate) => /^(codex|delegate_|agent_swarm_)/.test(candidate.toolName))) {
+            workspaceAgents.push({
+              id: `${entry.toolName}:${entry.callId}`,
+              name: 'Codex',
+              role: 'Implementation / Review',
+              status: 'running',
+              ...(entry.targetSummary === undefined ? {} : { task: entry.targetSummary.slice(0, 500) }),
+              workspaceId: item.workspace.id,
+              workspaceName: item.workspace.displayName,
+            });
+          }
+          return workspaceAgents;
+        });
+
+        const unscopedInflight = inflight.filter((entry) => entry.workspaceId === undefined);
+        if (unscopedInflight.length > 0) {
+          const latestUnscoped = [...unscopedInflight].sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
+          const unscopedTask = latestUnscoped?.targetSummary?.slice(0, 500)
+            ?? latestUnscoped?.toolName.replaceAll('_', ' ').slice(0, 500);
           agents.push({
-            id: 'codex',
-            name: 'Codex',
-            role: 'Implementation / Review',
+            id: 'lnwjud:runtime',
+            name: '@lnwjud',
+            role: 'Runtime',
             status: 'running',
-            ...(codexInflight.targetSummary === undefined ? {} : { task: codexInflight.targetSummary.slice(0, 500) }),
+            ...(unscopedTask === undefined || unscopedTask.length === 0 ? {} : { task: unscopedTask }),
           });
         }
+
+        const hasRunnableGoal = allGoals.some((goal) => goal.status !== 'blocked');
+        const allGoalsBlocked = allGoals.length > 0 && allGoals.every((goal) => goal.status === 'blocked');
+        let runtimeStatus: WatcherStatus = 'idle';
+        if (inflight.length > 0 || hasRunnableGoal) runtimeStatus = 'running';
+        else if (allGoalsBlocked) runtimeStatus = 'blocked';
 
         return {
           protocolVersion: 1,
           serverTime: new Date().toISOString(),
           runtime: {
             version: APP_VERSION,
-            status: activeGoal === undefined ? inflight.length > 0 ? 'running' : 'idle' : goalBlocked ? 'blocked' : 'running',
+            status: runtimeStatus,
+            activeOperations: inflight.length,
           },
           instance: {
             id: watcherInstanceId,
             name: os.hostname(),
             platform: watcherPlatform(process.platform),
           },
-          goal: activeGoal === undefined ? null : {
-            id: activeGoal.id,
-            key: activeGoal.goalKey,
-            status: goalBlocked ? 'blocked' : 'running',
-            currentTask: activeGoal.nextAction,
-            blockers: [...activeGoal.blockers],
-            milestones: activeGoal.plan.steps.map((step) => ({
-              id: step.id,
-              title: step.title,
-              status: step.status,
-            })),
-          },
+          goal: primaryGoal,
+          workspaces: workspaceStates.map((item) => ({
+            id: item.workspace.id,
+            name: item.workspace.displayName,
+            selected: item.workspace.id === selected?.id,
+            activeOperations: item.inflight.length,
+            goals: item.goalSnapshots,
+            git: item.git,
+          })),
           agents,
           activity,
-          git: git === null ? { branch: '', commit: '', clean: true } : {
-            branch: git[1].ok ? git[1].value ?? '' : '',
-            commit: git[2].ok ? git[2].value.entries[0]?.hash.slice(0, 12) ?? '' : '',
-            clean: git[0].ok ? git[0].value.entries.length === 0 : true,
-          },
+          git: primaryWorkspace?.git ?? { branch: '', commit: '', clean: true, changedFiles: 0 },
         };
       },
     })).then((handle) => {
