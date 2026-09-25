@@ -214,6 +214,72 @@ describe('MCP localhost HTTP transport', () => {
     }
   });
 
+  it('preserves context economy telemetry across modern per-request MCP server recreation', async () => {
+    await handle.close();
+    const content = 'export const needle = true;\n';
+    handle = await startMcpHttp({
+      port: 0,
+      services: {
+        workspaceInfo: {
+          async info() { return ok({ id: 'workspace-1' }); },
+          async list() { return ok([{ id: 'workspace-1', kind: 'project' }]); },
+        },
+        search: {
+          async searchText() { return ok({ matches: [{ path: 'src/app.ts', line: 1, text: 'needle' }], truncated: false }); },
+          async searchFiles() { return ok({ paths: ['src/app.ts'], truncated: false }); },
+        },
+        file: {
+          async readFile(_actor, _workspaceId, request) {
+            return ok({
+              path: request.path,
+              content,
+              startLine: 1,
+              endLine: 1,
+              encoding: 'utf8' as const,
+              byteLength: Buffer.byteLength(content, 'utf8'),
+            });
+          },
+        },
+        git: { async status() { return ok({ entries: [] }); } },
+      },
+      actor: { clientId: 'context-economy-http-test', clientName: 'context-economy-http-test' },
+    });
+
+    const client = new Client(
+      { name: 'context-economy-modern-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+
+    try {
+      await client.connect(transport);
+
+      const first = await client.callTool({
+        name: 'workspace_context',
+        arguments: { workspaceId: 'workspace-1', query: 'needle', pageSize: 1 },
+      });
+      expect(first.isError).not.toBe(true);
+      expect(first.structuredContent?.economy).toMatchObject({ ledgerEntries: 1, ledgerHits: 0 });
+
+      const stats = await client.callTool({ name: 'context_economy_stats', arguments: {} });
+      expect(stats.isError).not.toBe(true);
+      expect(stats.structuredContent).toMatchObject({ ledgerEntries: 1 });
+
+      const second = await client.callTool({
+        name: 'workspace_context',
+        arguments: { workspaceId: 'workspace-1', query: 'needle', pageSize: 1 },
+      });
+      expect(second.isError).not.toBe(true);
+      expect(second.structuredContent?.files).toEqual([
+        expect.objectContaining({ path: 'src/app.ts', delivery: 'unchanged' }),
+      ]);
+      expect(second.structuredContent?.economy).toMatchObject({ ledgerEntries: 1 });
+      expect(Number(second.structuredContent?.economy?.ledgerHits ?? 0)).toBeGreaterThan(0);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
   it('advertises outcome-driven continuation without an elapsed-time cutoff', async () => {
     const client = new Client({ name: 'continuity-policy-client', version: '0.1.0' });
     const transport = new StreamableHTTPClientTransport(handle.endpoint);

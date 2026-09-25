@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const settingsSource = readFileSync(new URL('../src/renderer/features/settings/SettingsPage.tsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
 const homeSource = readFileSync(new URL('../src/renderer/features/home/ControlCenterPage.tsx', import.meta.url), 'utf8');
 const messagesSource = readFileSync(new URL('../src/renderer/i18n/messages.ts', import.meta.url), 'utf8');
 const settingsCssSource = readFileSync(new URL('../src/renderer/settings-extra.css', import.meta.url), 'utf8');
@@ -30,6 +31,13 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(messagesSource).toContain('while the existing Secure MCP Tunnel remains a separate option.');
     expect(homeSource).toContain('setSecureTunnelExpanded(!remoteMcpOnline)');
     expect(homeSource).toContain("t('home.advancedOption')");
+  });
+
+  it('locks Secure Tunnel actions while a start or stop transition is in flight', () => {
+    expect(appSource).toContain('tunnelBusy={tunnelBusy}');
+    expect(settingsSource).toContain('const tunnelBusy = props.tunnelBusy === true || localTunnelBusy;');
+    expect(settingsSource).toContain("disabled={tunnelBusy || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'}");
+    expect(settingsSource).toContain("disabled={tunnelBusy || props.dashboard.tunnel.state === 'stopped'}");
   });
 
   it('explains Secure Tunnel multi-chat and multi-host topology without recommending one profile per chat', () => {

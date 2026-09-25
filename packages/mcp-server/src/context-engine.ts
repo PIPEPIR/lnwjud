@@ -592,6 +592,8 @@ export class ContextEngine {
         content: result.value.content,
         contextId,
         discovery: request.includeIgnored === true || candidate.gitRelevance === 'changed' ? 'explicit' : 'automatic',
+        ...(result.value.encoding === undefined ? {} : { encoding: result.value.encoding }),
+        ...(result.value.byteLength === undefined ? {} : { byteLength: result.value.byteLength }),
       });
       const snippets = prepared.delivery === 'unchanged' || prepared.delivery === 'reference' || prepared.delivery === 'metadata'
         ? []

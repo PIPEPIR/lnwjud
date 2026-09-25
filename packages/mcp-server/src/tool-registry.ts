@@ -154,6 +154,8 @@ export interface ToolRegistryOptions {
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   /** Shared by transport-scoped server factories so continuation tokens survive per-request server recreation. */
   readonly continuationState?: McpContinuationState;
+  /** Shared by transport-scoped server factories so context-economy ledger state survives per-request server recreation. */
+  readonly contextEconomy?: ContextEconomyRuntime;
   readonly maxToolDurationMs?: number;
 }
 
@@ -237,7 +239,7 @@ export class ToolRegistry {
     this.hostMutationApprovalProvider = options.hostMutationApprovalProvider;
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
-    const contextEconomy = new ContextEconomyRuntime();
+    const contextEconomy = options.contextEconomy ?? new ContextEconomyRuntime();
     const automation = services.automation ?? services.automationFactory?.create(
       new AutomationRuntimeAdapter(this, actor),
       actor,

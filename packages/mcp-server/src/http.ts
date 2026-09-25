@@ -20,6 +20,7 @@ import { actorForRequestScope, createHttpRequestScope, createProtocolHttpRequest
 import { ModernTasksProtocol } from './modern-tasks-protocol.js';
 import { maybeHandleModernTasksWireRequest, maybeTransformModernTasksWireResponse } from './modern-tasks-wire.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
+import { ContextEconomyRuntime } from './context-economy.js';
 import { RunBudgetGuard } from './run-budget.js';
 import { PonytailActivationLedger } from './ponytail-runtime.js';
 import { createOriginPolicy, type OriginPolicy } from './origin-policy.js';
@@ -265,6 +266,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
   const continuationState = options.continuationState ?? createMcpContinuationState();
+  const modernContextEconomy = options.contextEconomy ?? new ContextEconomyRuntime();
   const endpointFallbackSessionId = randomUUID();
   const modernServersByRequest = new WeakMap<Request, McpServer>();
   const activeModernServers = new Set<McpServer>();
@@ -277,6 +279,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       setOfMarksStore,
       ponytailActivationLedger,
       continuationState,
+      contextEconomy: modernContextEconomy,
       legacyTasksProtocol: false,
       requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
     });

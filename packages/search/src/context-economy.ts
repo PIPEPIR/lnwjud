@@ -48,6 +48,8 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '__pycache__',
 ]);
 
+const DEFAULT_IGNORED_FILES = new Set(['.ds_store']);
+
 const BINARY_EXTENSIONS = new Set([
   '.7z', '.avi', '.bin', '.class', '.db', '.dll', '.dmg', '.exe', '.gif', '.gz', '.ico', '.jpeg', '.jpg', '.png',
   '.m4a', '.mkv', '.mov', '.mp3', '.mp4', '.pdf', '.pyc', '.rar', '.sqlite', '.sqlite3', '.tar', '.ttf',
@@ -91,6 +93,7 @@ export const DEFAULT_CONTEXT_IGNORE_GLOBS: readonly string[] = [
   '!**/.venv/**',
   '!**/venv/**',
   '!**/__pycache__/**',
+  '!**/.DS_Store',
   '!**/*.map',
   '!**/*.min.js',
   '!**/*.min.css',
@@ -123,10 +126,11 @@ export function classifyContextPath(filePath: string, mode: ContextDiscoveryMode
   const basename = segments.at(-1) ?? lowerPath;
   const extension = basename.includes('.') ? `.${basename.split('.').at(-1)}` : '';
   const ignoredDirectory = segments.find((segment) => DEFAULT_IGNORED_DIRECTORIES.has(segment));
+  const ignoredFile = DEFAULT_IGNORED_FILES.has(basename);
   const isBinary = BINARY_EXTENSIONS.has(extension);
   const isGenerated = GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(basename)) || lowerPath.includes('/generated/');
   const isMetadata = METADATA_FILES.has(basename);
-  const kind: ContextPathKind = ignoredDirectory !== undefined
+  const kind: ContextPathKind = ignoredDirectory !== undefined || ignoredFile
     ? 'ignored'
     : isBinary
       ? 'binary'
@@ -152,7 +156,7 @@ export function classifyContextPath(filePath: string, mode: ContextDiscoveryMode
       kind,
       tier: 0,
       discoverable: false,
-      reason: `default ignored directory: ${ignoredDirectory}`,
+      reason: ignoredDirectory === undefined ? `default ignored file: ${basename}` : `default ignored directory: ${ignoredDirectory}`,
     };
   }
   if (kind === 'binary') {

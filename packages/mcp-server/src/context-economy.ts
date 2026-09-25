@@ -115,9 +115,11 @@ export class ContextEconomyRuntime {
     readonly content: string;
     readonly contextId: string;
     readonly discovery?: ContextDiscoveryMode;
+    readonly encoding?: 'utf8' | 'base64';
+    readonly byteLength?: number;
   }): ContextEconomyPrepared {
     const discovery = request.discovery ?? 'automatic';
-    const byteLength = Buffer.byteLength(request.content, 'utf8');
+    const byteLength = request.byteLength ?? Buffer.byteLength(request.content, 'utf8');
     const fingerprint = fingerprintContent(request.content);
     let classification = classifyContextPath(request.path, discovery);
     if (isGeneratedContent(request.content) && classification.kind !== 'ignored' && classification.kind !== 'binary') {
@@ -129,7 +131,7 @@ export class ContextEconomyRuntime {
         reason: discovery === 'explicit' ? 'explicit generated-file read is allowed' : 'generated content is not sent to automatic text context',
       };
     }
-    if (isBinaryContent(request.content) && classification.kind !== 'ignored') {
+    if (request.encoding === 'base64' || (classification.kind !== 'ignored' && isBinaryContent(request.content))) {
       classification = {
         ...classification,
         kind: 'binary',
@@ -194,7 +196,7 @@ export class ContextEconomyRuntime {
       fingerprint,
       byteLength,
       contextId: request.contextId,
-      ...(byteLength <= this.maxStoredBytes ? { content: request.content } : {}),
+      ...(classification.kind !== 'binary' && byteLength <= this.maxStoredBytes ? { content: request.content } : {}),
     });
     return prepared;
   }
