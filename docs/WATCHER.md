@@ -1,6 +1,6 @@
 # LNWJUD Watcher API
 
-LNWJUD v5.6.0 adds the local read-only runtime surface used by the separate **LNWJUD Watcher** Web/PWA, Android, and iOS client.
+LNWJUD v5.6.0 introduced the local read-only runtime surface used by the separate **LNWJUD Watcher** Web/PWA, Android, and iOS client. LNWJUD v5.6.1 extends Protocol v1 additively so one snapshot can represent multiple Active Projects and multiple active Durable Goals at the same time.
 
 ## What starts with Desktop
 
@@ -36,7 +36,7 @@ The local-only response contains:
 
 Keep the token private. In production Desktop it is persisted through LNWJUD's protected secret provider and is separate from MCP, tunnel, and OAuth credentials.
 
-For same-machine use, enter the returned endpoint and token directly in Watcher.
+For same-machine use, enter the returned endpoint and token directly in Watcher. Watcher Web/PWA v0.3.0+ remembers that token in browser-local storage for up to 60 days; packaged Desktop and mobile builds keep it in app-local device storage across restarts until the user clears the token or app data.
 
 For phone/remote use, expose **only port 17890** through zrok, Cloudflare Tunnel, Tailscale Serve/Funnel, ngrok, or your own HTTPS reverse proxy. Then enter the resulting HTTPS URL together with the same Watcher token in the Watcher app.
 
@@ -51,12 +51,12 @@ Authorization: Bearer <watcher-token>
 
 The response is intentionally bounded and sanitized:
 
-- runtime version/health
+- runtime version/health and total observable in-flight operation count
 - stable instance id, hostname, platform
-- current active Durable Goal and milestone states
-- observable active agents/workers
-- recent observable activity
-- selected workspace Git branch/commit/clean state
+- `workspaces[]`: every Active Project, each with its active Durable Goals (up to 50 per project), active-operation count, and sanitized Git state
+- workspace-tagged observable agents/workers and activity where the runtime knows the workspace
+- recent observable activity across all Active Projects
+- compatibility `goal` and `git` fields for the selected/primary project so older Protocol v1 clients continue to work
 - server timestamp
 
 Watcher does not return raw environment variables, provider credentials, MCP secrets, file contents, or hidden model reasoning.

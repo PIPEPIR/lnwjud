@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.6.0 release directly.</p>
+<p align="center">Choose your platform and download the current v5.6.1 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.0.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.1.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.0.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.1.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,23 @@
 
 ---
 
-## Current published version: v5.6.0
+## Current published version: v5.6.1
 
-## Current source version: v5.6.0
+## Current source version: v5.6.1
 
-Latest published release: **v5.6.0**. The download buttons above point directly to the v5.6.0 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.6.1**. The download buttons above point directly to the v5.6.1 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.6.1
+
+v5.6.1 tightens the Watcher integration and fixes the Settings and Git scrolling behavior reported in the Desktop UI.
+
+- **Multi-project / multi-goal Watcher state:** one Protocol v1 snapshot now includes every Active Project, up to 50 active Durable Goals per project, per-project active-operation counts, and per-project sanitized Git state. The existing top-level `goal` and `git` fields remain the selected/primary-project compatibility view for older Watcher clients.
+- **More truthful Watcher agent state:** `@lnwjud` is reported independently per active project, and delegated runtime work is tagged with its workspace. LNWJUD also marks observable in-flight tool work as running even when no Durable Goal is active; this still does not claim access to ChatGPT reasoning between tool calls.
+- **Last activity age:** Watcher shows the last observed runtime activity time plus a live relative age such as “3 minutes ago” or “2 hours ago”, separate from the transport's last-sync timestamp.
+- **Richer Git snapshot:** Watcher receives branch, commit, clean/dirty state, changed-file count, latest commit subject, and latest commit time for every Active Project, while the selected project remains available through the legacy top-level Git view.
+- **Pairing page UI:** `http://127.0.0.1:17891/api/v1/pair` renders a local-only copy-friendly Session token page in browsers, while `?format=json` and non-HTML clients preserve the JSON contract. Watcher Web/PWA v0.3.0+ can remember that token for 60 days; packaged Watcher apps keep it in app-local device storage across restarts.
+- **Git X/Y scrolling fixed at the ownership boundary:** the Git page no longer nests its content inside a second panel that clips the changed-file list and diff. The page can scroll naturally, the changed-file list owns its bounded scroll area, and Split/Unified Diff panes own real horizontal and vertical scrolling for long files.
+- **Settings X/Y scrolling:** Desktop main content owns both horizontal and vertical overflow, nested settings cards no longer clip long content, and the Remote MCP/Secure Tunnel details surface is visually joined instead of behaving like competing nested cards.
 
 ### What's new in v5.6.0
 

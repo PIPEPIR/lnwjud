@@ -1,9 +1,10 @@
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { settleFirstRunAndOpenHome } from './first-run-helpers.js';
 import { chromium, expect, test, type Page } from '@playwright/test';
@@ -13,6 +14,7 @@ import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = electronExecutablePath(desktopRoot);
+const execFileAsync = promisify(execFile);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('control center auto-starts MCP and supports project + doctor journey', async ({ browserName }, testInfo) => {
@@ -167,6 +169,126 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
       await writeFile(uiPath, await diagnosticPage.locator('body').innerText(), 'utf8');
       await testInfo.attach('failure-ui', { path: uiPath, contentType: 'text/plain' });
     }
+    throw error;
+  } finally {
+    await terminateProcessTree(electronProcess);
+    await Promise.all([
+      removeTemporaryRoot(fixtureRoot),
+      removeTemporaryRoot(dataRoot),
+    ]);
+  }
+});
+
+test('Git page supports real vertical page scrolling plus X/Y diff scrolling', async ({ browserName }, testInfo) => {
+  void browserName;
+  test.setTimeout(90_000);
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-git-scroll-'));
+  const fixtureRealRoot = await realpath(fixtureRoot);
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-git-scroll-data-'));
+  const gitCeilingDirectories = [path.dirname(fixtureRoot), path.dirname(fixtureRealRoot)]
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(path.delimiter);
+
+  const baselineLines = Array.from({ length: 140 }, (_, index) => `${index.toString().padStart(3, '0')}:${'A'.repeat(420)}`);
+  const changedLines = Array.from({ length: 140 }, (_, index) => `${index.toString().padStart(3, '0')}:${'B'.repeat(420)}`);
+  await writeFile(path.join(fixtureRoot, 'long-file.txt'), baselineLines.join('\n') + '\n', 'utf8');
+  await execFileAsync('git', ['init', '--quiet'], { cwd: fixtureRoot, windowsHide: true });
+  await execFileAsync('git', ['config', 'user.email', 'lnwjud-scroll@example.invalid'], { cwd: fixtureRoot, windowsHide: true });
+  await execFileAsync('git', ['config', 'user.name', 'lnwjud scroll acceptance'], { cwd: fixtureRoot, windowsHide: true });
+  await execFileAsync('git', ['add', '--', 'long-file.txt'], { cwd: fixtureRoot, windowsHide: true });
+  await execFileAsync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: fixtureRoot, windowsHide: true });
+  await writeFile(path.join(fixtureRoot, 'long-file.txt'), changedLines.join('\n') + '\n', 'utf8');
+  await Promise.all(Array.from({ length: 64 }, (_, index) =>
+    writeFile(path.join(fixtureRoot, `untracked-${index.toString().padStart(2, '0')}.txt`), `untracked ${index}\n`, 'utf8')
+  ));
+
+  const devToolsPort = await findEphemeralPort();
+  const launchExecutable = packagedExecutable ?? electronExecutable;
+  const launchArguments = packagedExecutable === undefined
+    ? [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`, mainEntry]
+    : [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`];
+  const electronProcess = spawn(launchExecutable, launchArguments, {
+    cwd: desktopRoot,
+    detached: process.platform !== 'win32',
+    shell: false,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      APPDATA: dataRoot,
+      LNWJUD_DATA_PATH: dataRoot,
+      LNWJUD_WORKSPACE: fixtureRoot,
+      LNWJUD_UNRESTRICTED: '1',
+      LNWJUD_E2E_FIXTURE: '1',
+      LNWJUD_E2E_NODE_PATH: process.execPath,
+      GIT_CEILING_DIRECTORIES: gitCeilingDirectories,
+    },
+  });
+  const stderr: string[] = [];
+  electronProcess.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
+
+  try {
+    await waitForDevTools(devToolsPort, electronProcess, stderr);
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
+    const context = browser.contexts()[0];
+    if (context === undefined) throw new Error('Electron did not create a browser context');
+    await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBeGreaterThan(0);
+    const page = context.pages()[0];
+    if (page === undefined) throw new Error('Electron did not create a renderer page');
+
+    await settleFirstRunAndOpenHome(page);
+    await page.setViewportSize({ width: 900, height: 650 });
+    await page.getByRole('button', { name: 'Git', exact: true }).click();
+    await expect(page.locator('.git-file-item')).toHaveCount(65, { timeout: 30_000 });
+
+    const fileList = page.locator('.git-file-list');
+    const fileListMetrics = await fileList.evaluate((element) => ({
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    expect(fileListMetrics.scrollHeight).toBeGreaterThan(fileListMetrics.clientHeight);
+    const fileListScrollTop = await fileList.evaluate((element) => {
+      element.scrollTop = 120;
+      return element.scrollTop;
+    });
+    expect(fileListScrollTop).toBeGreaterThan(0);
+
+    await page.locator('.git-file-item').filter({ hasText: 'long-file.txt' }).click();
+    const leftPane = page.locator('.diff-pane-left');
+    await expect(leftPane).toBeVisible({ timeout: 30_000 });
+    const diffMetrics = await leftPane.evaluate((element) => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    expect(diffMetrics.scrollWidth).toBeGreaterThan(diffMetrics.clientWidth);
+    expect(diffMetrics.scrollHeight).toBeGreaterThan(diffMetrics.clientHeight);
+    const diffScroll = await leftPane.evaluate((element) => {
+      element.scrollLeft = 180;
+      element.scrollTop = 180;
+      return { left: element.scrollLeft, top: element.scrollTop };
+    });
+    expect(diffScroll.left).toBeGreaterThan(0);
+    expect(diffScroll.top).toBeGreaterThan(0);
+
+    const mainPane = page.locator('.main-pane');
+    const mainMetrics = await mainPane.evaluate((element) => ({
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    expect(mainMetrics.scrollHeight).toBeGreaterThan(mainMetrics.clientHeight);
+    const mainScrollTop = await mainPane.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(mainScrollTop).toBeGreaterThan(0);
+
+    await page.screenshot({ path: testInfo.outputPath('git-scroll-900x650.png'), fullPage: false });
+    await browser.close();
+  } catch (error: unknown) {
+    const stderrPath = testInfo.outputPath('git-scroll-electron-stderr.txt');
+    await writeFile(stderrPath, stderr.join(''), 'utf8');
+    await testInfo.attach('electron-stderr', { path: stderrPath, contentType: 'text/plain' });
     throw error;
   } finally {
     await terminateProcessTree(electronProcess);

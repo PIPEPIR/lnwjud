@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.6.0 (มีทั้งหมด 276 definitions; advertise 264 tools โดยปริยายก่อนใช้ per-tool override และครบ 276 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.6.1 (มีทั้งหมด 276 definitions; advertise 264 tools โดยปริยายก่อนใช้ per-tool override และครบ 276 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -25,7 +25,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - มี task/delegation/session/checkpoint/handoff สำหรับงานต่อเนื่องและหลาย agent
 - มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery รวมถึง incident diagnostics แบบ bounded ที่เก็บ session heartbeat, local Crashpad metadata, current per-process memory และ runtime trend ย้อนหลังสูงสุดประมาณ 6 ชั่วโมง (1 นาทีต่อ sample) สำหรับ RSS/V8 heap/external/ArrayBuffer, Browser/Tab/GPU/Utility working/private bytes, system RAM, CPU/event-loop, active Node resources, retained LogHub line/byte/dedupe counters, MCP activity/error/in-flight และจำนวน `toolAvailabilityService` listeners โดยไม่แนบ raw heap dump อัตโนมัติ
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF
-- มี **LNWJUD Watcher API v1** แบบ read-only แยกจาก MCP command surface: authenticated snapshot + WebSocket activity, dedicated protected token, loopback-only pairing, Desktop auto-start และ sanitized Goal/Agent/Git state สำหรับ Watcher Web/PWA/Android/iOS
+- มี **LNWJUD Watcher API v1** แบบ read-only แยกจาก MCP command surface: authenticated snapshot + WebSocket activity, dedicated protected token, loopback-only pairing, Desktop auto-start และ sanitized state ของทุก Active Project/ทุก active Durable Goal พร้อม Agent/activity/Git แยก workspace สำหรับ Watcher Web/PWA/Android/iOS โดยยังคง top-level goal/git ของ Primary Project เพื่อ backward compatibility
 - หน้า Git Desktop รองรับ native X/Y scrolling ในรายการไฟล์และ Split/Unified Diff เพื่ออ่าน source line ยาว ๆ โดยไม่บีบ layout
 - ปิด Native ChatGPT recurring watchdog ก่อน terminal completion เป็นเส้นทางหลัก และกู้ exact pending cleanup locator จาก durable state ได้หาก host surface/turn หลุดระหว่างปิดงาน; terminal cleanup-only wake ไม่มีสิทธิ์กลับไปแก้ workspace
 - รัน Native Goal automation แบบ milestone ที่ตรวจหลักฐานได้ โดยใช้ durable shell เดิม, current Goal lease และ recurring watchdog เดิมหนึ่งรายการ โดยไม่สร้าง scheduler ใหม่หรือ replay งานที่ผลลัพธ์ยังไม่ทราบ

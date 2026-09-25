@@ -101,7 +101,7 @@ export function GitPage({
         </div>
       </div>
 
-      <section className="panel git-panel">
+      <section className="git-panel">
         <div className="git-summary-strip">
           <strong className="git-summary-message" data-testid="git-summary">{gitSummary.message}</strong>
           <div className="git-summary-stats" aria-label={t('git.statusSummary')}>

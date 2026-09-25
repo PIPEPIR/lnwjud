@@ -163,7 +163,7 @@
 
 .settings-card-polished {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   padding: 18px;
   border-color: var(--settings-soft-border) !important;
   background: var(--settings-card-bg) !important;
@@ -922,7 +922,21 @@
 }
 
 .connection-method-panel {
+  min-width: 0;
   margin: 0;
+  overflow: visible;
+}
+
+.connection-method-stack[open] > .connection-method-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.connection-method-stack[open] > .connection-method-panel {
+  margin-top: -10px;
+  border-top: 0 !important;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .home-connection-method {

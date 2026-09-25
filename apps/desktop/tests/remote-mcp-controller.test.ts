@@ -26,9 +26,11 @@ interface RemoteMcpTestAccess {
   startGateway(): Promise<void>;
 }
 
+const UNUSED_DATA_PATH = path.join(os.tmpdir(), 'lnwjud-remote-mcp-test-unused', String(process.pid));
 const servers: Server[] = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await rm(UNUSED_DATA_PATH, { recursive: true, force: true });
 });
 
 async function listen(server: Server): Promise<string> {
@@ -206,7 +208,7 @@ describe('Remote MCP OAuth gateway', () => {
       return state;
     });
     const save = vi.fn(async () => undefined);
-    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const controller = new RemoteMcpController({ dataPath: UNUSED_DATA_PATH, getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
     await internal.persistState();
@@ -240,7 +242,7 @@ describe('Remote MCP OAuth gateway', () => {
       refreshGrants: [],
     }));
     const save = vi.fn(async () => undefined);
-    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const controller = new RemoteMcpController({ dataPath: UNUSED_DATA_PATH, getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
     expect(internal.configuredNgrokOrigin).toBeNull();
@@ -276,7 +278,7 @@ describe('Remote MCP OAuth gateway', () => {
   it('persists only an explicitly configured static domain', async () => {
     const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 2, desiredRunning: false, configuredPublicOrigin: null, trustedClients: [], refreshGrants: [] }));
     const save = vi.fn(async () => undefined);
-    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const controller = new RemoteMcpController({ dataPath: UNUSED_DATA_PATH, getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
     const status = await controller.savePublicOrigin('steady.ngrok-free.app');
     expect(status.configuredPublicOrigin).toBe('https://steady.ngrok-free.app');
     expect(save).toHaveBeenCalledWith({ schemaVersion: 3, desiredRunning: false, transport: 'ngrok', externalGatewayPort: null, configuredPublicOrigin: 'https://steady.ngrok-free.app', configuredNgrokOrigin: 'https://steady.ngrok-free.app', configuredExternalOrigin: null, registeredClients: [], trustedClients: [], refreshGrants: [] });
@@ -325,7 +327,7 @@ describe('Remote MCP OAuth gateway', () => {
     };
     const save = vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = state; });
     const controller = new RemoteMcpController({
-      dataPath: 'unused',
+      dataPath: UNUSED_DATA_PATH,
       getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
       persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => persisted, save },
     });
@@ -361,7 +363,7 @@ describe('Remote MCP OAuth gateway', () => {
         registeredClients: [], trustedClients: [], refreshGrants: [],
       };
       const controller = new RemoteMcpController({
-        dataPath: 'unused',
+        dataPath: UNUSED_DATA_PATH,
         getLocalMcpUrl: async (): Promise<null> => null,
         persistence: {
           load: async (): Promise<RemoteMcpPersistedState | null> => persisted,
@@ -392,7 +394,7 @@ describe('Remote MCP OAuth gateway', () => {
     const save = vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = state; });
     const ensureLocalMcpUrl = vi.fn(async (): Promise<string> => 'http://127.0.0.1:32123/mcp');
     const controller = new RemoteMcpController({
-      dataPath: 'unused',
+      dataPath: UNUSED_DATA_PATH,
       getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
       ensureLocalMcpUrl,
       persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => persisted, save },
@@ -417,7 +419,7 @@ describe('Remote MCP OAuth gateway', () => {
       save: vi.fn(async (state: RemoteMcpPersistedState): Promise<void> => { persisted = structuredClone(state); }),
     };
     const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-persisted_123';
-    const first = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
+    const first = new RemoteMcpController({ dataPath: UNUSED_DATA_PATH, getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
     const firstInternal = first as unknown as RemoteMcpTestAccess;
     await firstInternal.ensurePersistenceLoaded();
     await firstInternal.startGateway();
@@ -433,7 +435,7 @@ describe('Remote MCP OAuth gateway', () => {
     persisted = { ...persisted!, desiredRunning: true };
     await first.close();
 
-    const second = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
+    const second = new RemoteMcpController({ dataPath: UNUSED_DATA_PATH, getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp', persistence });
     const startSpy = vi.spyOn(second, 'start').mockResolvedValue({ ...EMPTY_REMOTE_MCP_STATUS, state: 'running', provider: 'ngrok', transport: 'ngrok' });
     await second.autoStartIfDesired();
     expect(startSpy).toHaveBeenCalledOnce();
@@ -460,7 +462,7 @@ describe('Remote MCP OAuth gateway', () => {
 
   it('recovers a lost legacy ChatGPT client only with exact resource and still requires local approval', async () => {
     const controller = new RemoteMcpController({
-      dataPath: 'unused',
+      dataPath: UNUSED_DATA_PATH,
       getLocalMcpUrl: async (): Promise<string> => 'http://127.0.0.1:32123/mcp',
       persistence: { load: async (): Promise<null> => null, save: async (): Promise<void> => undefined },
     });
@@ -498,7 +500,7 @@ describe('Remote MCP OAuth gateway', () => {
     const pendingStart = new Promise<RemoteMcpStatus>((resolve) => { resolveStart = resolve; });
     const runningStatus = { ...EMPTY_REMOTE_MCP_STATUS, state: 'running' as const, oauthConnected: true, autoStartEnabled: true };
     const controller = new RemoteMcpController({
-      dataPath: 'unused',
+      dataPath: UNUSED_DATA_PATH,
       getLocalMcpUrl: async (): Promise<null> => null,
       persistence: { load: async (): Promise<null> => null, save: async (): Promise<void> => undefined },
     });
@@ -530,7 +532,7 @@ describe('Remote MCP OAuth gateway', () => {
       refreshGrants: [],
     };
     const controller = new RemoteMcpController({
-      dataPath: 'unused',
+      dataPath: UNUSED_DATA_PATH,
       getLocalMcpUrl: async (): Promise<null> => null,
       persistence: { load: async (): Promise<RemoteMcpPersistedState> => persisted, save: async (): Promise<void> => undefined },
     });

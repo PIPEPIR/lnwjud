@@ -21,6 +21,52 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.6.1',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'watcher-observability',
+            titleKey: 'whatsNew.561.watcherObservability.title',
+            descriptionKey: 'whatsNew.561.watcherObservability.description',
+            badge: 'improved',
+            tags: ['Watcher', 'agents', 'activity', 'Git'],
+          },
+          {
+            id: 'watcher-multi-project',
+            titleKey: 'whatsNew.561.watcherMultiProject.title',
+            descriptionKey: 'whatsNew.561.watcherMultiProject.description',
+            badge: 'new',
+            tags: ['Watcher', 'projects', 'goals', 'parallel'],
+          },
+          {
+            id: 'git-scroll',
+            titleKey: 'whatsNew.561.gitScroll.title',
+            descriptionKey: 'whatsNew.561.gitScroll.description',
+            badge: 'fixed',
+            tags: ['Git', 'scroll', 'diff', 'UI'],
+          },
+          {
+            id: 'watcher-pairing-ui',
+            titleKey: 'whatsNew.561.pairingUi.title',
+            descriptionKey: 'whatsNew.561.pairingUi.description',
+            badge: 'improved',
+            tags: ['Watcher', 'pairing', 'token', 'UX'],
+          },
+          {
+            id: 'settings-scroll',
+            titleKey: 'whatsNew.561.settingsScroll.title',
+            descriptionKey: 'whatsNew.561.settingsScroll.description',
+            badge: 'fixed',
+            tags: ['Settings', 'scroll', 'Remote MCP', 'UI'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.6.0',
     categories: [
       {
