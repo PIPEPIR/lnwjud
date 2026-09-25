@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.6.1 (มีทั้งหมด 276 definitions; advertise 264 tools โดยปริยายก่อนใช้ per-tool override และครบ 276 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.6.2 (มีทั้งหมด 276 definitions; advertise 264 tools โดยปริยายก่อนใช้ per-tool override และครบ 276 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 

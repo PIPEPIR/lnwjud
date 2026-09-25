@@ -51,11 +51,19 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.6.1
+## Current published version: v5.6.2
 
-## Current source version: v5.6.1
+## Current source version: v5.6.2
 
-Latest published release: **v5.6.1**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+Latest published release: **v5.6.2**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### What's new in v5.6.2
+
+v5.6.2 fixes three reliability issues reported in the MCP context pipeline and Secure Tunnel UI.
+
+- **Context Economy persists across Modern HTTP requests:** request-scoped MCP server recreation now reuses a transport-scoped Context Economy runtime, so `context_economy_stats` keeps its ledger and repeated context retrievals can produce ledger hits.
+- **Binary context stays metadata-only:** `.DS_Store` is ignored by default, and Base64/binary file reads are detected from the file-reader encoding before text-context assembly, preventing long binary payloads from leaking into `workspace_context`.
+- **Secure Tunnel transition lock:** Settings now receives the App-level tunnel busy state and disables Start/Stop controls while tunnel start or stop is in flight, preventing repeated-click overlap.
 
 ### What's new in v5.6.1
 
@@ -976,8 +984,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.6.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.6.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.6.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.6.2.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

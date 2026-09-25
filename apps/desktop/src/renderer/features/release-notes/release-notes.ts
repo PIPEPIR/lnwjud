@@ -21,6 +21,38 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.6.2',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'context-economy-http',
+            titleKey: 'whatsNew.562.contextEconomy.title',
+            descriptionKey: 'whatsNew.562.contextEconomy.description',
+            badge: 'fixed',
+            tags: ['MCP', 'Context Economy', 'HTTP'],
+          },
+          {
+            id: 'binary-context-filter',
+            titleKey: 'whatsNew.562.binaryContext.title',
+            descriptionKey: 'whatsNew.562.binaryContext.description',
+            badge: 'fixed',
+            tags: ['Context', 'binary', '.DS_Store'],
+          },
+          {
+            id: 'tunnel-transition-lock',
+            titleKey: 'whatsNew.562.tunnelBusy.title',
+            descriptionKey: 'whatsNew.562.tunnelBusy.description',
+            badge: 'fixed',
+            tags: ['Secure Tunnel', 'Settings', 'UI'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.6.1',
     categories: [
       {
