@@ -41,7 +41,7 @@ import {
   type ExtensionsService,
 } from '@lnwjud/extensions';
 import { ActivityTracker, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
-import { CodexAdapter, LayaCodexHarnessRouter } from '@lnwjud/codex';
+import { CodexAdapter } from '@lnwjud/codex';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import {
   AesGcmCheckpointCipher,
@@ -172,11 +172,7 @@ export function createStdioMcpRuntime(
     idleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),
   });
   const codexService = new CodexService(workspaceRepository, {
-    adapter: new CodexAdapter(undefined, undefined, undefined, new LayaCodexHarnessRouter({
-      enabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexLayaEnabled), false),
-      pythonExecutable: settingsRepository.get(USER_SETTING_KEYS.codexLayaPythonPath)?.trim() ?? '',
-      serviceCwd: settingsRepository.get(USER_SETTING_KEYS.codexLayaServiceCwd)?.trim() ?? '',
-    })),
+    adapter: new CodexAdapter(),
     auditService,
     profileProvider,
   });

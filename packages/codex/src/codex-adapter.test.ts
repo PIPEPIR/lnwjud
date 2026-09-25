@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ok, type Result } from '@lnwjud/domain';
 import type { ManagedProcess, ManagedProcessStart, ProcessLogResult } from '@lnwjud/process';
 import { CodexAdapter, type CodexDiscoveryPort, type CodexProcessManagerPort } from './codex-adapter.js';
-import type { CodexHarnessRouterPort } from './codex-harness-router.js';
 import type { CodexDiscoveryResult } from './codex-capabilities.js';
 
 describe('CodexAdapter', () => {
@@ -24,44 +23,6 @@ describe('CodexAdapter', () => {
       args: ['exec', '--sandbox', 'workspace-write', 'review "quoted" input'],
       cwd: 'C:\\workspace',
     }]);
-  });
-
-  it('adds the native Codex profile flag when the harness router selects core', async () => {
-    const calls: ManagedProcessStart[] = [];
-    const manager: CodexProcessManagerPort = {
-      async start(spec): Promise<Result<ManagedProcess>> { calls.push(spec); return ok(processHandle()); },
-      status(): Result<ManagedProcess> { return ok(processHandle()); },
-      logs(): Result<ProcessLogResult> { return ok({ entries: [], truncated: false, nextSequence: 0 }); },
-      async stop(): Promise<Result<void>> { return ok(undefined); },
-    };
-    const discovery: CodexDiscoveryPort = { async discover(): Promise<Result<CodexDiscoveryResult>> { return ok(discovered()); } };
-    const router: CodexHarnessRouterPort = {
-      async decide() { return { harness: 'core', reason: 'test_core' }; },
-    };
-
-    const result = await new CodexAdapter(discovery, manager, undefined, router).start('C:\\workspace', 'fix local bug');
-
-    expect(result).toMatchObject({ ok: true });
-    expect(calls[0]?.args).toEqual(['-p', 'core', 'exec', '--sandbox', 'workspace-write', 'fix local bug']);
-  });
-
-  it('falls back to normal full Codex when the harness router throws', async () => {
-    const calls: ManagedProcessStart[] = [];
-    const manager: CodexProcessManagerPort = {
-      async start(spec): Promise<Result<ManagedProcess>> { calls.push(spec); return ok(processHandle()); },
-      status(): Result<ManagedProcess> { return ok(processHandle()); },
-      logs(): Result<ProcessLogResult> { return ok({ entries: [], truncated: false, nextSequence: 0 }); },
-      async stop(): Promise<Result<void>> { return ok(undefined); },
-    };
-    const discovery: CodexDiscoveryPort = { async discover(): Promise<Result<CodexDiscoveryResult>> { return ok(discovered()); } };
-    const router: CodexHarnessRouterPort = {
-      async decide(): Promise<never> { throw new Error('router offline'); },
-    };
-
-    const result = await new CodexAdapter(discovery, manager, undefined, router).start('C:\\workspace', 'review');
-
-    expect(result).toMatchObject({ ok: true });
-    expect(calls[0]?.args).toEqual(['exec', '--sandbox', 'workspace-write', 'review']);
   });
 
   it('does not start a process after cancellation wins during Codex discovery', async () => {
