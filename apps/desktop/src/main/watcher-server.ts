@@ -148,7 +148,7 @@ function pairingPage(endpoint: string, token: string): string {
   <div class="actions"><button class="primary" id="copy-token" type="button">Copy Session token · คัดลอก Token</button></div>
   <div class="field"><div class="label"><span>Local Watcher endpoint</span><span id="endpoint-status"></span></div><code class="value" id="endpoint">${safeEndpoint}</code></div>
   <div class="actions"><button id="copy-endpoint" type="button">Copy endpoint</button><a class="button" href="?format=json">View JSON</a></div>
-  <div class="foot">Session token เป็นความลับสำหรับอ่านสถานะ Watcher และควรเก็บเฉพาะ session ที่ใช้งาน. ปิดหน้านี้ได้หลังคัดลอกเสร็จ.</div>
+  <div class="foot">Session token เป็นความลับสำหรับอ่านสถานะ Watcher. Watcher Web/PWA รุ่นใหม่สามารถจำ token ใน browser ได้สูงสุด 60 วัน ส่วนแอป Desktop/มือถือจะเก็บไว้ในเครื่องจนกว่าผู้ใช้จะล้างออก. หลีกเลี่ยงการบันทึกบนเครื่องที่ใช้ร่วมกับผู้อื่น.</div>
 </main>
 <script>
 async function copyValue(sourceId,statusId,buttonId){const value=document.getElementById(sourceId).textContent||'';const status=document.getElementById(statusId);const button=document.getElementById(buttonId);try{await navigator.clipboard.writeText(value);status.textContent='Copied ✓';status.className='copied';const original=button.textContent;button.textContent='Copied ✓';setTimeout(()=>{status.textContent='';button.textContent=original},1600)}catch{window.prompt('Copy manually:',value)}}

@@ -36,7 +36,7 @@ The local-only response contains:
 
 Keep the token private. In production Desktop it is persisted through LNWJUD's protected secret provider and is separate from MCP, tunnel, and OAuth credentials.
 
-For same-machine use, enter the returned endpoint and token directly in Watcher.
+For same-machine use, enter the returned endpoint and token directly in Watcher. Watcher Web/PWA v0.3.0+ remembers that token in browser-local storage for up to 60 days; packaged Desktop and mobile builds keep it in app-local device storage across restarts until the user clears the token or app data.
 
 For phone/remote use, expose **only port 17890** through zrok, Cloudflare Tunnel, Tailscale Serve/Funnel, ngrok, or your own HTTPS reverse proxy. Then enter the resulting HTTPS URL together with the same Watcher token in the Watcher app.
 
