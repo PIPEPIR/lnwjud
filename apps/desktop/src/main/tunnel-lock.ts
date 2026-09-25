@@ -51,6 +51,20 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
   if (!isValidOwner(owner)) throw new Error('Tunnel lock owner metadata is invalid');
   await mkdir(options.profileDirectory, { recursive: true });
 
+  // A verified live fixed owner is already sufficient to reject a second starter.
+  // Avoid launching/contending on the Windows mutex helper for this read-only path;
+  // the serialized path below remains authoritative for every mutation or uncertain state.
+  const visible = await readLockState(lockPath);
+  if (visible.state === 'valid') {
+    const probe = await inspectProcess(visible.owner.pid);
+    if (probe.state === 'live' && probe.processStartedAt === visible.owner.processStartedAt) {
+      const confirmed = await readLockState(lockPath);
+      if (confirmed.state === 'valid' && sameOwner(confirmed.owner, visible.owner)) {
+        return { acquired: false, owner: visible.owner };
+      }
+    }
+  }
+
   return withTunnelLockCriticalSection(options.profileDirectory, async () => {
     const existing = await readLockState(lockPath);
     if (existing.state === 'invalid') throw new Error(`Tunnel lock has invalid owner metadata: ${lockPath}`);
