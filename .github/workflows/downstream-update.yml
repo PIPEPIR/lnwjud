@@ -1,4 +1,4 @@
-name: Laya downstream updater
+name: lnwjud downstream updater
 
 on:
   schedule:
@@ -10,7 +10,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: laya-downstream-updater
+  group: lnwjud-downstream-updater
   cancel-in-progress: false
 
 jobs:
@@ -82,7 +82,7 @@ jobs:
           Write-Host "Validated build source: $sourceSha (workflow trigger: $env:GITHUB_SHA)"
           "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT
 
-          $tag = "laya-v$currentVersion"
+          $tag = "lnwjud-downstream-v$currentVersion"
           $nativePreference = $PSNativeCommandUseErrorActionPreference
           $PSNativeCommandUseErrorActionPreference = $false
           gh release view $tag --repo $env:DOWNSTREAM_REPO *> $null
@@ -107,15 +107,15 @@ jobs:
         if: steps.sync.outputs.conflict == 'true'
         shell: pwsh
         run: |
-          $title = "Laya rebase conflict for upstream v${{ steps.sync.outputs.upstream_version }}"
+          $title = "lnwjud downstream rebase conflict for upstream v${{ steps.sync.outputs.upstream_version }}"
           $existing = gh issue list --repo $env:DOWNSTREAM_REPO --state open --json title --jq ".[] | select(.title == \"$title\") | .title"
           if (-not $existing) {
             gh issue create --repo $env:DOWNSTREAM_REPO --title $title --body @"
-          The scheduled downstream updater could not rebase the native Laya/Codex integration onto upstream v${{ steps.sync.outputs.upstream_version }}.
+          The scheduled downstream updater could not rebase the downstream lnwjud changes onto upstream v${{ steps.sync.outputs.upstream_version }}.
 
           No branch was pushed and no release was published.
 
-          Resolve the rebase locally, rerun the Codex/desktop/CLI validation, then dispatch this workflow again.
+          Resolve the rebase locally, rerun the downstream Codex/desktop/CLI validation, then dispatch this workflow again.
           "@
           }
 
@@ -145,7 +145,7 @@ jobs:
           corepack prepare pnpm@10.15.0 --activate
           corepack pnpm@10.15.0 install --frozen-lockfile
 
-      - name: Validate native Laya routing
+      - name: Validate downstream Codex integration
         if: steps.sync.outputs.needs_build == 'true'
         shell: pwsh
         run: |
@@ -187,7 +187,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.sync.outputs.version }}"
-          $tag = "laya-v$version"
+          $tag = "lnwjud-downstream-v$version"
           $dir = "apps/desktop/dist/installers"
 
           $nativePreference = $PSNativeCommandUseErrorActionPreference
@@ -217,22 +217,21 @@ jobs:
           }
 
           $notes = @"
-          Native Laya downstream build based on upstream lnwjud v$version.
+          Downstream lnwjud build based on upstream lnwjud v$version.
 
-          Safety contract:
-          - local/self-contained Codex tasks may use the Core profile;
-          - production/security/migration/context-heavy or uncertain tasks use Full;
-          - Laya failure falls back to Full Codex;
-          - smart-agent and codex-auto wrappers are not used.
+          Downstream contract:
+          - preserve local lnwjud optimizations on top of the owner/upstream repository;
+          - Codex uses its normal native configuration with no external decision router;
+          - validate Codex, desktop, CLI, packaging, MCP, and security before publishing.
           "@
 
-          gh release create $tag @assets --repo $env:DOWNSTREAM_REPO --target ${{ github.ref_name }} --title "lnwjud v$version + native Laya routing" --notes $notes
+          gh release create $tag @assets --repo $env:DOWNSTREAM_REPO --target ${{ github.ref_name }} --title "lnwjud v$version downstream" --notes $notes
 
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: laya-downstream-failure-${{ github.run_id }}
+          name: lnwjud-downstream-failure-${{ github.run_id }}
           path: |
             apps/desktop/test-results/
             apps/desktop/playwright-report/
