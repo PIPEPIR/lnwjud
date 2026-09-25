@@ -2471,6 +2471,11 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     void runtime.autoStartMcp().catch((error: unknown) => {
       console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
+    void runtime.autoStartWatcher().then((endpoint) => {
+      if (endpoint !== null) console.info(`Watcher API online ${endpoint}`);
+    }).catch((error: unknown) => {
+      console.error(`Watcher auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
     void runtime.autoStartTunnel().catch((error: unknown) => {
       console.error(`Tunnel persistent runtime auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });

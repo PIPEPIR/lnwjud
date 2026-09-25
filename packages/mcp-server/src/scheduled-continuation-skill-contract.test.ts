@@ -33,6 +33,8 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('`worker_busy_noop`');
     expect(skill).toContain('`orphan_probe_noop`');
     expect(skill).toContain('`already_claimed`');
+    expect(skill).toContain('An existing interval `runKey` alone is never sufficient');
+    expect(skill).toContain('same-interval retry whose liveness targets the current lease');
     expect(skill).toContain('`receipt_required`');
     expect(skill).toContain('`terminal_cleanup_required`');
     expect(skill).toContain('**cleanup only**');

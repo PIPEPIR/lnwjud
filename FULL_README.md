@@ -51,11 +51,23 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current published version: v5.5.3
+## Current published version: v5.6.0
 
-## Current source version: v5.5.3
+## Current source version: v5.6.0
 
-Latest published release: **v5.5.3**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+Latest published release: **v5.6.0**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
+
+### What's new in v5.6.0
+
+v5.6.0 adds the read-only runtime side of **[LNWJUD Watcher](https://github.com/engasnm111/lnwjud-watcher)** and hardens two everyday Desktop workflows: long Git diffs and recurring durable-goal recovery. Users who want the companion Web/PWA, Android or iOS client should start with the Watcher repository for installation, pairing and remote-access setup.
+
+- **Watcher Protocol v1:** authenticated read-only snapshots expose runtime health, the current Durable Goal, milestone states, observable agents/activity and a sanitized Git baseline to the separate Watcher Web/PWA, Android and iOS client.
+- **Authenticated realtime readiness:** the Watcher WebSocket is not treated as connected until the runtime validates the token and sends a `ready` acknowledgement. Live activity also triggers a deduplicated authoritative snapshot resync so Goal, Agent and Git state stay current.
+- **Pairing and secret boundary:** pairing stays on a separate loopback-only port; production Desktop protects the dedicated Watcher bearer token with purpose-bound secret storage. Watcher exposes no shell, file mutation or MCP command surface.
+- **Desktop auto-start:** Watcher API startup/shutdown follows the Desktop runtime lifecycle and remains independent from the MCP gateway and remote-access provider.
+- **Git diff X/Y scrolling:** changed-file lists and Split/Unified Diff views use native horizontal and vertical scrolling so long source lines stay readable without squeezing the table.
+- **Recurring continuation stale recovery:** an interval `runKey` is idempotency history, not liveness proof. Same-interval retries re-check current worker/blocking-task liveness and may recover a safely stale worker after the bounded grace period while true concurrent duplicates remain fenced.
+- **Operator docs:** [LNWJUD Watcher API](docs/WATCHER.md) documents pairing, remote exposure, security boundaries and troubleshooting.
 
 ### What's new in v5.5.3
 
@@ -809,9 +821,11 @@ inspect blocking task results and finish the durable goal truthfully.
 
 Every recurring wake must call `claim_scheduled_continuation` before any
 workspace mutation. `recurring_acquired` returns the current goal lease and
-continues from the latest durable checkpoint. `worker_busy_noop` or
-`already_claimed` performs no workspace mutation and lets the same recurring
-task wake again later. A safely stale worker can be recovered in the same tick
+continues from the latest durable checkpoint. `worker_busy_noop` performs no
+workspace mutation while worker/blocking liveness is live or uncertain;
+`already_claimed` is reserved for a true concurrent/stale duplicate whose
+observation predates an already-recorded lease acquisition. An interval runKey
+by itself is never liveness proof. A safely stale worker can be recovered in the same tick
 when runtime liveness proves no real worker/blocking job remains and the bounded
 stale-heartbeat grace has passed. Ordinary wakes never create a successor,
 consume the recurring task, or retime its hourly cadence.
@@ -950,8 +964,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.5.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.5.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.6.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.6.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1380,7 +1394,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 100 | `list_goals` | READ | default | operational | service_dispatch | List a bounded set of durable goals owned by the current stable MCP client, optionally filtered by workspace/status. |
 | 101 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | Checkpoint durable progress and ensure exactly one live current-chat Native ChatGPT hourly recurring watchdog with cloud execution requested. When the current chat exposes an exact @connector mention for lnwjud, pass it as connectorMention so the generated native Scheduled Task prompt remains bound to that connector; omit it only when the host exposes no mention. At a meaningful continuation handoff include reconstruction-grade resumeContext (changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, artifacts); summary alone is not sufficient resume state. New v4.53 watchdogs use occurrence=interval and intervalMinutes=60; when successorDelayMinutes is omitted the first firing is one hour from prepare, while a legacy explicit 2–25 minute value changes only the first firing and never the hourly recurrence cadence. Reuse the same confirmed native task ID across checkpoints and ordinary wakes; never create a per-wake successor or retime the recurring cadence. If an active v4.52 one-time watchdog already exists, reuse that legacy task until it becomes historical before creating the recurring watchdog, so one-time and recurring native tasks never overlap for one goal. prepared means reservation only and is not confirmed host coverage. Record native create failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create and cleanup remain Native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation, Windows Task Scheduler, cron, shell timers, or an lnwjud-local scheduler as a substitute. |
 | 102 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | Record truthful cleanup/run receipts for recurring Native ChatGPT watchdogs and legacy one-time watchdogs. created requires the real native task ID and host-reported absolute dueAt. A recurring interval firing never consumes or replaces the native task, so outcome=consumed and reschedule_* remain legacy one-time compatibility only. For outcome=cancelled prefer matching native host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. If the host management surface is unavailable and the user explicitly deleted the exact task in ChatGPT Scheduled Tasks, userCancellationReceipt may record that separately as user-attested manual deletion only with userConfirmed=true; never label user testimony as host-native proof. The stored native task ID is immutable for the lifetime of the watchdog. |
-| 103 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | Scheduled-wake entrypoint and the first lnwjud action before any workspace mutation. For occurrence=interval, the same native hourly task remains scheduled across firings: a live/uncertain worker returns worker_busy_noop without lease theft or host-task mutation, duplicate delivery returns already_claimed, a safely available lease returns recurring_acquired, and a still-valid stale lease with trustworthy no-worker/no-blocking-work evidence is recovered in the same hourly tick after the bounded 60-second stale-heartbeat grace rather than waiting for expiry or a second hourly firing. Only recurring_acquired may include a read-only automationResume hint; busy/no-op claims never inspect or mutate automation state. Ordinary recurring wakes never create a successor, never consume the native task, and never retime its cadence. terminal_noop performs no work; if terminal cleanup is pending, make the exact recurring native task non-runnable rather than resuming goal work. Historical occurrence=once rows retain the v4.52 acquired/successor_required/reschedule compatibility paths. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease. |
+| 103 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | Scheduled-wake entrypoint and the first lnwjud action before any workspace mutation. For occurrence=interval, the same native hourly task remains scheduled across firings: a live/uncertain worker returns worker_busy_noop without lease theft or host-task mutation, a true concurrent/stale duplicate whose observation predates an already-recorded lease acquisition returns already_claimed, an existing interval runKey alone never suppresses a fresh current-liveness check, a safely available lease returns recurring_acquired, and a still-valid stale lease with trustworthy no-worker/no-blocking-work evidence is recovered in the same hourly tick after the bounded 60-second stale-heartbeat grace rather than waiting for expiry or a second hourly firing. Only recurring_acquired may include a read-only automationResume hint; busy/no-op claims never inspect or mutate automation state. Ordinary recurring wakes never create a successor, never consume the native task, and never retime its cadence. terminal_noop performs no work; if terminal cleanup is pending, make the exact recurring native task non-runnable rather than resuming goal work. Historical occurrence=once rows retain the v4.52 acquired/successor_required/reschedule compatibility paths. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease. |
 | 104 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. In v4.53, occurrence=interval identifies the single hourly recurring watchdog; its dueAt is the first scheduled firing, not a mutation handoff deadline, and its native task ID remains stable across ordinary wakes. Historical occurrence=once rows preserve legacy one-time compatibility state. |
 | 105 | `expedite_scheduled_continuation` | WRITE | default | operational | service_dispatch | Legacy one-time compatibility only. For a still-pending occurrence=once watchdog and an enumerated handoff-risk signal, adaptively move that exact native task closer using the existing v4.52 rules. occurrence=interval recurring watchdogs must not use expedite_scheduled_continuation because ordinary recurring cadence is fixed at one hour and the host contract exposes no truthful immediate-run operation. Never create a replacement task through this operation. |
 | 106 | `cancel_scheduled_continuation` | WRITE | default | operational | service_dispatch | Cancel the scheduled watchdog independently of its durable goal. For v4.53 occurrence=interval, make the exact recurring Native ChatGPT task non-runnable with the strongest host operation actually exposed: prefer true delete, otherwise a host-confirmed disable. One recurring firing never consumes the task, so a past first due time is not cleanup proof. Historical occurrence=once rows retain their legacy cancellation/reconciliation behavior. Never treat a model assertion or unverified host state as cleanup proof. This does not cancel the durable goal or stop its running tasks. |

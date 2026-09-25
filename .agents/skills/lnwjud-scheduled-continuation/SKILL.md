@@ -99,7 +99,7 @@ Handle the result exactly:
 - `recurring_acquired`: continue work with the returned `leaseToken`/`leaseGeneration`. Keep the same recurring native task. Do **not** create, update, consume, or replace it.
 - `worker_busy_noop`: another worker is live or blocking work is still running. If `retryAfterSeconds <= 60` is returned, no live worker was observed and the lease is simply within the bounded stale-heartbeat grace window: wait that brief duration and retry `claim_scheduled_continuation` or `run_goal` in the same turn to complete takeover. If `retryAfterSeconds` is large, do not mutate the workspace, do not steal the lease, do not touch the native task, and return naturally. A later hourly firing will try again.
 - `orphan_probe_noop`: legacy pre-hardening compatibility only. Current v4.53 recurring mainline must not enter a two-probe wait; if this historical outcome is encountered, do not mutate or touch the native task.
-- `already_claimed`: this run/tick was already handled. Do nothing.
+- `already_claimed`: a true concurrent/stale duplicate was observed after this interval already acquired the current lease. Do not mutate. An existing interval `runKey` alone is never sufficient; a same-interval retry whose liveness targets the current lease must re-check worker/blocking-task state and may recover after the stale-heartbeat grace.
 - `receipt_required`: reconcile exact native host metadata before any mutation or blind create.
 - `not_due`: do not mutate; let the recurring task remain unchanged.
 - `terminal_cleanup_required`: **cleanup only**. Do not resume goal work and do not claim a worker lease before host cleanup. Make the exact recurring native task non-runnable with the strongest host operation exposed (prefer delete; otherwise confirmed disable) and record the exact cancellation receipt. If the prior completion worker lease has expired, call `run_goal` with the same workspace/goalKey **after cleanup only** to obtain an administrative finalization lease; do not resume workspace work. Then call `finish_goal` again immediately.
@@ -117,7 +117,7 @@ Only for historical `occurrence=once` rows:
 
 ## Collision and orphan safety
 
-- A recurring collision is a no-op, not a scheduling event.
+- A true concurrent recurring collision is a no-op, not a scheduling event. A prior run record for the same hourly interval is not liveness proof and must not suppress current-liveness stale recovery.
 - Never create a new recurring task because a worker is busy.
 - Live fenced calls and tracked blocking-task states are worker-liveness evidence; MCP session equality and elapsed time alone are not.
 - For recurring v4.53 rows, a still-valid lease with trustworthy proof of no live fenced calls and no running/unknown blocking tasks uses the same bounded 60-second stale-heartbeat grace as `run_goal`; once that grace is exceeded, takeover happens in the **same hourly tick** as `orphan_recovered` instead of waiting for lease expiry or a second hourly firing. Historical one-time rows keep their two-probe compatibility fence.

@@ -139,6 +139,7 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('one-time and recurring native tasks never overlap');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('existing interval runKey alone never suppresses');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('recurring_acquired');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('automationResume');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('never create a successor');

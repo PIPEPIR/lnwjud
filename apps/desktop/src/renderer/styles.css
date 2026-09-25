@@ -1630,7 +1630,7 @@ button.titlebar-version:hover {
   flex: 1;
   min-height: 0;
   max-height: none;
-  overflow-y: auto;
+  overflow: auto;
   padding: 6px;
   background: #06080c;
   border-radius: 8px;
@@ -1965,14 +1965,18 @@ button.titlebar-version:hover {
 
 .diff-panes-wrapper {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   max-height: 540px;
   min-height: 240px;
+  min-width: 0;
   background: #05070b;
 }
 
 .diff-pane {
+  min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   max-height: 540px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1984,7 +1988,10 @@ button.titlebar-version:hover {
 }
 
 .diff-unified-container {
+  min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   max-height: 540px;
   min-height: 240px;
   background: #05070b;
@@ -2010,9 +2017,10 @@ button.titlebar-version:hover {
 }
 
 .diff-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .diff-row {
@@ -2020,13 +2028,13 @@ button.titlebar-version:hover {
 }
 
 .diff-row.row-deleted {
-  background: rgba(248, 81, 73, 0.16);
-  color: #fecaca;
+  background: rgba(248, 81, 73, 0.075);
+  color: #f5c2c2;
 }
 
 .diff-row.row-deleted td.diff-gutter {
   color: #f87171;
-  background: rgba(248, 81, 73, 0.22);
+  background: rgba(248, 81, 73, 0.12);
 }
 
 .diff-row.row-deleted td.diff-marker {
@@ -2035,13 +2043,13 @@ button.titlebar-version:hover {
 }
 
 .diff-row.row-added {
-  background: rgba(46, 160, 67, 0.16);
-  color: #bbf7d0;
+  background: rgba(46, 160, 67, 0.075);
+  color: #c7efd4;
 }
 
 .diff-row.row-added td.diff-gutter {
   color: #4ade80;
-  background: rgba(46, 160, 67, 0.22);
+  background: rgba(46, 160, 67, 0.12);
 }
 
 .diff-row.row-added td.diff-marker {
@@ -2050,13 +2058,14 @@ button.titlebar-version:hover {
 }
 
 .diff-row.row-empty {
-  background: repeating-linear-gradient(
-    -45deg,
-    rgba(255, 255, 255, 0.015),
-    rgba(255, 255, 255, 0.015) 6px,
-    transparent 6px,
-    transparent 12px
-  );
+  background: rgba(255, 255, 255, 0.012);
+  color: transparent;
+}
+
+.diff-row.row-empty td.diff-gutter,
+.diff-row.row-empty td.diff-marker {
+  background: rgba(255, 255, 255, 0.018);
+  color: transparent;
 }
 
 .diff-row.row-normal {

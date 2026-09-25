@@ -27,6 +27,24 @@ describe('ActivityTracker', () => {
     ]);
   });
 
+  it('publishes sanitized lifecycle events to realtime subscribers and supports unsubscribe', async () => {
+    const events: ActivitySinkEvent[] = [];
+    const tracker = new ActivityTracker();
+    const unsubscribe = tracker.subscribe((event) => events.push(event));
+
+    const callId = await tracker.begin('read_file', { workspaceId: 'ws-1', path: 'src/app.ts' });
+    await tracker.end(callId, 'SUCCESS', 2);
+    unsubscribe();
+
+    const ignored = await tracker.begin('read_file', { workspaceId: 'ws-1', path: 'src/ignored.ts' });
+    await tracker.end(ignored, 'SUCCESS', 1);
+
+    expect(events).toEqual([
+      expect.objectContaining({ callId, phase: 'started', toolName: 'read_file', targetSummary: 'src/app.ts' }),
+      expect.objectContaining({ callId, phase: 'completed', toolName: 'read_file', targetSummary: 'src/app.ts' }),
+    ]);
+  });
+
   it('reports activity sink failures without failing the tool lifecycle', async () => {
     const failures: string[] = [];
     const tracker = new ActivityTracker({

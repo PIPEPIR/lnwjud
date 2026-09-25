@@ -72,6 +72,7 @@ export interface ActivityAuditSink {
 }
 
 export type ActivityRecordErrorHandler = (error: unknown, event: ActivitySinkEvent) => void;
+export type ActivityEventListener = (event: ActivitySinkEvent) => void;
 
 export interface InFlightToolCall {
   readonly callId: string;
@@ -90,6 +91,7 @@ export interface InFlightToolCall {
 
 export class ActivityTracker {
   private readonly inflight = new Map<string, InFlightToolCall>();
+  private readonly listeners = new Set<ActivityEventListener>();
   private readonly completedTelemetry: Array<{ readonly toolName: string; readonly resultCode: string; readonly durationMs: number; readonly partialFailure: boolean }> = [];
   private activityRevision = 0;
   private readonly maxTelemetryEntries = 4096;
@@ -159,6 +161,12 @@ export class ActivityTracker {
       taskLifecycleCalls: this.completedTelemetry.filter((entry) => /^(task_|delegate_|agent_swarm_)/.test(entry.toolName)).length,
       recentErrorClasses: [...errorCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 16).map(([code, count]) => ({ code, count })),
     };
+  }
+
+
+  public subscribe(listener: ActivityEventListener): () => void {
+    this.listeners.add(listener);
+    return (): void => { this.listeners.delete(listener); };
   }
 
   public async begin(
@@ -283,6 +291,9 @@ export class ActivityTracker {
           // Diagnostics must not fail tool execution either.
         }
       }
+    }
+    for (const listener of this.listeners) {
+      try { listener(event); } catch { /* Watcher subscribers must never fail tool execution. */ }
     }
   }
 }
