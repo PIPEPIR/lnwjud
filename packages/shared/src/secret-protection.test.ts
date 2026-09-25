@@ -40,6 +40,9 @@ describe('secret protection contract', () => {
     const envelope = await protector.encrypt('tunnel_api_key', 'runtime-secret');
     await expect(protector.decrypt('tunnel_api_key', envelope)).resolves.toEqual({ plainText: 'runtime-secret', shouldReEncrypt: false });
     await expect(protector.decrypt('checkpoint_master_key', envelope)).rejects.toThrow(/purpose/i);
+    const watcherEnvelope = await protector.encrypt('watcher_access_token', 'watcher-secret-token');
+    await expect(protector.decrypt('watcher_access_token', watcherEnvelope)).resolves.toEqual({ plainText: 'watcher-secret-token', shouldReEncrypt: false });
+    await expect(protector.decrypt('tunnel_api_key', watcherEnvelope)).rejects.toThrow(/purpose/i);
     await expect(protector.encrypt('tunnel_api_key', '')).rejects.toThrow(/empty/i);
   });
 

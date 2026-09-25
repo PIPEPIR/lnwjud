@@ -1441,12 +1441,20 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     }
 
     const runKey = recurringRunKey(continuation, request.now);
-    if (this.recurringRunExists(continuation.continuationId, runKey)) {
+    const existingRun = this.recurringRunState(continuation.continuationId, runKey);
+    const liveness = request.liveness;
+    const observationTargetsCurrentLease = liveness.leaseGeneration === goal.leaseGeneration
+      && liveness.leaseActivitySeq === goal.leaseActivitySeq;
+    const existingRunAcquiredCurrentLease = existingRun !== undefined
+      && (existingRun.outcome === 'acquired' || existingRun.outcome === 'orphan_recovered')
+      && existingRun.leaseGeneration === goal.leaseGeneration;
+    // A concurrent duplicate can carry liveness sampled before the first claimant rotated the
+    // lease. A later same-interval retry must still re-check current liveness so stale recovery
+    // is not hidden behind the interval run key.
+    if (existingRunAcquiredCurrentLease && !observationTargetsCurrentLease) {
       return { outcome: 'already_claimed', continuation, goal };
     }
-
-    const liveness = request.liveness;
-    if (liveness.leaseGeneration !== goal.leaseGeneration || liveness.leaseActivitySeq !== goal.leaseActivitySeq) {
+    if (!observationTargetsCurrentLease) {
       throw new GoalStateError('conflict', 'Worker-liveness observation is stale relative to the goal lease');
     }
     const observedAtMs = parseIso(liveness.observedAt, 'worker liveness observation');
@@ -1598,12 +1606,20 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     };
   }
 
-  private recurringRunExists(continuationId: string, runKey: string): boolean {
+  private recurringRunState(
+    continuationId: string,
+    runKey: string,
+  ): { readonly outcome: string; readonly leaseGeneration: number | null } | undefined {
     const row = this.database.connection.prepare(`
-      SELECT 1 AS present FROM goal_scheduled_continuation_runs
+      SELECT outcome, lease_generation FROM goal_scheduled_continuation_runs
       WHERE continuation_id = ? AND run_key = ?
-    `).get(continuationId, runKey);
-    return row !== undefined;
+    `).get(continuationId, runKey) as { outcome: string; lease_generation: number | null } | undefined;
+    if (row === undefined) return undefined;
+    return { outcome: row.outcome, leaseGeneration: row.lease_generation };
+  }
+
+  private recurringRunExists(continuationId: string, runKey: string): boolean {
+    return this.recurringRunState(continuationId, runKey) !== undefined;
   }
 
   private recordRecurringRun(

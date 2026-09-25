@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.5.3 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.6.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม public release `v5.5.3` บน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.5.3)
+คู่มือนี้อัปเดตตาม public release `v5.6.0` บน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.5.3)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -98,7 +98,21 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 Remote MCP gateway รองรับ OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, access token และ refresh token. คำขอ `/mcp` ที่ไม่มี bearer token ที่ถูกต้องจะถูกปฏิเสธ และ Authorization header จากอินเทอร์เน็ตจะไม่ถูกส่งต่อเข้า local MCP โดยตรง.
 
-### 3B. Remote MCP ผ่าน Cloudflare
+### 3A.1 LNWJUD Watcher — ดูสถานะแบบ read-only จาก Web/มือถือ
+
+ตั้งแต่ **v5.6.0** Desktop จะเปิด Watcher API แบบอ่านอย่างเดียวให้อัตโนมัติ แยกจาก MCP command surface. ใช้สำหรับแอป **LNWJUD Watcher** บน Web/PWA, Android และ iOS เพื่อดู runtime, Durable Goal, milestone, Agent, activity และ Git baseline โดย Watcher ไม่มีสิทธิ์สั่ง shell, แก้ไฟล์ หรือเรียก MCP mutation.
+
+บนเครื่อง LNWJUD เปิด pairing URL:
+
+```text
+http://127.0.0.1:17891/api/v1/pair
+```
+
+นำ `endpoint` และ Watcher `token` ไปกรอกใน Watcher. ถ้าจะดูจากมือถือ/เครื่องอื่น ให้ expose เฉพาะ Watcher API port **17890** ผ่าน HTTPS provider เช่น zrok, Cloudflare, Tailscale หรือ ngrok; **ห้าม expose pairing port 17891**. รายละเอียดเต็มอยู่ที่ [WATCHER.md](WATCHER.md).
+
+Realtime จะถือว่าเชื่อมต่อสำเร็จหลัง runtime ยืนยัน token ด้วย `ready` เท่านั้น และ Watcher จะ re-sync authoritative snapshot เมื่อมี live activity/reconnect; หาก WebSocket ใช้งานไม่ได้ client จะ fallback เป็น snapshot refresh ทุก 5 วินาทีขณะหน้าจอเปิดอยู่.
+
+## 3B. Remote MCP ผ่าน Cloudflare
 
 โหมด **Cloudflare** เป็นตัวเลือกเพิ่มใน v5.5.0 และไม่เปลี่ยนผู้ใช้เดิมจาก ngrok อัตโนมัติ. ใช้เมื่อคุณมี Cloudflare Tunnel/reverse proxy ของตัวเองอยู่แล้ว:
 
@@ -241,7 +255,7 @@ v4.11.0 เพิ่มเครื่องมือ `run_goal`, `get_goal`, `c
 
 ตั้งแต่ v4.53.0 `prepare_scheduled_continuation` จะ checkpoint แล้ว **ensure recurring Native ChatGPT watchdog เพียง 1 ตัว** ต่อ active durable goal. Watchdog ใหม่ใช้ `occurrence=interval`, `intervalMinutes=60`, current chat และ request cloud execution. ถ้าไม่ระบุ `successorDelayMinutes` รอบแรกจะอยู่ที่ประมาณ 60 นาที; ค่า legacy 2–25 นาทีที่ยังส่งมาได้จะเปลี่ยนเฉพาะ **first firing** เท่านั้น แต่ cadence หลังจากนั้นยังเป็นทุก 1 ชั่วโมง. `dueAt` ของ recurring row จึงเป็นเวลารอบแรก ไม่ใช่ handoff deadline และไม่ตัด lease 600 วินาทีของ worker ที่กำลังทำงาน. ถ้ามี v4.52.x one-time watchdog เดิมที่ยัง live อยู่ ระบบจะ reuse ตัวเดิมจนเป็น historical ก่อนและห้ามสร้าง recurring ซ้อน. หลัง host สร้าง task ต้อง record native task ID กับ dueAt จริงทันที; `runsOn: cloud` ใช้ได้เมื่อ host ยืนยันจริง ส่วน host ที่ยืนยัน task/schedule แต่ไม่เปิด execution mode ให้เก็บ `unverified`. ถ้า host คืน explicit lookup/dispatch failure เช่น `Resource not found` ที่พิสูจน์ว่า create ยังไม่ dispatch ให้ re-resolve Native Scheduled Task operation จาก host surface ปัจจุบัน 1 ครั้งและ retry exact operation เดิม 1 ครั้ง; ambiguous possible-success ห้าม retry. ถ้ายังสร้างไม่ได้ให้ record `create_failed` ตามจริงและคง goal เป็น `active` เพราะ scheduler transport degradation ไม่ใช่ผลลัพธ์ของงาน. ห้าม fallback ไป lnwjud scheduler, Windows Task Scheduler, cron, shell timer, DOM/browser automation หรือ scheduler ภายนอก.
 
-เมื่อ recurring Scheduled turn ตื่นขึ้น ต้องเรียก `claim_scheduled_continuation` เป็น **lnwjud action แรกก่อน mutation**. ตั้งแต่ v5.5.0 การอ่านสถานะ blocking task ระหว่างตรวจ worker liveness มีเวลารอแบบ bounded; ถ้า provider ไม่ตอบจะคืนสถานะ `unknown` แบบ fail-closed แทนการปล่อย `claim_scheduled_continuation` ค้างไม่มีกำหนด และจะไม่ถือว่า task หายเพื่อแย่ง lease อย่างไม่ปลอดภัย. Mainline v4.53 มีผลลัพธ์สำคัญดังนี้: `recurring_acquired` = ได้ lease ใหม่และทำงานต่อโดยใช้ native task ID เดิม; `worker_busy_noop` = มี worker/blocking work อยู่หรือ liveness ยังไม่แน่นอน ให้คืนตัวโดยไม่ mutate และไม่แตะ Scheduled Task; `already_claimed` = tick นี้ถูกจัดการแล้ว; `terminal_cleanup_required` = ทำ cleanup เท่านั้น ห้าม resume งาน และต้องทำ exact recurring task ให้ non-runnable; `terminal_noop` = ไม่มีงานให้ทำ. Recurring tick ปกติ **ห้ามสร้าง successor, ห้าม consume task, ห้าม retime cadence**. ทุก mutation ที่ได้ `recurring_acquired` ต้องแนบ `goalLease` token/generation ของ run ปัจจุบัน. Full Bypass ไม่ข้าม durable-goal ownership fence. ถ้า lease ยังไม่หมดแต่ trustworthy liveness ยืนยันว่าไม่มี live fenced call และไม่มี blocking job ที่ running/unknown แล้ว และ heartbeat เก่ากว่า bounded stale-recovery grace 60 วินาที ระบบต้อง takeover เป็น `recurring_acquired`/`orphan_recovered` **ใน hourly tick เดิมทันที** ห้ามรอ lease หมด ห้ามรอ probe รอบชั่วโมงถัดไป และห้ามสร้าง native task ใหม่. `orphan_probe_noop` เหลือไว้เฉพาะ compatibility กับข้อมูล pre-hardening เท่านั้น. สำหรับ historical `occurrence=once` จึงยังคง two-probe orphan fence และ path `acquired`, `successor_required`, `reschedule_required`, consumed receipt กับ fresh one-time successor ตาม compatibility v4.52.x.
+เมื่อ recurring Scheduled turn ตื่นขึ้น ต้องเรียก `claim_scheduled_continuation` เป็น **lnwjud action แรกก่อน mutation**. ตั้งแต่ v5.5.0 การอ่านสถานะ blocking task ระหว่างตรวจ worker liveness มีเวลารอแบบ bounded; ถ้า provider ไม่ตอบจะคืนสถานะ `unknown` แบบ fail-closed แทนการปล่อย `claim_scheduled_continuation` ค้างไม่มีกำหนด และจะไม่ถือว่า task หายเพื่อแย่ง lease อย่างไม่ปลอดภัย. Mainline v4.53 มีผลลัพธ์สำคัญดังนี้: `recurring_acquired` = ได้ lease ใหม่และทำงานต่อโดยใช้ native task ID เดิม; `worker_busy_noop` = มี worker/blocking work อยู่หรือ liveness ยังไม่แน่นอน ให้คืนตัวโดยไม่ mutate และไม่แตะ Scheduled Task; `already_claimed` = true concurrent/stale duplicate ที่ observation ยังตามหลัง lease acquisition เดิมอยู่เท่านั้น; การมี runKey ของ tick เดิมอย่างเดียว **ห้าม** ใช้สรุปว่ามี worker และ same-interval retry ที่เห็น lease ปัจจุบันต้องตรวจ liveness/stale recovery ต่อ; `terminal_cleanup_required` = ทำ cleanup เท่านั้น ห้าม resume งาน และต้องทำ exact recurring task ให้ non-runnable; `terminal_noop` = ไม่มีงานให้ทำ. Recurring tick ปกติ **ห้ามสร้าง successor, ห้าม consume task, ห้าม retime cadence**. ทุก mutation ที่ได้ `recurring_acquired` ต้องแนบ `goalLease` token/generation ของ run ปัจจุบัน. Full Bypass ไม่ข้าม durable-goal ownership fence. ถ้า lease ยังไม่หมดแต่ trustworthy liveness ยืนยันว่าไม่มี live fenced call และไม่มี blocking job ที่ running/unknown แล้ว และ heartbeat เก่ากว่า bounded stale-recovery grace 60 วินาที ระบบต้อง takeover เป็น `recurring_acquired`/`orphan_recovered` **ใน hourly tick เดิมทันที** ห้ามรอ lease หมด ห้ามรอ probe รอบชั่วโมงถัดไป และห้ามสร้าง native task ใหม่. `orphan_probe_noop` เหลือไว้เฉพาะ compatibility กับข้อมูล pre-hardening เท่านั้น. สำหรับ historical `occurrence=once` จึงยังคง two-probe orphan fence และ path `acquired`, `successor_required`, `reschedule_required`, consumed receipt กับ fresh one-time successor ตาม compatibility v4.52.x.
 
 Worker ของ recurring v4.53 เป็นแบบ **work-conserving**: `checkpoint_goal` มีไว้บันทึก progress ไม่ใช่คำสั่งจบรอบ. หลัง checkpoint ปกติ worker ต้องทำงานที่ยังมีประโยชน์ต่อใน turn เดิม; transient status/log/result/poll error ต้อง retry/re-resolve ก่อน, background task ที่ terminal แล้วต้องอ่านผลและจัดการต่อทันที, และ lease 600 วินาทีไม่ใช่เวลาสูงสุดของการทำงาน—ถ้า lease หมดระหว่าง run ให้ reacquire goal เดิมอย่างปลอดภัยแล้วทำต่อเมื่อไม่มี owner ใหม่ที่ live. ChatGPT host ไม่รับประกันรอบละ 22/25 นาที แต่ worker ไม่ควรหยุดเองเพียงเพราะ checkpoint หรือ tool สะดุดชั่วคราว.
 
@@ -374,8 +388,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.5.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.5.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.6.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.6.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

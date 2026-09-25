@@ -21,6 +21,65 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.6.0',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'watcher-runtime',
+            titleKey: 'whatsNew.560.watcher.title',
+            descriptionKey: 'whatsNew.560.watcher.description',
+            badge: 'new',
+            tags: ['Watcher', 'realtime', 'WebSocket', 'mobile'],
+          },
+          {
+            id: 'watcher-autostart',
+            titleKey: 'whatsNew.560.autostart.title',
+            descriptionKey: 'whatsNew.560.autostart.description',
+            badge: 'new',
+            tags: ['Watcher', 'startup', 'desktop'],
+          },
+          {
+            id: 'watcher-live-sync',
+            titleKey: 'whatsNew.560.liveSync.title',
+            descriptionKey: 'whatsNew.560.liveSync.description',
+            badge: 'fixed',
+            tags: ['Watcher', 'WebSocket', 'auth', 'snapshot'],
+          },
+          {
+            id: 'git-diff-scroll',
+            titleKey: 'whatsNew.560.gitDiff.title',
+            descriptionKey: 'whatsNew.560.gitDiff.description',
+            badge: 'improved',
+            tags: ['Git', 'diff', 'scroll', 'desktop'],
+          },
+        ],
+      },
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          {
+            id: 'watcher-readonly-auth',
+            titleKey: 'whatsNew.560.security.title',
+            descriptionKey: 'whatsNew.560.security.description',
+            badge: 'new',
+            tags: ['Watcher', 'read-only', 'token', 'pairing'],
+          },
+          {
+            id: 'scheduled-continuation-recovery',
+            titleKey: 'whatsNew.560.schedulerRecovery.title',
+            descriptionKey: 'whatsNew.560.schedulerRecovery.description',
+            badge: 'fixed',
+            tags: ['Scheduled Tasks', 'durable goals', 'liveness', 'recovery'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.5.3',
     categories: [
       {

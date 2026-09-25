@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
@@ -199,6 +200,7 @@ import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
 import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from './tunnel-oauth-provider.js';
 import { TunnelOAuthLoginManager } from './tunnel-oauth-login-manager.js';
 import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
+import { startWatcherServer, type WatcherActivityEvent, type WatcherServerHandle, type WatcherStatus } from './watcher-server.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
@@ -213,6 +215,10 @@ const tunnelIdentitySettingKey = 'tunnel_identity_id';
 const tunnelAuthModeSettingKey = 'tunnel_auth_mode';
 const tunnelRuntimeDesiredStateSettingKey = 'tunnel_runtime_desired_state';
 const tunnelRuntimeOwnerPathSettingKey = 'tunnel_runtime_owner_path';
+const watcherAccessTokenSettingKey = 'watcher_access_token_v1';
+const watcherInstanceIdSettingKey = 'watcher_instance_id_v1';
+const DEFAULT_WATCHER_PORT = 17890;
+const DEFAULT_WATCHER_PAIRING_PORT = 17891;
 
 export interface DesktopRuntime {
   readonly services: DesktopIpcServices;
@@ -229,6 +235,7 @@ export interface DesktopRuntime {
   createBackup(reason?: BackupReason): Promise<BackupSummary>;
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
+  autoStartWatcher(): Promise<string | null>;
   autoStartTunnel(): Promise<TunnelStatus | null>;
   autoStartRemoteMcp(): Promise<RemoteMcpStatus>;
   close(): Promise<void>;
@@ -340,6 +347,40 @@ export async function autoStartPersistentTunnel(
   }
 }
 
+
+function readWatcherPort(value: string | undefined, fallback: number, label: string): number {
+  if (value === undefined || value.trim().length === 0) return fallback;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`${label} must be an integer from 1 to 65535`);
+  return port;
+}
+
+function watcherPlatform(platform: NodeJS.Platform): 'windows' | 'macos' | 'linux' | 'unknown' {
+  if (platform === 'win32') return 'windows';
+  if (platform === 'darwin') return 'macos';
+  if (platform === 'linux') return 'linux';
+  return 'unknown';
+}
+
+function watcherActivityFromSink(event: ActivitySinkEvent): WatcherActivityEvent {
+  const isReadLike = /^(read|find|search|list|workspace_|project_snapshot|inspect)/.test(event.toolName);
+  const failed = /(error|fail|denied|cancel|timeout)/i.test(event.resultCode);
+  const status: WatcherStatus = event.phase === 'started'
+    ? isReadLike ? 'analyzing' : 'running'
+    : failed ? 'error' : 'done';
+  const actorName = /^(codex|delegate_|agent_swarm_)/.test(event.toolName) ? 'Codex' : '@lnwjud';
+  const toolLabel = event.toolName.replaceAll('_', ' ');
+  return {
+    id: `${event.callId}:${event.phase}`,
+    timestamp: event.timestamp,
+    kind: event.toolName,
+    status,
+    actor: actorName,
+    summary: event.phase === 'started' ? `Running ${toolLabel}` : `Finished ${toolLabel}`,
+    ...(event.targetSummary === undefined ? {} : { detail: event.targetSummary }),
+  };
+}
+
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
   if (options.secretProtector !== undefined && options.checkpointEncryptionKey === undefined) {
     throw new Error('Desktop runtime requires a resolved checkpoint encryption key before startup');
@@ -357,6 +398,43 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const automationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
+  let watcherAccessToken = '';
+  let watcherAccessTokenOperation: Promise<string> | null = null;
+  const resolveWatcherAccessToken = (): Promise<string> => {
+    if (watcherAccessToken.length >= 32) return Promise.resolve(watcherAccessToken);
+    if (watcherAccessTokenOperation !== null) return watcherAccessTokenOperation;
+
+    watcherAccessTokenOperation = (async (): Promise<string> => {
+      const stored = settingsRepository.get(watcherAccessTokenSettingKey)?.trim() ?? '';
+      if (options.secretProtector === undefined) {
+        watcherAccessToken = stored.length >= 32 && !stored.startsWith('safe:v1:')
+          ? stored
+          : randomBytes(32).toString('base64url');
+        return watcherAccessToken;
+      }
+
+      if (stored.startsWith('safe:v1:')) {
+        const decrypted = await options.secretProtector.decrypt('watcher_access_token', stored);
+        if (decrypted.plainText.length < 32) throw new Error('Stored Watcher access token is invalid');
+        watcherAccessToken = decrypted.plainText;
+        if (decrypted.shouldReEncrypt) {
+          settingsRepository.set(watcherAccessTokenSettingKey, await options.secretProtector.encrypt('watcher_access_token', watcherAccessToken));
+        }
+        return watcherAccessToken;
+      }
+
+      watcherAccessToken = stored.length >= 32 ? stored : randomBytes(32).toString('base64url');
+      settingsRepository.set(watcherAccessTokenSettingKey, await options.secretProtector.encrypt('watcher_access_token', watcherAccessToken));
+      return watcherAccessToken;
+    })().finally(() => { watcherAccessTokenOperation = null; });
+    return watcherAccessTokenOperation;
+  };
+
+  let watcherInstanceId = settingsRepository.get(watcherInstanceIdSettingKey)?.trim() ?? '';
+  if (watcherInstanceId.length === 0) {
+    watcherInstanceId = randomUUID();
+    settingsRepository.set(watcherInstanceIdSettingKey, watcherInstanceId);
+  }
   migrateLegacyMcpHttpPort(settingsRepository, process.env);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
   const stopToolAvailabilityWatch = options.watchToolAvailability === true
@@ -646,6 +724,110 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       toolAvailabilitySubscribe: (listener) => toolAvailabilityService.subscribe(listener),
     }),
   });
+  let watcherHandle: WatcherServerHandle | null = null;
+  let watcherStartOperation: Promise<string | null> | null = null;
+  const startWatcher = (): Promise<string | null> => {
+    if (watcherHandle !== null) return Promise.resolve(watcherHandle.endpoint.toString());
+    if (watcherStartOperation !== null) return watcherStartOperation;
+
+    const operation = resolveWatcherAccessToken().then((accessToken) => startWatcherServer({
+      port: readWatcherPort(process.env.LNWJUD_WATCHER_PORT, DEFAULT_WATCHER_PORT, 'LNWJUD_WATCHER_PORT'),
+      pairingPort: readWatcherPort(process.env.LNWJUD_WATCHER_PAIR_PORT, DEFAULT_WATCHER_PAIRING_PORT, 'LNWJUD_WATCHER_PAIR_PORT'),
+      accessToken,
+      subscribeActivity: (listener) => activityTracker.subscribe((event) => listener(watcherActivityFromSink(event))),
+      buildSnapshot: async (recentActivity) => {
+        const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+        const inflight = activityTracker.listInFlight().filter((entry) => selected === null || entry.workspaceId === undefined || entry.workspaceId === selected.id);
+        const activeGoal = selected === null ? undefined : (await goalRepository.listWorkspaceGoalsForHost(selected.id, 1))[0];
+        const goalBlocked = (activeGoal?.blockers.length ?? 0) > 0;
+
+        const git = selected === null
+          ? null
+          : await Promise.all([
+              gitService.statusSummary(actor, selected.id),
+              gitService.branch(actor, selected.id),
+              gitService.log(actor, selected.id, { maxCommits: 1 }),
+            ]);
+
+        const checkpointActivity: WatcherActivityEvent[] = activeGoal === undefined
+          ? []
+          : [...activeGoal.checkpoints].reverse().slice(0, 20).map((checkpoint) => ({
+              id: `checkpoint:${checkpoint.id}`,
+              timestamp: checkpoint.createdAt,
+              kind: 'goal.checkpoint',
+              status: checkpoint.blockers.length > 0 ? 'blocked' : 'done',
+              actor: '@lnwjud',
+              summary: checkpoint.currentPhase.length > 0 ? checkpoint.currentPhase : 'Goal checkpoint',
+              ...(checkpoint.nextAction.length === 0 ? {} : { detail: checkpoint.nextAction.slice(0, 500) }),
+            }));
+
+        const activity = [...recentActivity, ...checkpointActivity]
+          .filter((event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index)
+          .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+          .slice(0, 100);
+
+        const codexInflight = inflight.find((entry) => /^(codex|delegate_|agent_swarm_)/.test(entry.toolName));
+        const agents = [{
+          id: 'lnwjud',
+          name: '@lnwjud',
+          role: 'Orchestrator',
+          status: activeGoal === undefined ? 'idle' as const : goalBlocked ? 'blocked' as const : 'running' as const,
+          ...(activeGoal === undefined || activeGoal.nextAction.length === 0 ? {} : { task: activeGoal.nextAction.slice(0, 500) }),
+        }];
+        if (codexInflight !== undefined) {
+          agents.push({
+            id: 'codex',
+            name: 'Codex',
+            role: 'Implementation / Review',
+            status: 'running',
+            ...(codexInflight.targetSummary === undefined ? {} : { task: codexInflight.targetSummary.slice(0, 500) }),
+          });
+        }
+
+        return {
+          protocolVersion: 1,
+          serverTime: new Date().toISOString(),
+          runtime: {
+            version: APP_VERSION,
+            status: activeGoal === undefined ? inflight.length > 0 ? 'running' : 'idle' : goalBlocked ? 'blocked' : 'running',
+          },
+          instance: {
+            id: watcherInstanceId,
+            name: os.hostname(),
+            platform: watcherPlatform(process.platform),
+          },
+          goal: activeGoal === undefined ? null : {
+            id: activeGoal.id,
+            key: activeGoal.goalKey,
+            status: goalBlocked ? 'blocked' : 'running',
+            currentTask: activeGoal.nextAction,
+            blockers: [...activeGoal.blockers],
+            milestones: activeGoal.plan.steps.map((step) => ({
+              id: step.id,
+              title: step.title,
+              status: step.status,
+            })),
+          },
+          agents,
+          activity,
+          git: git === null ? { branch: '', commit: '', clean: true } : {
+            branch: git[1].ok ? git[1].value ?? '' : '',
+            commit: git[2].ok ? git[2].value.entries[0]?.hash.slice(0, 12) ?? '' : '',
+            clean: git[0].ok ? git[0].value.entries.length === 0 : true,
+          },
+        };
+      },
+    })).then((handle) => {
+      watcherHandle = handle;
+      return handle.endpoint.toString();
+    }).finally(() => {
+      watcherStartOperation = null;
+    });
+
+    watcherStartOperation = operation;
+    return operation;
+  };
+
   const tunnelSecretDecryptOption = options.decryptTunnelSecret === undefined
     ? {}
     : { decryptSecret: options.decryptTunnelSecret };
@@ -1687,6 +1869,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     await tunnelController.shutdownForDesktopExit();
     stopToolAvailabilityWatch();
     await remoteMcpController.close();
+    if (watcherHandle !== null) {
+      await watcherHandle.close();
+      watcherHandle = null;
+    }
     logHub.stop();
     await mcpLifecycle.close();
     await extensionsService.close().catch(() => undefined);
@@ -1768,6 +1954,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await activateWorkspace(selected.id);
       return mcpLifecycle.start();
     },
+    autoStartWatcher: (): Promise<string | null> => startWatcher(),
     autoStartTunnel: async (): Promise<TunnelStatus | null> => autoStartPersistentTunnel(
       tunnelController,
       readSettings().tunnelAutoReconnect,

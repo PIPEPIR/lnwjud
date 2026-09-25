@@ -1235,9 +1235,9 @@ describe('scheduled continuation repository state machine', () => {
         },
       });
 
-      const duplicateFirstTick = await repository.claimScheduledContinuation({
+      const recoveredFirstTick = await repository.claimScheduledContinuation({
         continuationId: prepared.continuation.continuationId,
-        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:33:05.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-b',
         leaseTokenHash: 'lease-hash-b',
@@ -1245,15 +1245,20 @@ describe('scheduled continuation repository state machine', () => {
         earlyToleranceSeconds: 120,
         liveness: {
           trustworthy: true,
-          observedAt: '2026-08-27T00:22:01.000Z',
+          observedAt: '2026-08-27T00:23:05.000Z',
           leaseGeneration: beforeFirstTick.leaseGeneration,
           leaseActivitySeq: beforeFirstTick.leaseActivitySeq,
-          liveFencedCallCount: 1,
+          liveFencedCallCount: 0,
           blockingTaskStates: [],
         },
-        now: '2026-08-27T00:22:01.000Z',
+        now: '2026-08-27T00:23:05.000Z',
       });
-      expect(duplicateFirstTick).toMatchObject({ outcome: 'already_claimed' });
+      expect(recoveredFirstTick).toMatchObject({
+        outcome: 'recurring_acquired',
+        acquisition: 'orphan_recovered',
+        runKey: 'interval-0',
+        goal: { leaseGeneration: beforeFirstTick.leaseGeneration + 1 },
+      });
 
       const beforeSecondTick = await repository.getById('goal-1');
       if (beforeSecondTick === null) throw new Error('goal missing');
@@ -1291,6 +1296,93 @@ describe('scheduled continuation repository state machine', () => {
         .get(prepared.continuation.continuationId) as { count: number };
       expect(continuationCount.count).toBe(1);
       expect(runCount.count).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('re-checks current liveness after an earlier acquisition in the same recurring interval', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:20:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation(prepareRequest(
+        '2026-08-27T00:20:00.000Z',
+        '2026-08-27T00:22:00.000Z',
+        0,
+        'recurring-same-interval-recovery-fp',
+        'continuation-recurring-same-interval-recovery',
+      ));
+      await repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-same-interval-recovery',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'cloud',
+        now: '2026-08-27T00:20:05.000Z',
+      });
+      database.connection.prepare(`
+        UPDATE goal_scheduled_continuations
+        SET occurrence = 'interval', interval_minutes = 60
+        WHERE id = ?
+      `).run(prepared.continuation.continuationId);
+      database.connection.prepare('UPDATE goals SET lease_expires_at = ? WHERE id = ?')
+        .run('2026-08-27T00:21:00.000Z', 'goal-1');
+
+      const beforeFirstClaim = await repository.getById('goal-1');
+      if (beforeFirstClaim === null) throw new Error('goal missing');
+      const firstClaim = await repository.claimScheduledContinuation({
+        continuationId: prepared.continuation.continuationId,
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
+        ownerClientId: 'chatgpt-web-client',
+        ownerSessionId: 'session-b',
+        leaseTokenHash: 'lease-hash-b',
+        leaseSeconds: 600,
+        earlyToleranceSeconds: 120,
+        liveness: {
+          trustworthy: true,
+          observedAt: '2026-08-27T00:22:00.000Z',
+          leaseGeneration: beforeFirstClaim.leaseGeneration,
+          leaseActivitySeq: beforeFirstClaim.leaseActivitySeq,
+          liveFencedCallCount: 0,
+          blockingTaskStates: [],
+        },
+        now: '2026-08-27T00:22:00.000Z',
+      });
+      expect(firstClaim).toMatchObject({ outcome: 'recurring_acquired', acquisition: 'expired_lease', runKey: 'interval-0' });
+
+      const afterFirstClaim = await repository.getById('goal-1');
+      if (afterFirstClaim === null) throw new Error('goal missing');
+      const recovered = await repository.claimScheduledContinuation({
+        continuationId: prepared.continuation.continuationId,
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:33:05.000Z'),
+        ownerClientId: 'chatgpt-web-client',
+        ownerSessionId: 'session-c',
+        leaseTokenHash: 'lease-hash-c',
+        leaseSeconds: 600,
+        earlyToleranceSeconds: 120,
+        liveness: {
+          trustworthy: true,
+          observedAt: '2026-08-27T00:23:05.000Z',
+          leaseGeneration: afterFirstClaim.leaseGeneration,
+          leaseActivitySeq: afterFirstClaim.leaseActivitySeq,
+          liveFencedCallCount: 0,
+          blockingTaskStates: [],
+        },
+        now: '2026-08-27T00:23:05.000Z',
+      });
+      expect(recovered).toMatchObject({
+        outcome: 'recurring_acquired',
+        acquisition: 'orphan_recovered',
+        runKey: 'interval-0',
+        goal: { leaseGeneration: afterFirstClaim.leaseGeneration + 1, leaseOwnerSessionId: 'session-c' },
+      });
+      const run = database.connection.prepare(
+        'SELECT outcome, lease_generation FROM goal_scheduled_continuation_runs WHERE continuation_id = ? AND run_key = ?',
+      ).get(prepared.continuation.continuationId, 'interval-0') as { outcome: string; lease_generation: number };
+      expect(run).toEqual({ outcome: 'orphan_recovered', lease_generation: afterFirstClaim.leaseGeneration + 1 });
     } finally {
       database.close();
     }

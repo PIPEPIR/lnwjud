@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.5.3 release directly.</p>
+<p align="center">Choose your platform and download the current v5.6.0 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.5.3.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.0.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.5.3.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.0.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.5.3-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.0-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,25 @@
 
 ---
 
-## Current published version: v5.5.3
+## Current published version: v5.6.0
 
-## Current source version: v5.5.3
+## Current source version: v5.6.0
 
-Latest published release: **v5.5.3**. The download buttons above point directly to the published v5.5.3 assets. The release is built from the verified v5.5.3 source line and published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.6.0**. The download buttons above point directly to the v5.6.0 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.6.0
+
+v5.6.0 adds the runtime side of **[LNWJUD Watcher](https://github.com/engasnm111/lnwjud-watcher)**, a separate read-only Web/PWA, Android, and iOS companion for seeing live goal/agent/activity state without exposing LNWJUD's command surface. If you want to monitor LNWJUD from a browser or phone, start with the Watcher repository and its setup guide. v5.6.0 also hardens recurring continuation recovery and upgrades the Desktop Git diff experience for long files.
+
+- **Read-only Watcher Protocol v1:** Desktop serves an authenticated snapshot of runtime health, the active Durable Goal, milestone progress, observable agents/activity, and a sanitized Git baseline.
+- **Realtime WebSocket events:** ActivityTracker now supports safe subscribers, and authorized Watcher clients receive structured lifecycle events as work starts/completes without scraping Live Logs.
+- **Dedicated local pairing boundary:** a separate loopback-only pairing endpoint returns the local Watcher endpoint and dedicated access token. Only the Watcher API port should ever be placed behind a tunnel/reverse proxy.
+- **Protected Watcher token:** production Desktop stores the dedicated Watcher bearer token through purpose-bound secret protection rather than treating it as an MCP/tunnel credential.
+- **Desktop auto-start:** the Watcher API starts with Desktop and shuts down cleanly with the runtime.
+- **Authenticated realtime readiness:** WebSocket clients are considered connected only after the runtime acknowledges a valid Watcher token with a `ready` frame; live activity also triggers a deduplicated authoritative snapshot refresh so Goal, Agent, and Git state stay current.
+- **Git diff navigation:** the changed-file list plus Split/Unified Diff views now use native horizontal and vertical scrolling, keeping long source lines readable instead of squeezing them into the viewport.
+- **Recurring continuation recovery:** an interval `runKey` is idempotency history rather than worker-liveness proof. Same-interval retries re-check liveness and can recover a safely stale worker after the bounded grace period while true concurrent duplicates remain lease-safe.
+- **Companion app and setup guide:** use **[engasnm111/lnwjud-watcher](https://github.com/engasnm111/lnwjud-watcher)** for the Watcher Web/PWA, Android/iOS client, installation steps, pairing instructions, and remote-access provider guides. zrok, Cloudflare, Tailscale, ngrok, or Custom HTTPS can publish the Watcher API without publishing the MCP gateway. Runtime/API details remain in [LNWJUD Watcher API](docs/WATCHER.md).
 
 ### What's new in v5.5.3
 
