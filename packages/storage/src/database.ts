@@ -86,26 +86,28 @@ export class SqliteDatabase {
 
   private initializeSchema(): void {
     this._connection.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY NOT NULL);');
-    this.applyMigration({ id: '001_initial', sql: INITIAL_MIGRATION_SQL });
-    this.applyMigration({ id: '002_audit', sql: AUDIT_MIGRATION_SQL });
-    this.applyMigration({ id: '003_checkpoints', sql: CHECKPOINT_MIGRATION_SQL });
-    this.applyMigration({ id: '004_audit_scope', sql: AUDIT_SCOPE_MIGRATION_SQL });
-    this.applyMigration({ id: '005_workspace_archive', sql: WORKSPACE_ARCHIVE_MIGRATION_SQL });
-    this.applyMigration({ id: '006_goal_continuation', sql: GOAL_CONTINUATION_MIGRATION_SQL });
-    this.applyMigration({ id: '007_scheduled_continuations', sql: SCHEDULED_CONTINUATION_MIGRATION_SQL });
-    this.applyMigration({ id: '008_scheduled_continuation_session_fence', sql: SCHEDULED_CONTINUATION_SESSION_FENCE_MIGRATION_SQL });
-    this.applyMigration({ id: '009_scheduled_continuation_same_task_reschedule', sql: SCHEDULED_CONTINUATION_RESCHEDULE_MIGRATION_SQL });
-    this.applyMigration({ id: '010_goal_lease_repair', sql: GOAL_LEASE_REPAIR_MIGRATION_SQL });
-    this.applyMigration({ id: '011_goal_live_continuation_lease_quarantine', sql: GOAL_LIVE_CONTINUATION_LEASE_QUARANTINE_MIGRATION_SQL });
-    this.applyMigration({ id: '012_retire_auto_machine_roots', sql: RETIRE_AUTO_MACHINE_ROOTS_MIGRATION_SQL });
-    this.applyMigration({ id: '013_goal_cancellation', sql: GOAL_CANCELLATION_MIGRATION_SQL });
-    this.applyMigration({ id: '014_goal_tracked_tasks', sql: GOAL_TRACKED_TASKS_MIGRATION_SQL });
-    this.applyMigration({ id: '015_agent_swarm', sql: AGENT_SWARM_MIGRATION_SQL });
-    this.applyMigration({ id: '016_recurring_scheduled_continuation', sql: RECURRING_SCHEDULED_CONTINUATION_MIGRATION_SQL });
-    this.applyMigration({ id: '017_goal_ponytail_mode', sql: GOAL_PONYTAIL_MODE_MIGRATION_SQL });
-    this.applyMigration({ id: '018_goal_v5_orchestration', sql: GOAL_V5_ORCHESTRATION_MIGRATION_SQL });
-    this.applyMigration({ id: '019_native_automation', sql: NATIVE_AUTOMATION_MIGRATION_SQL });
-    this.applyMigration({ id: '020_goal_resume_context', sql: GOAL_RESUME_CONTEXT_MIGRATION_SQL });
+    this.applyMigrations([
+      { id: '001_initial', sql: INITIAL_MIGRATION_SQL },
+      { id: '002_audit', sql: AUDIT_MIGRATION_SQL },
+      { id: '003_checkpoints', sql: CHECKPOINT_MIGRATION_SQL },
+      { id: '004_audit_scope', sql: AUDIT_SCOPE_MIGRATION_SQL },
+      { id: '005_workspace_archive', sql: WORKSPACE_ARCHIVE_MIGRATION_SQL },
+      { id: '006_goal_continuation', sql: GOAL_CONTINUATION_MIGRATION_SQL },
+      { id: '007_scheduled_continuations', sql: SCHEDULED_CONTINUATION_MIGRATION_SQL },
+      { id: '008_scheduled_continuation_session_fence', sql: SCHEDULED_CONTINUATION_SESSION_FENCE_MIGRATION_SQL },
+      { id: '009_scheduled_continuation_same_task_reschedule', sql: SCHEDULED_CONTINUATION_RESCHEDULE_MIGRATION_SQL },
+      { id: '010_goal_lease_repair', sql: GOAL_LEASE_REPAIR_MIGRATION_SQL },
+      { id: '011_goal_live_continuation_lease_quarantine', sql: GOAL_LIVE_CONTINUATION_LEASE_QUARANTINE_MIGRATION_SQL },
+      { id: '012_retire_auto_machine_roots', sql: RETIRE_AUTO_MACHINE_ROOTS_MIGRATION_SQL },
+      { id: '013_goal_cancellation', sql: GOAL_CANCELLATION_MIGRATION_SQL },
+      { id: '014_goal_tracked_tasks', sql: GOAL_TRACKED_TASKS_MIGRATION_SQL },
+      { id: '015_agent_swarm', sql: AGENT_SWARM_MIGRATION_SQL },
+      { id: '016_recurring_scheduled_continuation', sql: RECURRING_SCHEDULED_CONTINUATION_MIGRATION_SQL },
+      { id: '017_goal_ponytail_mode', sql: GOAL_PONYTAIL_MODE_MIGRATION_SQL },
+      { id: '018_goal_v5_orchestration', sql: GOAL_V5_ORCHESTRATION_MIGRATION_SQL },
+      { id: '019_native_automation', sql: NATIVE_AUTOMATION_MIGRATION_SQL },
+      { id: '020_goal_resume_context', sql: GOAL_RESUME_CONTEXT_MIGRATION_SQL },
+    ]);
   }
 
   private ensureDirectory(): void {
@@ -195,18 +197,49 @@ export class SqliteDatabase {
   }
 
   public applyMigration(migration: Migration): void {
-    const existing = this.connection.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(migration.id);
-    if (this.hasMigrationId(existing, migration.id)) return;
-    this.backupBeforeFirstPendingMigration();
+    this.applyMigrations([migration]);
+  }
 
+  private applyMigrations(migrations: readonly Migration[]): void {
+    const pending = migrations.filter((migration) => {
+      const existing = this.connection.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(migration.id);
+      return !this.hasMigrationId(existing, migration.id);
+    });
+    if (pending.length === 0) return;
+
+    this.backupBeforeFirstPendingMigration();
     this.connection.exec('BEGIN;');
+    let outerTransactionOpen = true;
     try {
-      this.connection.exec(migration.sql);
-      this.connection.prepare('INSERT INTO schema_migrations (id) VALUES (?)').run(migration.id);
+      for (let index = 0; index < pending.length; index += 1) {
+        const migration = pending[index]!;
+        const savepoint = `migration_${index}`;
+        this.connection.exec(`SAVEPOINT ${savepoint};`);
+        try {
+          this.connection.exec(migration.sql);
+          this.connection.prepare('INSERT INTO schema_migrations (id) VALUES (?)').run(migration.id);
+          this.connection.exec(`RELEASE SAVEPOINT ${savepoint};`);
+        } catch (error) {
+          this.connection.exec(`ROLLBACK TO SAVEPOINT ${savepoint};`);
+          this.connection.exec(`RELEASE SAVEPOINT ${savepoint};`);
+          // Preserve the historical behavior where migrations completed before
+          // a failing migration remain durable, while avoiding one fsync-heavy
+          // top-level commit per migration on slow Windows filesystems.
+          this.connection.exec('COMMIT;');
+          outerTransactionOpen = false;
+          throw error;
+        }
+      }
       this.connection.exec('COMMIT;');
-    } catch (error) {
-      this.connection.exec('ROLLBACK;');
-      throw error;
+      outerTransactionOpen = false;
+    } finally {
+      if (outerTransactionOpen) {
+        try {
+          this.connection.exec('ROLLBACK;');
+        } catch {
+          // The original migration error is authoritative.
+        }
+      }
     }
   }
 
