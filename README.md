@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.6.1 release directly.</p>
+<p align="center">Choose your platform and download the current v5.6.2 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.1.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.2.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.1.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.2.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.1-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,19 @@
 
 ---
 
-## Current published version: v5.6.1
+## Current published version: v5.6.2
 
-## Current source version: v5.6.1
+## Current source version: v5.6.2
 
-Latest published release: **v5.6.1**. The download buttons above point directly to the v5.6.1 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.6.2**. The download buttons above point directly to the v5.6.2 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.6.2
+
+v5.6.2 fixes three reliability issues reported in the MCP context pipeline and Secure Tunnel UI.
+
+- **Context Economy persists across Modern HTTP requests:** request-scoped MCP server recreation now reuses a transport-scoped Context Economy runtime, so `context_economy_stats` keeps its ledger and repeated context retrievals can produce ledger hits.
+- **Binary context stays metadata-only:** `.DS_Store` is ignored by default, and Base64/binary file reads are detected from the file-reader encoding before text-context assembly, preventing long binary payloads from leaking into `workspace_context`.
+- **Secure Tunnel transition lock:** Settings now receives the App-level tunnel busy state and disables Start/Stop controls while tunnel start or stop is in flight, preventing repeated-click overlap.
 
 ### What's new in v5.6.1
 

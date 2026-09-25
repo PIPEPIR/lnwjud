@@ -5,6 +5,7 @@ import { APP_NAME, APP_VERSION, DEFAULT_PONYTAIL_MODE, parsePonytailMode, type D
 import { readTraceContext, type ActivitySink, type ActivityTracker } from './activity-tracker.js';
 import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-heartbeat.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
+import { ContextEconomyRuntime } from './context-economy.js';
 import { RunBudgetGuard, type RunBudgetContext } from './run-budget.js';
 import { registerTasksProtocol } from './tasks-protocol.js';
 import { MODERN_TASKS_EXTENSION_ID } from './modern-tasks-protocol.js';
@@ -66,6 +67,8 @@ export interface McpServerOptions {
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   /** Shared by transport-scoped server factories so continuation tokens survive the next MCP request. */
   readonly continuationState?: McpContinuationState;
+  /** Shared context-economy runtime for transports that recreate request-scoped MCP servers. */
+  readonly contextEconomy?: ContextEconomyRuntime;
   /** Compatibility result guard; it must not apply elapsed-time behavior. */
   readonly runBudgetGuard?: RunBudgetGuard;
   /**
@@ -101,6 +104,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
     ...(options.continuationState === undefined ? {} : { continuationState: options.continuationState }),
+    ...(options.contextEconomy === undefined ? {} : { contextEconomy: options.contextEconomy }),
   });
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   let configuredPonytailMode = DEFAULT_PONYTAIL_MODE;

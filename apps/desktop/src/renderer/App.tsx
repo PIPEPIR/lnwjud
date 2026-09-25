@@ -1041,6 +1041,7 @@ export function App(): ReactElement {
           onConfigureTunnelProfile={configureTunnelProfile}
           onStartTunnel={startTunnelWithStatus}
           onStopTunnel={stopTunnel}
+          tunnelBusy={tunnelBusy}
           onBeginTunnelOAuthLogin={beginTunnelOAuthLogin}
           onGetTunnelOAuthLoginStatus={getTunnelOAuthLoginStatus}
           onCancelTunnelOAuthLogin={cancelTunnelOAuthLogin}

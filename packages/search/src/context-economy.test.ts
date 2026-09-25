@@ -15,6 +15,11 @@ describe('context economy policy', () => {
       discoverable: false,
       tier: 0,
     });
+    expect(classifyContextPath('.DS_Store', 'automatic')).toMatchObject({
+      discoverable: false,
+      kind: 'ignored',
+      tier: 0,
+    });
     expect(classifyContextPath('dist/app.js.map', 'automatic')).toMatchObject({
       discoverable: false,
       tier: 0,
@@ -80,6 +85,7 @@ describe('context economy policy', () => {
         '!**/.worktrees/**',
         '!**/.local-artifacts/**',
         '!**/test-results/**',
+        '!**/.DS_Store',
         '!**/*.map',
       ]),
     );

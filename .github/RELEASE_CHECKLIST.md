@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.6.1` - Windows installer `lnwjud-Setup-5.6.1.exe` and portable executable `lnwjud-Portable-5.6.1.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.6.2` - Windows installer `lnwjud-Setup-5.6.2.exe` and portable executable `lnwjud-Portable-5.6.2.exe`; MCP registry **276 total definitions / 264 advertised by default / all 276 with Codex delegation plus Agent Swarm enabled**.
 
 v5.6.1 acceptance additionally requires: Watcher Protocol v1 exposes every Active Project with bounded active Durable Goals, per-workspace active operations and sanitized Git state while preserving top-level `goal`/`git` compatibility; workspace identity propagates through observable Agent/activity records; the companion Watcher renders parallel projects/goals without collapsing them to one current task; the Desktop Git page has no clipping outer panel and Split/Unified Diff panes provide usable native X/Y scrolling; pairing remains loopback-only; Thai/English What’s New and Watcher docs match the shipped behavior; targeted protocol/server regressions, full lint/typecheck/tests/build, release gates, packaging, and exact-tag CI pass.
 

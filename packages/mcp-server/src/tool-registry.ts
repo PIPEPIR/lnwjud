@@ -154,6 +154,8 @@ export interface ToolRegistryOptions {
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   /** Shared by transport-scoped server factories so continuation tokens survive per-request server recreation. */
   readonly continuationState?: McpContinuationState;
+  /** Shared by transport-scoped server factories so context-economy ledger state survives per-request server recreation. */
+  readonly contextEconomy?: ContextEconomyRuntime;
   readonly maxToolDurationMs?: number;
 }
 
@@ -237,7 +239,7 @@ export class ToolRegistry {
     this.hostMutationApprovalProvider = options.hostMutationApprovalProvider;
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
-    const contextEconomy = new ContextEconomyRuntime();
+    const contextEconomy = options.contextEconomy ?? new ContextEconomyRuntime();
     const automation = services.automation ?? services.automationFactory?.create(
       new AutomationRuntimeAdapter(this, actor),
       actor,
@@ -1344,7 +1346,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.6.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.6.2 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

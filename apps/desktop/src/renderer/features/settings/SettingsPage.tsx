@@ -38,6 +38,7 @@ interface SettingsPageProps {
   readonly onConfigureTunnelProfile: (tunnelId: string) => Promise<string>;
   readonly onStartTunnel: () => Promise<TunnelStatus>;
   readonly onStopTunnel: () => Promise<void>;
+  readonly tunnelBusy?: boolean;
   readonly onBeginTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
   readonly onGetTunnelOAuthLoginStatus: () => Promise<TunnelOAuthLoginStatus>;
   readonly onCancelTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
@@ -83,7 +84,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [showApiKey, setShowApiKey] = useState(false);
   const [clientPath, setClientPath] = useState(props.dashboard.tunnel.clientPath ?? '');
   const [tunnelId, setTunnelId] = useState('');
-  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [localTunnelBusy, setLocalTunnelBusy] = useState(false);
+  const tunnelBusy = props.tunnelBusy === true || localTunnelBusy;
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [remoteMcpAuthtoken, setRemoteMcpAuthtoken] = useState('');
   const [remoteMcpPublicOrigin, setRemoteMcpPublicOrigin] = useState(remoteMcp.configuredPublicOrigin ?? '');
@@ -272,7 +274,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       setTunnelMessage(t('settingsPage.tunnelIdRequired'));
       return;
     }
-    setTunnelBusy(true);
+    setLocalTunnelBusy(true);
     setTunnelMessage(null);
     try {
       const profilePath = await props.onConfigureTunnelProfile(tunnelId.trim());
@@ -280,30 +282,30 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     } catch (cause: unknown) {
       setTunnelMessage(cause instanceof Error ? cause.message : t('settingsPage.tunnelSetupFailed'));
     } finally {
-      setTunnelBusy(false);
+      setLocalTunnelBusy(false);
     }
   }
 
   async function reconnectSameTunnel(): Promise<void> {
-    setTunnelBusy(true);
+    setLocalTunnelBusy(true);
     setTunnelMessage(null);
     try {
       await props.onStartTunnel();
       setTunnelMessage(t('settingsPage.reconnectRequested'));
     } catch (cause: unknown) {
       setTunnelMessage(cause instanceof Error ? cause.message : t('settingsPage.reconnectFailed'));
-    } finally { setTunnelBusy(false); }
+    } finally { setLocalTunnelBusy(false); }
   }
 
   async function stopPersistentTunnel(): Promise<void> {
-    setTunnelBusy(true);
+    setLocalTunnelBusy(true);
     setTunnelMessage(null);
     try {
       await props.onStopTunnel();
       setTunnelMessage(t('settingsPage.tunnelStopped'));
     } catch (cause: unknown) {
       setTunnelMessage(cause instanceof Error ? cause.message : t('settingsPage.tunnelStopFailed'));
-    } finally { setTunnelBusy(false); }
+    } finally { setLocalTunnelBusy(false); }
   }
 
   async function beginOAuthLogin(): Promise<void> {

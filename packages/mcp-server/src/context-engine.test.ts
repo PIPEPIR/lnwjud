@@ -152,6 +152,33 @@ describe('context engine', () => {
     expect(second.value.economy?.previouslySeenBytesAvoided).toBeGreaterThan(0);
   });
 
+  it('does not emit base64 binary payloads as text context', async () => {
+    const base = services();
+    const engine = new ContextEngine({
+      ...base,
+      file: {
+        async readFile(_actor, _workspaceId, request): Promise<ReturnType<typeof ok>> {
+          return ok({
+            path: request.path,
+            content: 'AAECAw==',
+            startLine: 1,
+            endLine: 1,
+            encoding: 'base64' as const,
+            mimeType: 'application/octet-stream',
+            byteLength: 4,
+          });
+        },
+      },
+    }, actor);
+
+    const result = await engine.collect({ query: 'login', workspaceId: 'workspace-1', pageSize: 1 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.files[0]).toMatchObject({ delivery: 'metadata', snippets: [], symbols: [], summary: { lineCount: 0 } });
+    expect(JSON.stringify(result.value.files[0])).not.toContain('AAECAw==');
+  });
+
   it('bounds concurrent context file reads', async () => {
     let activeReads = 0;
     let peakReads = 0;
