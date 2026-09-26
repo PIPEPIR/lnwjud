@@ -36,6 +36,26 @@ describe('ProcessManager', () => {
     ]));
   });
 
+  it('can close stdin for non-interactive children that wait for EOF', async () => {
+    const manager = new ProcessManager();
+    const started = await manager.start({
+      executable: process.execPath,
+      args: ['-e', "require('node:fs').readFileSync(0, 'utf8'); process.stdout.write('stdin-ended\\n');"],
+      cwd: process.cwd(),
+      timeoutMs: 1_000,
+      stdin: 'ignore',
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForState(manager, started.value.processId, 'exited');
+    const logs = manager.logs(started.value.processId, {});
+    expect(logs).toMatchObject({
+      ok: true,
+      value: { entries: [expect.objectContaining({ stream: 'stdout', text: expect.stringContaining('stdin-ended') })] },
+    });
+  });
+
   it('times out a running child and stops only an owned process handle', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({

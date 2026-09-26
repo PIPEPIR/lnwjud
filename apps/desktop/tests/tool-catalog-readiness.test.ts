@@ -37,6 +37,29 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
 }
 
 describe('tool catalog readiness aggregation', () => {
+  it('supports a scoped probe timeout without relaxing the registry default', async () => {
+    vi.useFakeTimers();
+    try {
+      const delayedProbe = async (): Promise<{ status: 'pass' }> => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        return { status: 'pass' };
+      };
+      const registry = new RequirementRegistry([
+        { id: 'default_probe', required: false, summaryKey: 'requirement.default_probe', probe: delayedProbe },
+        { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', timeoutMs: 100, probe: delayedProbe },
+      ], { timeoutMs: 20, ttlMs: 60_000 });
+
+      const pending = registry.probe(['default_probe', 'codex_runtime'], true);
+      await vi.advanceTimersByTimeAsync(55);
+      const result = await pending;
+
+      expect(result.get('default_probe')).toMatchObject({ status: 'unknown', detail: 'Probe timed out' });
+      expect(result.get('codex_runtime')).toMatchObject({ status: 'pass' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('labels alternative remote connectivity checks as optional instead of raw internal ids', async () => {
     const registry = new RequirementRegistry([
       { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', probe: async (): Promise<{ status: 'pass'; detail: string }> => ({ status: 'pass', detail: 'Secure Tunnel is active' }) },

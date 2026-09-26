@@ -1288,7 +1288,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
-    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: async () => readSettings().codexToolsEnabled
+    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', timeoutMs: 5_000, probe: async () => readSettings().codexToolsEnabled
       ? requirementProbeFromDoctor(() => checkCodex(codexDiscovery))
       : { status: 'pass', detail: 'Codex runtime probe deferred while Codex tools are disabled' } },
     { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
