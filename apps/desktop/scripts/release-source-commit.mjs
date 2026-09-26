@@ -1,3 +1,5 @@
+import process from 'node:process';
+
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export function resolveReleaseSourceIdentity(actualCommit, env = process.env) {
