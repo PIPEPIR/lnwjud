@@ -533,6 +533,37 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
+  it('rejects mismatched scheduled-wake goal/workspace identity before claiming a lease', async () => {
+    const { database, goals, scheduled } = await fixture();
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+
+      const wrongGoal = await scheduled.claimScheduledContinuation(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        goalId: 'wrong-goal',
+        workspaceId: 'workspace-1',
+      });
+      expect(wrongGoal).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const wrongWorkspace = await scheduled.claimScheduledContinuation(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        goalId: started.goalId,
+        workspaceId: 'wrong-workspace',
+      });
+      expect(wrongWorkspace).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const goal = await goals.getGoal(actor, { goalId: started.goalId });
+      expect(goal.ok).toBe(true);
+      if (!goal.ok) throw new Error('goal lookup failed');
+      expect(goal.value.leaseGeneration).toBe(started.leaseGeneration);
+    } finally {
+      database.close();
+    }
+  });
+
   it('retires a one-time task that fires outside the early-jitter window and reserves fresh coverage', async () => {
     const { database, goals, scheduled, clock } = await fixture();
     try {

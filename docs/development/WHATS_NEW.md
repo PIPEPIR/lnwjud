@@ -26,16 +26,16 @@ Before packaging a new public version:
 
 `scripts/set-version.mjs` synchronizes version surfaces but intentionally does **not** invent release notes. The release-note entry is a reviewed product artifact.
 
-## Current v5.5.3 release-note coverage
+## Current v5.6.2 release-note coverage
 
-The bundled `5.5.3` entry must describe the scheduled-connector binding fix that actually ships in this patch:
+The bundled `5.6.2` entry must describe the reliability fixes that actually ship in this patch:
 
-- when the current chat exposes an exact `@connector` mention, `prepare_scheduled_continuation.connectorMention` carries that identity into the generated recurring Native ChatGPT Scheduled Task prompt;
-- the connector name is not hard-coded: validated Unicode connector identifiers are accepted while whitespace/newline injection is rejected;
-- scheduled wakes still require `claim_scheduled_continuation` as the first connected lnwjud action before user-visible prose or workspace mutation;
-- existing scheduler transport-failure and recurring-task reuse semantics remain unchanged; the binding is applied when a native watchdog is created from the new schedule request.
+- Context Economy state persists across Modern HTTP requests within the same transport;
+- `.DS_Store` is ignored by default and binary/Base64 reads stay metadata-only in workspace context;
+- Secure Tunnel Start/Stop controls are disabled while a transition is in flight;
+- recurring watchdog wakes carry expected goal/workspace identity, and lnwjud verifies that binding before taking scheduled-goal ownership while preserving continuation-only compatibility.
 
-The historical `5.5.2` and `5.5.1` registry entries remain bundled for exact-version display on older installations.
+Historical registry entries remain bundled for exact-version display on older installations.
 
 Keep README/FULL_README release notes and Thai/English in-app copy semantically aligned with this registry. Do not add claims for fixes that are not in the packaged artifact.
 

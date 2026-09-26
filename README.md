@@ -59,11 +59,12 @@ Latest published release: **v5.6.2**. The download buttons above point directly 
 
 ### What's new in v5.6.2
 
-v5.6.2 fixes three reliability issues reported in the MCP context pipeline and Secure Tunnel UI.
+v5.6.2 fixes four reliability issues across the MCP context pipeline, scheduled continuation, and Secure Tunnel UI.
 
 - **Context Economy persists across Modern HTTP requests:** request-scoped MCP server recreation now reuses a transport-scoped Context Economy runtime, so `context_economy_stats` keeps its ledger and repeated context retrievals can produce ledger hits.
 - **Binary context stays metadata-only:** `.DS_Store` is ignored by default, and Base64/binary file reads are detected from the file-reader encoding before text-context assembly, preventing long binary payloads from leaking into `workspace_context`.
 - **Secure Tunnel transition lock:** Settings now receives the App-level tunnel busy state and disables Start/Stop controls while tunnel start or stop is in flight, preventing repeated-click overlap.
+- **Host-safe scheduled claim binding:** Native watchdog wakes can pass their expected `goalId` and `workspaceId` with `claim_scheduled_continuation`; lnwjud validates both identities before liveness or lease mutation while legacy continuation-only callers remain compatible.
 
 ### What's new in v5.6.1
 
