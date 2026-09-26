@@ -53,7 +53,7 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.6.2
 
-## Current source version: v5.6.2
+## Current source version: v5.6.3
 
 Latest published release: **v5.6.2**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
@@ -985,8 +985,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.6.2.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.6.2.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.6.3.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.6.3.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
