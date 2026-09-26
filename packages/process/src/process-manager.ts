@@ -67,6 +67,7 @@ export class ProcessManager {
       cwd: spec.cwd,
       env: createSafeEnvironment(process.env),
       shell: false,
+      stdio: [spec.stdin ?? 'pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
       ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),

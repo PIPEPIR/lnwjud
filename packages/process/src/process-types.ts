@@ -5,6 +5,7 @@ export interface ManagedProcessStart {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly timeoutMs?: number;
+  readonly stdin?: 'ignore' | 'pipe';
 }
 
 export interface ManagedProcess {

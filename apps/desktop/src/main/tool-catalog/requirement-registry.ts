@@ -10,6 +10,7 @@ export interface RequirementDefinition {
   readonly required: boolean;
   readonly summaryKey: string;
   readonly remediationId?: string;
+  readonly timeoutMs?: number;
   readonly probe: () => Promise<RequirementProbeResult>;
 }
 
@@ -65,8 +66,9 @@ export class RequirementRegistry {
     const started = this.#now().getTime();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const timeoutMs = definition.timeoutMs ?? this.#timeoutMs;
       const timeout = new Promise<RequirementProbeResult>((resolve) => {
-        timer = setTimeout(() => resolve({ status: 'unknown', detail: 'Probe timed out' }), this.#timeoutMs);
+        timer = setTimeout(() => resolve({ status: 'unknown', detail: 'Probe timed out' }), timeoutMs);
       });
       const value = await Promise.race([definition.probe(), timeout]);
       const checkedAt = this.#now().toISOString();
