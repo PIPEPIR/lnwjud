@@ -17,7 +17,6 @@ jobs:
   publish-release:
     name: Publish Verified Cross-Platform Release
     runs-on: ubuntu-latest
-    timeout-minutes: 120
 
     steps:
       - name: Checkout Code
@@ -49,50 +48,32 @@ jobs:
           staging_directory="$PWD/release-staging"
           mkdir -p "$staging_directory"
 
-          find_ci_run() {
-            local event="$1"
-            gh run list \
+          run_id="$(gh run list \
+            --repo "$repository" \
+            --workflow ci.yml \
+            --commit "$sha" \
+            --branch main \
+            --event push \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha,conclusion \
+            --jq ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
+          if [[ -z "$run_id" ]]; then
+            run_id="$(gh run list \
               --repo "$repository" \
               --workflow ci.yml \
               --commit "$sha" \
               --branch main \
-              --event "$event" \
+              --event workflow_dispatch \
+              --status success \
               --limit 20 \
-              --json databaseId,headSha,status,conclusion \
-              --jq ".[] | select(.headSha == \"$sha\") | [.databaseId, .status, (.conclusion // \"\")] | @tsv" | sed -n '1p'
-          }
-
-          # Tag pushes can race protected main CI. Wait for that exact-SHA run
-          # instead of creating a false-red Release before CI has finished.
-          run_id=""
-          ci_wait_deadline=$((SECONDS + 3600))
-          while [[ -z "$run_id" ]]; do
-            candidate="$(find_ci_run push)"
-            if [[ -z "$candidate" ]]; then
-              candidate="$(find_ci_run workflow_dispatch)"
-            fi
-
-            if [[ -n "$candidate" ]]; then
-              IFS=$'\t' read -r candidate_id candidate_status candidate_conclusion <<< "$candidate"
-              if [[ "$candidate_status" == "completed" ]]; then
-                if [[ "$candidate_conclusion" == "success" ]]; then
-                  run_id="$candidate_id"
-                  break
-                fi
-                echo "Exact-commit CI run $candidate_id completed with conclusion '$candidate_conclusion'; refusing release." >&2
-                exit 1
-              fi
-              echo "Waiting for exact-commit CI run $candidate_id ($candidate_status) for $sha..."
-            else
-              echo "Waiting for main CI to appear for exact commit $sha..."
-            fi
-
-            if (( SECONDS >= ci_wait_deadline )); then
-              echo "Timed out waiting 60 minutes for successful main CI on exact commit $sha." >&2
-              exit 1
-            fi
-            sleep 20
-          done
+              --json databaseId,headSha,conclusion \
+              --jq ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
+          fi
+          if [[ -z "$run_id" ]]; then
+            echo "Release requires a successful CI push or workflow_dispatch run for exact commit $sha before tagging." >&2
+            exit 1
+          fi
 
           declare -a targets=(
             "win32-x64|windows-release-$sha"
