@@ -21,6 +21,7 @@ describe('Windows release trust evidence', () => {
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
     const packageScript = desktopPackage.scripts?.['package:windows'] ?? '';
     const evidenceWriter = await readFile(path.join(desktopRoot, 'scripts', 'write-release-evidence.mjs'), 'utf8');
+    const sourceResolver = await readFile(path.join(desktopRoot, 'scripts', 'release-source-commit.mjs'), 'utf8');
     const evidenceVerifier = await readFile(path.join(desktopRoot, 'scripts', 'verify-release-evidence.mjs'), 'utf8');
     const bridgeVerifier = await readFile(path.join(desktopRoot, 'scripts', 'verify-capability-bridge-artifacts.mjs'), 'utf8');
     const captureHook = await readFile(path.join(desktopRoot, 'scripts', 'capture-packaged-runtime-evidence.mjs'), 'utf8');
@@ -32,7 +33,8 @@ describe('Windows release trust evidence', () => {
     expect(builderConfig).toContain('afterSign: scripts/capture-packaged-runtime-evidence.mjs');
     expect(evidenceWriter).toContain('SHA256SUMS.txt');
     expect(evidenceWriter).toContain('PROVENANCE.json');
-    expect(evidenceWriter).toContain('GITHUB_SHA');
+    expect(evidenceWriter).toContain('resolveReleaseSourceIdentity');
+    expect(sourceResolver).toContain('GITHUB_SHA');
     expect(evidenceWriter).toContain('LNWJUD_SOURCE_DIRTY_AT_START');
     expect(evidenceWriter).toContain('workingTreeDirtyAtEvidence');
     expect(evidenceWriter).toContain("git(['rev-parse', 'HEAD'])");
