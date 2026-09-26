@@ -48,6 +48,11 @@ jobs:
 
           if ($currentVersion -ne $upstreamVersion) {
             Write-Host "Upstream changed: $currentVersion -> $upstreamVersion"
+            $downstreamHead = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($downstreamHead)) {
+              throw "Unable to resolve downstream source commit before rebase"
+            }
+
             $nativePreference = $PSNativeCommandUseErrorActionPreference
             $PSNativeCommandUseErrorActionPreference = $false
             git rebase upstream/main
@@ -60,6 +65,20 @@ jobs:
               "conflict=true" >> $env:GITHUB_OUTPUT
               "needs_build=false" >> $env:GITHUB_OUTPUT
               exit 0
+            }
+
+            # The fork owns its automation policy. Upstream application changes may
+            # include .github/workflows edits, but GITHUB_TOKEN cannot push those
+            # workflow updates. Restore the downstream workflow tree before pushing
+            # so the updater syncs product code without requiring a broader PAT.
+            git restore --source=$downstreamHead --worktree --staged -- .github/workflows
+            $nativePreference = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            git diff --cached --quiet -- .github/workflows
+            $workflowRestoreNeeded = $LASTEXITCODE -ne 0
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            if ($workflowRestoreNeeded) {
+              git commit -m "chore(ci): preserve downstream workflows during upstream sync"
             }
 
             $rebasedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
