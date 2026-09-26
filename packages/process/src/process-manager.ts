@@ -67,7 +67,7 @@ export class ProcessManager {
       cwd: spec.cwd,
       env: createSafeEnvironment(process.env),
       shell: false,
-      stdio: [spec.stdin ?? 'pipe', 'pipe', 'pipe'],
+      stdio: [spec.stdin === 'closed' ? 'pipe' : (spec.stdin ?? 'pipe'), 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
       ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
@@ -86,6 +86,7 @@ export class ProcessManager {
     child.stderr?.on('data', (chunk: Buffer) => record.logs.append('stderr', chunk.toString('utf8')));
     child.once('error', (error: Error & { code?: string }) => this.handleError(record, error));
     child.once('close', (exitCode: number | null) => this.handleClose(record, exitCode));
+    if (spec.stdin === 'closed') child.stdin?.end();
 
     return new Promise((resolve) => {
       let settled = false;

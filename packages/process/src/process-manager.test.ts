@@ -56,6 +56,25 @@ describe('ProcessManager', () => {
     });
   });
 
+  it('supports a closed pipe for children that distinguish piped stdin from an ignored handle', async () => {
+    const manager = new ProcessManager();
+    const started = await manager.start({
+      executable: process.execPath,
+      args: ['-e', "require('node:fs').readFileSync(0, 'utf8'); process.stdout.write('closed-pipe-eof\\n');"],
+      cwd: process.cwd(),
+      timeoutMs: 1_000,
+      stdin: 'closed',
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForState(manager, started.value.processId, 'exited');
+    expect(manager.logs(started.value.processId, {})).toMatchObject({
+      ok: true,
+      value: { entries: [expect.objectContaining({ stream: 'stdout', text: expect.stringContaining('closed-pipe-eof') })] },
+    });
+  });
+
   it('times out a running child and stops only an owned process handle', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({

@@ -173,6 +173,23 @@ describe('MCP tool registry', () => {
     expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_DELEGATION_TOOL_NAMES.length);
   });
 
+  it('returns structured content when codex_stop succeeds', async () => {
+    const registry = new ToolRegistry({
+      codex: {
+        async stop(): Promise<ReturnType<typeof ok>> { return ok(undefined); },
+      } as unknown as McpApplicationServices['codex'],
+    }, actor, {
+      codexToolsEnabled: true,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      profileProvider: (): PermissionProfile => permissionProfiles.full,
+    });
+
+    await expect(registry.invoke('codex_stop', {
+      workspaceId: 'workspace-1',
+      codexTaskId: 'codex-1',
+    })).resolves.toMatchObject({ structuredContent: { stopped: true } });
+  });
+
   it('keeps Codex delegation system-ineligible when per-tool overrides try to enable it', async () => {
     const overrides = Object.fromEntries(
       CODEX_DELEGATION_TOOL_NAMES.map((name) => [name, 'enabled' as const]),
