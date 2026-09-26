@@ -48,6 +48,13 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
             badge: 'fixed',
             tags: ['Secure Tunnel', 'Settings', 'UI'],
           },
+          {
+            id: 'scheduled-claim-binding',
+            titleKey: 'whatsNew.562.claimBinding.title',
+            descriptionKey: 'whatsNew.562.claimBinding.description',
+            badge: 'fixed',
+            tags: ['Scheduled Continuation', 'MCP'],
+          },
         ],
       },
     ],

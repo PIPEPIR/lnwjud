@@ -123,6 +123,8 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('expedite_scheduled_continuation')?.parse({ goalId: 'g-1', continuationId: 'c-1', leaseToken: 'lease', expectedLeaseGeneration: 2, expectedGoalRevision: 3, expectedContinuationVersion: 4, reason: 'host_budget_warning' })).toMatchObject({ ok: true });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1' })).toMatchObject({ ok: true, value: { leaseSeconds: 600 } });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 600 })).toMatchObject({ ok: true });
+    expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', goalId: 'g-1', workspaceId: 'w-1', leaseSeconds: 600 }))
+      .toMatchObject({ ok: true, value: { goalId: 'g-1', workspaceId: 'w-1' } });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 601 })).toMatchObject({ ok: false });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 3_600 })).toMatchObject({ ok: false });
     expect(byName.get('get_scheduled_continuation')?.parse({})).toMatchObject({ ok: false });
@@ -137,6 +139,7 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('never create a per-wake successor');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('reconstruction-grade resumeContext');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('one-time and recurring native tasks never overlap');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('host-visible WRITE scope is explicit');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('existing interval runKey alone never suppresses');
