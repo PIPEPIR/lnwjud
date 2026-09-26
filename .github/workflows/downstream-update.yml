@@ -46,12 +46,26 @@ jobs:
           "current_version=$currentVersion" >> $env:GITHUB_OUTPUT
           "upstream_version=$upstreamVersion" >> $env:GITHUB_OUTPUT
 
-          if ($currentVersion -ne $upstreamVersion) {
-            Write-Host "Upstream changed: $currentVersion -> $upstreamVersion"
-            $downstreamHead = (git rev-parse HEAD).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($downstreamHead)) {
-              throw "Unable to resolve downstream source commit before rebase"
-            }
+          $downstreamHead = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($downstreamHead)) {
+            throw "Unable to resolve downstream source commit before ancestry check"
+          }
+          $upstreamHead = (git rev-parse upstream/main).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($upstreamHead)) {
+            throw "Unable to resolve upstream source commit before ancestry check"
+          }
+
+          $nativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          git merge-base --is-ancestor $upstreamHead $downstreamHead
+          $ancestorExit = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $nativePreference
+          if ($ancestorExit -ne 0 -and $ancestorExit -ne 1) {
+            throw "Unable to determine whether downstream already contains upstream HEAD"
+          }
+
+          if ($ancestorExit -eq 1) {
+            Write-Host "Upstream commit $upstreamHead is not contained in downstream HEAD $downstreamHead; rebasing owner updates."
 
             $nativePreference = $PSNativeCommandUseErrorActionPreference
             $PSNativeCommandUseErrorActionPreference = $false
@@ -82,12 +96,36 @@ jobs:
             }
 
             $rebasedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $releaseVersion = $rebasedVersion
+            while ($true) {
+              $candidateTag = "lnwjud-downstream-v$releaseVersion"
+              $nativePreference = $PSNativeCommandUseErrorActionPreference
+              $PSNativeCommandUseErrorActionPreference = $false
+              gh release view $candidateTag --repo $env:DOWNSTREAM_REPO *> $null
+              $candidateExists = $LASTEXITCODE -eq 0
+              $PSNativeCommandUseErrorActionPreference = $nativePreference
+              if (-not $candidateExists) {
+                break
+              }
+              if ($releaseVersion -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
+                throw "Cannot allocate a downstream patch version from non-standard version $releaseVersion"
+              }
+              $releaseVersion = "$($Matches[1]).$($Matches[2]).$([int]$Matches[3] + 1)"
+            }
+
+            if ($releaseVersion -ne $rebasedVersion) {
+              Write-Host "Downstream release v$rebasedVersion already exists; allocating v$releaseVersion for the owner-synced build."
+              node scripts/set-version.mjs $releaseVersion
+              git add -A
+              git commit -m "chore(release): prepare downstream $releaseVersion"
+            }
+
             $sourceSha = (git rev-parse HEAD).Trim()
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
               throw "Unable to resolve post-rebase source commit"
             }
             Write-Host "Validated build source: $sourceSha (workflow trigger: $env:GITHUB_SHA)"
-            "version=$rebasedVersion" >> $env:GITHUB_OUTPUT
+            "version=$releaseVersion" >> $env:GITHUB_OUTPUT
             "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT
             "rebased=true" >> $env:GITHUB_OUTPUT
             "needs_build=true" >> $env:GITHUB_OUTPUT
