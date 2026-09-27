@@ -151,6 +151,7 @@ import {
   type SetGoalPonytailModeRequest,
   type SetWorkspacePonytailModeRequest,
   type ProcessSummary,
+  type PurgeRecoveryDataRequest,
   type ReadCodexTaskLogsRequest,
   type RemoteMcpStatus,
   type RestoreCheckpointRequest,

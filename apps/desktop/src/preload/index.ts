@@ -57,6 +57,7 @@ import {
   type SetWorkspacePonytailModeRequest,
   type SetGoalPonytailModeRequest,
   type ProcessSummary,
+  type PurgeRecoveryDataRequest,
   type ReadCodexTaskLogsRequest,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
