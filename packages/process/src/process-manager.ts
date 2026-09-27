@@ -11,6 +11,10 @@ import type { LogQuery, ManagedProcess, ManagedProcessStart, ManagedProcessState
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const START_CANCELLATION_RETRY_MS = 250;
+const SENSITIVE_OUTPUT_MARKERS = [
+  'api_key', 'api-key', 'apikey', 'access_token', 'access-token', 'accesstoken',
+  'refresh_token', 'refresh-token', 'refreshtoken', 'password', 'secret', 'bearer',
+];
 
 export const DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES = 24;
 export const DEFAULT_MAX_RETAINED_TERMINAL_PROCESSES = 32;
@@ -22,6 +26,10 @@ interface ManagedRecord {
   readonly spec: ManagedProcessStart;
   readonly startedAt: string;
   readonly logs: LogRingBuffer;
+  readonly redactionValues: string[];
+  readonly redactionMatchers: ProcessOutputRedactionMatcher[];
+  readonly pendingOutput: { stdout: string; stderr: string };
+  onTerminal?: (process: ManagedProcess) => void;
   state: ManagedProcessState;
   finishedAt?: string;
   exitCode?: number;
@@ -32,6 +40,12 @@ interface ManagedRecord {
   terminationTarget?: 'stopped' | 'timed_out';
   terminationVerified?: Promise<void>;
   resolveTerminationVerified?: () => void;
+  terminalNotified?: boolean;
+}
+
+interface ProcessOutputRedactionMatcher {
+  readonly value: string;
+  readonly prefixTable: Uint32Array;
 }
 
 export class ProcessManager {
@@ -48,6 +62,7 @@ export class ProcessManager {
     spec: ManagedProcessStart,
     signal?: AbortSignal,
     onCreated?: (process: ManagedProcess) => void,
+    onTerminal?: (process: ManagedProcess) => void,
   ): Promise<Result<ManagedProcess>> {
     const activeProcesses = this.activeProcessCount();
     if (activeProcesses >= this.maxActiveProcesses) {
@@ -63,6 +78,15 @@ export class ProcessManager {
     if (!invocation.ok) return invocation;
     if (isAborted(signal)) return cancelledStart();
     const processId = randomUUID();
+    const redactionValues = (spec.redactOutputValues ?? []).filter((value) => value.length > 0);
+    const redactionMatchers = redactionValues.map(createProcessOutputRedactionMatcher);
+    const safeSpec: ManagedProcessStart = redactionValues.length === 0 ? spec : {
+      executable: spec.executable,
+      args: spec.args.map((argument) => redactionValues.includes(argument) ? '[REDACTED]' : argument),
+      cwd: spec.cwd,
+      ...(spec.timeoutMs === undefined ? {} : { timeoutMs: spec.timeoutMs }),
+      ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
+    };
     const child = spawn(invocation.value.executable, [...invocation.value.args], {
       cwd: spec.cwd,
       env: createSafeEnvironment(process.env),
@@ -75,15 +99,19 @@ export class ProcessManager {
     const record: ManagedRecord = {
       processId,
       child,
-      spec,
+      spec: safeSpec,
       startedAt: new Date().toISOString(),
       logs: new LogRingBuffer(),
+      redactionValues,
+      redactionMatchers,
+      pendingOutput: { stdout: '', stderr: '' },
+      ...(onTerminal === undefined ? {} : { onTerminal }),
       state: 'starting',
     };
     this.records.set(processId, record);
     onCreated?.(this.snapshot(record));
-    child.stdout?.on('data', (chunk: Buffer) => record.logs.append('stdout', chunk.toString('utf8')));
-    child.stderr?.on('data', (chunk: Buffer) => record.logs.append('stderr', chunk.toString('utf8')));
+    child.stdout?.on('data', (chunk: Buffer) => this.captureOutput(record, 'stdout', chunk.toString('utf8')));
+    child.stderr?.on('data', (chunk: Buffer) => this.captureOutput(record, 'stderr', chunk.toString('utf8')));
     child.once('error', (error: Error & { code?: string }) => this.handleError(record, error));
     child.once('close', (exitCode: number | null) => this.handleClose(record, exitCode));
     if (spec.stdin === 'closed') child.stdin?.end();
@@ -194,13 +222,49 @@ export class ProcessManager {
   }
 
   private handleError(record: ManagedRecord, error: Error & { code?: string }): void {
-    if (record.stopRequested === undefined && !isTerminal(record.state)) this.finish(record, 'failed');
     if (error.code !== 'ENOENT') record.exitCode = -1;
+    if (record.stopRequested === undefined && !isTerminal(record.state)) this.finish(record, 'failed');
   }
 
   private handleClose(record: ManagedRecord, exitCode: number | null): void {
-    if (record.stopRequested === undefined && !isTerminal(record.state)) this.finish(record, 'exited');
     if (record.exitCode === undefined && exitCode !== null) record.exitCode = exitCode;
+    this.flushPendingOutput(record);
+    if (record.stopRequested === undefined && !isTerminal(record.state)) this.finish(record, 'exited');
+    record.redactionValues.length = 0;
+    record.redactionMatchers.length = 0;
+  }
+
+  private captureOutput(record: ManagedRecord, stream: 'stdout' | 'stderr', value: string): void {
+    if (record.redactionValues.length === 0) {
+      record.logs.append(stream, value);
+      return;
+    }
+    const combined = record.pendingOutput[stream] + value;
+    let heldCharacters = 0;
+    for (const matcher of record.redactionMatchers) {
+      heldCharacters = Math.max(heldCharacters, longestSensitivePrefixSuffix(combined, matcher));
+    }
+    heldCharacters = Math.max(heldCharacters, longestSensitiveOutputSuffix(combined));
+    const safeEnd = combined.length - heldCharacters;
+    if (safeEnd > 0) record.logs.append(stream, redactProcessOutput(combined.slice(0, safeEnd), record.redactionValues));
+    record.pendingOutput[stream] = combined.slice(safeEnd);
+  }
+
+  private flushPendingOutput(record: ManagedRecord): void {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      const value = record.pendingOutput[stream];
+      if (value.length > 0) {
+        const heldPromptCharacters = record.redactionMatchers.reduce(
+          (held, matcher) => Math.max(held, longestSensitivePrefixSuffix(value, matcher)),
+          0,
+        );
+        const output = heldPromptCharacters === 0
+          ? value
+          : `${value.slice(0, -heldPromptCharacters)}[REDACTED]`;
+        record.logs.append(stream, redactProcessOutput(output, record.redactionValues));
+      }
+      record.pendingOutput[stream] = '';
+    }
   }
 
   private async timeout(record: ManagedRecord): Promise<void> {
@@ -259,6 +323,15 @@ export class ProcessManager {
     this.records.delete(record.processId);
     this.records.set(record.processId, record);
     this.pruneTerminalRecords();
+    if (!record.terminalNotified) {
+      record.terminalNotified = true;
+      try {
+        record.onTerminal?.(this.snapshot(record));
+      } catch {
+        // A host observer must not interrupt process cleanup or state updates.
+      }
+    }
+    delete record.onTerminal;
   }
 
   private pruneTerminalRecords(): void {
@@ -319,6 +392,56 @@ function cancelledStart(): Result<never> {
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
+}
+
+function redactProcessOutput(value: string, sensitiveValues: readonly string[]): string {
+  let redacted = value;
+  for (const sensitiveValue of [...sensitiveValues].sort((left, right) => right.length - left.length)) {
+    redacted = redacted.replaceAll(sensitiveValue, '[REDACTED]');
+  }
+  return redacted
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\b["']?\s*[:=]\s*["']?)[^\s"'}]+/gi, '$1[REDACTED]');
+}
+
+function createProcessOutputRedactionMatcher(value: string): ProcessOutputRedactionMatcher {
+  const prefixTable = new Uint32Array(value.length);
+  for (let index = 1, matched = 0; index < value.length; index += 1) {
+    while (matched > 0 && value[index] !== value[matched]) matched = prefixTable[matched - 1]!;
+    if (value[index] === value[matched]) matched += 1;
+    prefixTable[index] = matched;
+  }
+  return { value, prefixTable };
+}
+
+function longestSensitivePrefixSuffix(text: string, matcher: ProcessOutputRedactionMatcher): number {
+  let matched = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    while (matched > 0 && character !== matcher.value[matched]) matched = matcher.prefixTable[matched - 1]!;
+    if (character === matcher.value[matched]) matched += 1;
+    if (matched === matcher.value.length) matched = matcher.prefixTable[matched - 1]!;
+  }
+  return matched;
+}
+
+function longestSensitiveOutputSuffix(text: string): number {
+  const normalized = text.toLowerCase();
+  let heldCharacters = 0;
+  for (const marker of SENSITIVE_OUTPUT_MARKERS) {
+    const limit = Math.min(marker.length, text.length);
+    for (let length = limit; length > heldCharacters; length -= 1) {
+      if (normalized.endsWith(marker.slice(0, length))) {
+        heldCharacters = length;
+        break;
+      }
+    }
+  }
+  const secretField = /(?:\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\b["']?\s*[:=]\s*["']?)[^\s"'}]*$/i.exec(text);
+  const bearerValue = /\bBearer\s+[A-Za-z0-9._~+/-]*=?$/i.exec(text);
+  if (secretField !== null) heldCharacters = Math.max(heldCharacters, text.length - secretField.index);
+  if (bearerValue !== null) heldCharacters = Math.max(heldCharacters, text.length - bearerValue.index);
+  return heldCharacters;
 }
 
 function delay(milliseconds: number): Promise<void> {

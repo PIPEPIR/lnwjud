@@ -145,6 +145,10 @@ export function inspectMutationOperation(
         ? read(`agent_swarm_run ${operation} is an owner-scoped read`)
         : opaque(`agent_swarm_run ${operation || 'unknown'} starts or interrupts quota-consuming owned Codex work`);
     }
+    case 'write_swarm_run':
+      return inputUsesDefaultDryRun(value)
+        ? read('write_swarm_run defaults to a no-side-effect execution-graph preview')
+        : opaque('write_swarm_run launches isolated Codex workspace-write workers and performs guarded worktree cleanup/pooling after evidence capture');
     case 'codex_run':
     case 'codex_stop':
     case 'cancel_goal':

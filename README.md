@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>276 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 264 are advertised by default and all 276 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>277 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 264 are advertised by default and all 277 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">

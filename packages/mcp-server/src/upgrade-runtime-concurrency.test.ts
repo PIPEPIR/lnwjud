@@ -87,11 +87,18 @@ describe('upgrade runtime multi-session persistence', () => {
     })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
     expect(calls).toHaveLength(2);
 
+    if (!spawnA.ok || !spawnB.ok) throw new Error('worktree spawn failed');
+    const leaseA = spawnA.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    const leaseB = spawnB.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
     await expect(new UpgradeRuntimeService(services, actorA).execute('git_worktree_remove', {
-      workspaceId: 'ws-1', worktreePath: '.worktrees/session-a', dryRun: false, userConfirmed: true,
+      workspaceId: 'ws-1', worktreePath: '.worktrees/session-a',
+      worktreeLeaseToken: leaseA.worktreeLeaseToken, worktreeLeaseGeneration: leaseA.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
     })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
     await expect(new UpgradeRuntimeService(services, actorB).execute('git_worktree_remove', {
-      workspaceId: 'ws-1', worktreePath: '.worktrees/session-b', dryRun: false, userConfirmed: true,
+      workspaceId: 'ws-1', worktreePath: '.worktrees/session-b',
+      worktreeLeaseToken: leaseB.worktreeLeaseToken, worktreeLeaseGeneration: leaseB.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
     })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
     expect(calls).toHaveLength(4);
   });

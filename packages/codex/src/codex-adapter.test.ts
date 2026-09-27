@@ -20,9 +20,10 @@ describe('CodexAdapter', () => {
     expect(result).toMatchObject({ ok: true, value: { processId: 'process-1' } });
     expect(calls).toEqual([{
       executable: 'C:\\tools\\codex.exe',
-      args: ['exec', '--sandbox', 'workspace-write', 'review "quoted" input'],
+      args: ['-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"', '-c', 'service_tier="priority"', '--enable', 'fast_mode', 'exec', '--sandbox', 'workspace-write', 'review "quoted" input'],
       cwd: 'C:\\workspace',
       stdin: 'closed',
+      redactOutputValues: ['review "quoted" input'],
     }]);
   });
 

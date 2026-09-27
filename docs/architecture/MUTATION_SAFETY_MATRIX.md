@@ -63,7 +63,7 @@ Full Bypass does not disable schema/input validation, existence checks, task/pro
 
 ### 5. Git mutation and worktree ownership
 
-**Covered tools:** `git`, `git_worktree_spawn`, `git_worktree_remove`.
+**Covered tools:** `git`, `git_worktree_spawn`, `write_swarm_run`, `git_worktree_remove`. `write_swarm_run` previews by default; execution requires explicit non-dry-run intent and uses ledger-owned isolated worktrees. Successful tracked-file edits are captured before reset/pooling, while dirty, untracked, failed, or termination-unverified workers are preserved/quarantined rather than silently recycled.
 
 | Mutation kind | Chat confirmation | Host approval | Recoverable | Auto-approvable | Active Project | Command policy | Packaged transports |
 | --- | --- | --- | --- | --- | --- | --- | --- |

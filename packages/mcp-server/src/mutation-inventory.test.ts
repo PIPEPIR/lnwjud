@@ -57,6 +57,7 @@ const mixedOperationReadCases = [
   ['screen_record', { action: 'status' }, 'EXECUTE'],
   ['tool_batch', { calls: [] }, 'EXECUTE'],
   ['git_worktree_spawn', {}, 'WRITE'],
+  ['write_swarm_run', {}, 'EXECUTE'],
   ['git_worktree_remove', {}, 'DANGEROUS'],
   ['self_heal_apply', {}, 'DANGEROUS'],
 ] as const satisfies readonly [string, Readonly<Record<string, unknown>>, McpPermissionLevel][];

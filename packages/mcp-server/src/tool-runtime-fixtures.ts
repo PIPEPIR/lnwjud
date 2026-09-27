@@ -378,6 +378,7 @@ export const PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES = {
   debug_attach: unavailable({ workspaceId }, 'needs_setup'),
   debug_step: unavailable({ workspaceId }, 'needs_setup'),
   git_worktree_spawn: deterministic({ workspaceId, worktreePath: '.worktrees/runtime-contract', ref: 'HEAD' }, { expected: { dryRun: true, sideEffectsStarted: false, mutationPolicy: 'explicit-confirmation-and-dry-run' } }),
+  write_swarm_run: deterministic({ workspaceId, tasks: [{ id: 'smoke', prompt: 'Inspect the repository.', complexity: 'tiny' }], executionStrategy: 'auto' }, { expected: { tool: 'write_swarm_run', status: 'preview', dryRun: true, workspaceId, executionDecision: { mode: 'serial', maxConcurrency: 1, dependencyEdges: 0 } }, requiredKeys: ['tasks'] }),
   git_worktree_remove: deterministic({ workspaceId, worktreePath: '.worktrees/runtime-contract' }, { expected: { dryRun: true, mutationPolicy: 'explicit-confirmation-and-dry-run' } }, 'git_worktree_spawn'),
   db_inspect: unavailable({}, 'needs_setup'),
   db_query: unavailable({}, 'needs_setup'),

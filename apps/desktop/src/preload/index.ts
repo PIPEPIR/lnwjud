@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   ipcChannels,
   isIncidentClassification,
+  MAX_CODEX_TASK_LOG_BYTES,
+  MAX_CODEX_TASK_LOG_TAIL_LINES,
   pushChannels,
   type AddWorkspaceRequest,
   type AgentState,
@@ -9,6 +11,9 @@ import {
   type BackupSummary,
   type ClearLogBufferRequest,
   type ClearWorkLogRequest,
+  type CodexTaskLogsResult,
+  type CodexTaskMonitorItem,
+  type CodexTaskMonitorState,
   type ActivityTargetDetail,
   type ResolveActivityTargetDetailRequest,
   type SearchActivityTargetDetailsRequest,
@@ -52,6 +57,7 @@ import {
   type SetWorkspacePonytailModeRequest,
   type SetGoalPonytailModeRequest,
   type ProcessSummary,
+  type ReadCodexTaskLogsRequest,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
   type SaveTunnelApiKeyRequest,
@@ -73,6 +79,7 @@ import {
   type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
+  type StopCodexTaskRequest,
   type TunnelAuthStatus,
   type TunnelOAuthCapabilityStatus,
   type TunnelOAuthLoginStatus,
@@ -103,6 +110,52 @@ function booleanField(value: Record<string, unknown>, field: string): boolean {
   const fieldValue = value[field];
   if (typeof fieldValue !== 'boolean') throw new Error('Invalid IPC response');
   return fieldValue;
+}
+
+function codexTaskMonitorState(value: unknown): CodexTaskMonitorState {
+  if (value === 'starting' || value === 'running' || value === 'exited' || value === 'failed' || value === 'stopped' || value === 'timed_out' || value === 'termination_unverified') return value;
+  throw new Error('Invalid IPC response');
+}
+
+function codexTaskMonitorItem(value: unknown): CodexTaskMonitorItem {
+  if (!isRecord(value) || Object.keys(value).some((key) => !['codexTaskId', 'workspaceId', 'state', 'startedAt', 'finishedAt', 'exitCode'].includes(key))) {
+    throw new Error('Invalid IPC response');
+  }
+  const item: CodexTaskMonitorItem = {
+    codexTaskId: stringField(value, 'codexTaskId'),
+    workspaceId: stringField(value, 'workspaceId'),
+    state: codexTaskMonitorState(value.state),
+    startedAt: stringField(value, 'startedAt'),
+    ...(value.finishedAt === undefined ? {} : { finishedAt: stringField(value, 'finishedAt') }),
+    ...(value.exitCode === undefined ? {} : { exitCode: numberField(value, 'exitCode') }),
+  };
+  if (item.codexTaskId.trim().length === 0 || item.codexTaskId.length > 256 || item.workspaceId.length === 0 || !Number.isFinite(Date.parse(item.startedAt))) throw new Error('Invalid IPC response');
+  if (item.finishedAt !== undefined && !Number.isFinite(Date.parse(item.finishedAt))) throw new Error('Invalid IPC response');
+  if (item.exitCode !== undefined && !Number.isInteger(item.exitCode)) throw new Error('Invalid IPC response');
+  return item;
+}
+
+function codexTaskMonitorList(value: unknown): readonly CodexTaskMonitorItem[] {
+  if (!Array.isArray(value) || value.length > 100) throw new Error('Invalid IPC response');
+  return value.map(codexTaskMonitorItem);
+}
+
+function codexTaskLogsResult(value: unknown): CodexTaskLogsResult {
+  if (!isRecord(value) || Object.keys(value).some((key) => !['entries', 'truncated', 'nextSequence'].includes(key)) || !Array.isArray(value.entries) || value.entries.length > MAX_CODEX_TASK_LOG_TAIL_LINES) {
+    throw new Error('Invalid IPC response');
+  }
+  const entries = value.entries.map((entry): CodexTaskLogsResult['entries'][number] => {
+    if (!isRecord(entry) || Object.keys(entry).some((key) => !['sequence', 'stream', 'text'].includes(key))) throw new Error('Invalid IPC response');
+    const sequence = numberField(entry, 'sequence');
+    const stream = entry.stream;
+    const text = stringField(entry, 'text');
+    if (!Number.isInteger(sequence) || sequence < 0 || (stream !== 'stdout' && stream !== 'stderr')) throw new Error('Invalid IPC response');
+    return { sequence, stream, text };
+  });
+  if (entries.reduce((total, entry) => total + new TextEncoder().encode(entry.text).byteLength, 0) > MAX_CODEX_TASK_LOG_BYTES) throw new Error('Invalid IPC response');
+  const nextSequence = numberField(value, 'nextSequence');
+  if (!Number.isInteger(nextSequence) || nextSequence < 0) throw new Error('Invalid IPC response');
+  return { entries, truncated: booleanField(value, 'truncated'), nextSequence };
 }
 
 function numberField(value: Record<string, unknown>, field: string): number {
@@ -1111,6 +1164,31 @@ function clearWorkLog(request: ClearWorkLogRequest = {}): Promise<{ readonly cle
   });
 }
 
+function listCodexTasks(): Promise<readonly CodexTaskMonitorItem[]> {
+  return invoke(ipcChannels.listCodexTasks).then(codexTaskMonitorList);
+}
+
+function readCodexTaskLogs(request: ReadCodexTaskLogsRequest): Promise<CodexTaskLogsResult> {
+  if (!isRecord(request) || Object.keys(request).some((key) => key !== 'codexTaskId' && key !== 'tailLines') || typeof request.codexTaskId !== 'string' || request.codexTaskId.trim().length === 0 || request.codexTaskId.length > 256) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  if (request.tailLines !== undefined && (!Number.isInteger(request.tailLines) || request.tailLines < 1 || request.tailLines > MAX_CODEX_TASK_LOG_TAIL_LINES)) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  const payload = { codexTaskId: request.codexTaskId.trim(), ...(request.tailLines === undefined ? {} : { tailLines: request.tailLines }) };
+  return invoke(ipcChannels.readCodexTaskLogs, payload).then(codexTaskLogsResult);
+}
+
+function stopCodexTask(request: StopCodexTaskRequest): Promise<{ readonly stopped: boolean }> {
+  if (!isRecord(request) || Object.keys(request).some((key) => key !== 'codexTaskId') || typeof request.codexTaskId !== 'string' || request.codexTaskId.trim().length === 0 || request.codexTaskId.length > 256) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.stopCodexTask, { codexTaskId: request.codexTaskId.trim() }).then((value: unknown) => {
+    if (!isRecord(value) || Object.keys(value).some((key) => key !== 'stopped')) throw new Error('Invalid IPC response');
+    return { stopped: booleanField(value, 'stopped') };
+  });
+}
+
 function saveTunnelApiKey(request: SaveTunnelApiKeyRequest): Promise<{ readonly saved: boolean }> {
   if (!isRecord(request) || typeof request.apiKey !== 'string' || request.apiKey.trim().length === 0) {
     return Promise.reject(new Error('Invalid IPC request'));
@@ -1430,6 +1508,9 @@ const api: LnwjudApi = {
   stopMcp,
   restartMcp,
   clearWorkLog,
+  listCodexTasks,
+  readCodexTaskLogs,
+  stopCodexTask,
   saveTunnelApiKey,
   startTunnel: () => invoke(ipcChannels.startTunnel).then(tunnelStatus),
   stopTunnel: () => invoke(ipcChannels.stopTunnel).then(tunnelStatus),

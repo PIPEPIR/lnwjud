@@ -36,7 +36,7 @@ allowed to fail later.
 <!-- BEGIN GENERATED TOOL REGISTRY -->
 ## Generated live ToolRegistry index
 
-This complete inventory is generated from `ToolRegistry.listAll()`: **276 total tool definitions**. The runtime advertises **264 tools by default** and **276 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
+This complete inventory is generated from `ToolRegistry.listAll()`: **277 total tool definitions**. The runtime advertises **264 tools by default** and **277 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
 Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm docs:tools:check` and fails on drift.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Read-only | Destructive |
@@ -274,49 +274,50 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 231 | `debug_attach` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
 | 232 | `debug_step` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
 | 233 | `git_worktree_spawn` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 234 | `git_worktree_remove` | DANGEROUS | default | dependency_gated | deterministic_operation | no | yes |
-| 235 | `db_inspect` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 236 | `db_query` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 237 | `office_ppt` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 238 | `office_status` | READ | default | operational | service_dispatch | yes | no |
-| 239 | `office_word` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 240 | `office_excel` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 241 | `office_powerpoint` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 242 | `office_outlook` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 243 | `office_calendar` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 244 | `office_contacts` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 245 | `office_tasks` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 246 | `office_onenote` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 247 | `office_onedrive` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 248 | `office_sharepoint` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 249 | `office_teams` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 250 | `office_access` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 251 | `office_visio` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 252 | `office_project` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 253 | `office_publisher` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 254 | `office_convert` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 255 | `office_batch` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 256 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 257 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 258 | `self_heal_plan` | READ | default | operational | service_dispatch | yes | no |
-| 259 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | no | yes |
-| 260 | `skills_import` | WRITE | default | operational | service_dispatch | no | no |
-| 261 | `ecc_status` | READ | default | operational | deterministic_operation | yes | no |
-| 262 | `ecc_catalog` | READ | default | operational | deterministic_operation | yes | no |
-| 263 | `ecc_load` | READ | default | operational | truthful_unavailable | yes | no |
-| 264 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | no | no |
-| 265 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
-| 266 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | no | no |
-| 267 | `ecc_memory_search` | READ | default | operational | service_dispatch | yes | no |
-| 268 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
-| 269 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
-| 270 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 271 | `automation_create` | WRITE | default | operational | service_dispatch | no | no |
-| 272 | `automation_status` | READ | default | operational | service_dispatch | yes | no |
-| 273 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
-| 274 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 275 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
-| 276 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | yes |
+| 234 | `write_swarm_run` | EXECUTE | Codex opt-in | dependency_gated | deterministic_operation | no | no |
+| 235 | `git_worktree_remove` | DANGEROUS | default | dependency_gated | deterministic_operation | no | yes |
+| 236 | `db_inspect` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 237 | `db_query` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 238 | `office_ppt` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 239 | `office_status` | READ | default | operational | service_dispatch | yes | no |
+| 240 | `office_word` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 241 | `office_excel` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 242 | `office_powerpoint` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 243 | `office_outlook` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 244 | `office_calendar` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 245 | `office_contacts` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 246 | `office_tasks` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 247 | `office_onenote` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 248 | `office_onedrive` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 249 | `office_sharepoint` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 250 | `office_teams` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 251 | `office_access` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 252 | `office_visio` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 253 | `office_project` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 254 | `office_publisher` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 255 | `office_convert` | WRITE | default | dependency_gated | deterministic_operation | no | no |
+| 256 | `office_batch` | WRITE | default | dependency_gated | deterministic_operation | no | no |
+| 257 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 258 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 259 | `self_heal_plan` | READ | default | operational | service_dispatch | yes | no |
+| 260 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | no | yes |
+| 261 | `skills_import` | WRITE | default | operational | service_dispatch | no | no |
+| 262 | `ecc_status` | READ | default | operational | deterministic_operation | yes | no |
+| 263 | `ecc_catalog` | READ | default | operational | deterministic_operation | yes | no |
+| 264 | `ecc_load` | READ | default | operational | truthful_unavailable | yes | no |
+| 265 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | no | no |
+| 266 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 267 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | no | no |
+| 268 | `ecc_memory_search` | READ | default | operational | service_dispatch | yes | no |
+| 269 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
+| 270 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
+| 271 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 272 | `automation_create` | WRITE | default | operational | service_dispatch | no | no |
+| 273 | `automation_status` | READ | default | operational | service_dispatch | yes | no |
+| 274 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
+| 275 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 276 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
+| 277 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | yes |
 <!-- END GENERATED TOOL REGISTRY -->
 
 ## Protocol and result rules

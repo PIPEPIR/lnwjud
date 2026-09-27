@@ -108,6 +108,7 @@ import {
 } from '@lnwjud/shared';
 import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteAutomationRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
+import { notifyCodexTaskFinished } from './codex-notification.js';
 import type { Workspace } from '@lnwjud/workspace';
 import { comparableHostPath, isDriveRoot, isMachineRootPath, resolveHostPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
@@ -118,6 +119,8 @@ import {
   type AuditEventSummary,
   type ClearLogBufferRequest,
   type ClearWorkLogRequest,
+  type CodexTaskLogsResult,
+  type CodexTaskMonitorItem,
   type ActivityTargetSearchCandidate,
   type ConfigureTunnelProfileRequest,
   type DeleteWorkspaceRequest,
@@ -148,6 +151,7 @@ import {
   type SetGoalPonytailModeRequest,
   type SetWorkspacePonytailModeRequest,
   type ProcessSummary,
+  type ReadCodexTaskLogsRequest,
   type RemoteMcpStatus,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
@@ -165,6 +169,7 @@ import {
   type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
+  type StopCodexTaskRequest,
   type TunnelAuthMode,
   type TunnelOAuthLoginStatus,
   type TunnelStatus,
@@ -575,6 +580,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     adapter: new CodexAdapter(),
     auditService,
     profileProvider: activePermissionProfile,
+    onTaskTerminal: (event): void => {
+      void notifyCodexTaskFinished(
+        event,
+        readLocale(settingsRepository),
+        async () => (await workspaceRepository.get(event.workspaceId))?.displayName ?? null,
+        options.nativeCapabilityApi?.showNotification,
+      );
+    },
   });
   const agentSwarmService = new AgentSwarmService(new SqliteAgentSwarmRepository(database), codexService);
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
@@ -1690,6 +1703,21 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     clearWorkLog: async (request: ClearWorkLogRequest = {}): Promise<{ readonly cleared: boolean }> => {
       workLogViewState.clear(request);
       return { cleared: true };
+    },
+    listCodexTasks: async (): Promise<readonly CodexTaskMonitorItem[]> => {
+      const result = codexService.hostTaskList();
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    },
+    readCodexTaskLogs: async (request: ReadCodexTaskLogsRequest): Promise<CodexTaskLogsResult> => {
+      const result = codexService.hostTaskLogs(request.codexTaskId, request.tailLines === undefined ? {} : { tailLines: request.tailLines });
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    },
+    stopCodexTask: async (request: StopCodexTaskRequest): Promise<{ readonly stopped: boolean }> => {
+      const result = await codexService.hostStopTask(request.codexTaskId);
+      if (!result.ok) throw new Error(result.error.message);
+      return { stopped: true };
     },
     saveTunnelApiKey: async (request: SaveTunnelApiKeyRequest): Promise<{ readonly saved: boolean }> => {
       await tunnelController.saveApiKey(request.apiKey);

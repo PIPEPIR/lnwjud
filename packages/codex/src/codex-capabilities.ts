@@ -26,6 +26,10 @@ export interface CodexInvocation {
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write';
 
+export const DEFAULT_CODEX_MODEL = 'gpt-6-luna';
+export const DEFAULT_CODEX_REASONING_EFFORT = 'max';
+export const DEFAULT_CODEX_SERVICE_TIER = 'priority';
+
 export class CodexInvocationBuilder {
   public build(executable: string, capabilities: CodexCapabilities, instruction: string, sandboxMode: CodexSandboxMode = 'workspace-write', profile?: string): Result<CodexInvocation> {
     if (executable.trim().length === 0 || instruction.trim().length === 0) {
@@ -40,11 +44,17 @@ export class CodexInvocationBuilder {
     const sandboxArgs = ['--sandbox', sandboxMode];
     const profileName = profile?.trim();
     const profileArgs = profileName === undefined || profileName.length === 0 ? [] : ['-p', profileName];
+    const performanceArgs = [
+      '-m', DEFAULT_CODEX_MODEL,
+      '-c', `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+      '-c', `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
+      '--enable', 'fast_mode',
+    ];
     const args = capabilities.instructionMode === 'exec-argument'
-      ? [...profileArgs, 'exec', ...sandboxArgs, instruction]
+      ? [...profileArgs, ...performanceArgs, 'exec', ...sandboxArgs, instruction]
       : capabilities.instructionMode === 'prompt-option'
-        ? [...profileArgs, ...sandboxArgs, '--prompt', instruction]
-        : [...profileArgs, ...sandboxArgs, instruction];
+        ? [...profileArgs, ...performanceArgs, ...sandboxArgs, '--prompt', instruction]
+        : [...profileArgs, ...performanceArgs, ...sandboxArgs, instruction];
     return ok({ executable, args });
   }
 }

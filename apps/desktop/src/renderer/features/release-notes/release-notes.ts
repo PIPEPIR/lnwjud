@@ -21,6 +21,38 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.6.4',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          {
+            id: 'write-swarm-planner',
+            titleKey: 'whatsNew.564.writeSwarm.title',
+            descriptionKey: 'whatsNew.564.writeSwarm.description',
+            badge: 'new',
+            tags: ['Codex', 'parallel', 'planner', 'worktrees'],
+          },
+          {
+            id: 'warm-worktree-pool',
+            titleKey: 'whatsNew.564.warmPool.title',
+            descriptionKey: 'whatsNew.564.warmPool.description',
+            badge: 'improved',
+            tags: ['Codex', 'worktree', 'performance', 'pool'],
+          },
+          {
+            id: 'codex-observability',
+            titleKey: 'whatsNew.564.observability.title',
+            descriptionKey: 'whatsNew.564.observability.description',
+            badge: 'improved',
+            tags: ['Work Log', 'Codex', 'status', 'notification'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.6.2',
     categories: [
       {

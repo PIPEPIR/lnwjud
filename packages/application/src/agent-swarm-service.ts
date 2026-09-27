@@ -79,7 +79,7 @@ export class AgentSwarmService {
     signal?: AbortSignal,
     authorization?: InvocationAuthorization,
   ): Promise<Result<AgentSwarmSnapshot>> {
-    const validated = validateStart(request);
+    const validated = validateAgentSwarmStart(request);
     if (!validated.ok) return validated;
     if (!isApplicationAuthorized(authorization, false)) {
       return err(appError('PERMISSION_REQUIRED', 'Starting an agent swarm requires trusted host approval'));
@@ -88,17 +88,19 @@ export class AgentSwarmService {
     const existing = this.repository.findByIdempotency(actor.clientId, ownerSessionId, request.workspaceId, request.idempotencyKey);
     if (existing !== undefined) return ok(toSnapshot(existing));
 
+    const planned = planAgentSwarmExecution(request);
+    if (!planned.ok) return planned;
+
     const createdAt = this.now().toISOString();
-    const maxConcurrency = request.maxConcurrency ?? Math.min(2, request.tasks.length);
     const stored = this.repository.create({
       id: this.idFactory(),
       ownerClientId: actor.clientId,
       ownerSessionId,
       workspaceId: request.workspaceId,
       idempotencyKey: request.idempotencyKey,
-      maxConcurrency,
+      maxConcurrency: planned.value.maxConcurrency,
       createdAt,
-      tasks: request.tasks.map((task) => ({
+      tasks: planned.value.tasks.map((task) => ({
         id: task.id,
         promptDigest: sha256(task.prompt),
         promptLength: Buffer.byteLength(task.prompt, 'utf8'),
@@ -109,7 +111,7 @@ export class AgentSwarmService {
     const live: LiveSwarm = {
       actor,
       workspaceId: request.workspaceId,
-      prompts: new Map(request.tasks.map((task) => [task.id, task.prompt])),
+      prompts: new Map(planned.value.tasks.map((task) => [task.id, task.prompt])),
       authorization: authorization as InvocationAuthorization,
       abortController: new AbortController(),
     };
@@ -276,23 +278,140 @@ export class AgentSwarmService {
   }
 }
 
-function validateStart(request: AgentSwarmStartRequest): Result<void> {
+export function validateAgentSwarmStart(request: AgentSwarmStartRequest): Result<void> {
   if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v5.6.4 supports read_only access only'));
   if (!Array.isArray(request.tasks) || request.tasks.length < 1 || request.tasks.length > MAX_TASKS) return err(appError('INVALID_INPUT', 'Agent swarm requires 1 to 4 tasks'));
+  if (request.executionStrategy !== undefined && !['auto', 'serial', 'parallel'].includes(request.executionStrategy)) {
+    return err(appError('INVALID_INPUT', 'Agent swarm executionStrategy is invalid'));
+  }
   const ids = new Set<string>();
   for (const task of request.tasks) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(task.id) || ids.has(task.id)) return err(appError('INVALID_INPUT', 'Agent swarm task ids must be unique and bounded'));
     ids.add(task.id);
     if (task.prompt.trim().length === 0 || Buffer.byteLength(task.prompt, 'utf8') > MAX_PROMPT_BYTES) return err(appError('INVALID_INPUT', 'Agent swarm prompt is empty or too large'));
+    const collisionKeys = task.collisionKeys ?? [];
+    if (collisionKeys.length > 16
+      || new Set(collisionKeys.map(normalizeCollisionKey)).size !== collisionKeys.length
+      || collisionKeys.some((key: string) => typeof key !== 'string' || key.trim().length < 1 || key.trim().length > 256)) {
+      return err(appError('INVALID_INPUT', 'Agent swarm collisionKeys are invalid'));
+    }
+    if (task.complexity !== undefined && !['tiny', 'normal', 'large'].includes(task.complexity)) {
+      return err(appError('INVALID_INPUT', 'Agent swarm task complexity is invalid'));
+    }
+    if (task.parallelSafe !== undefined && typeof task.parallelSafe !== 'boolean') {
+      return err(appError('INVALID_INPUT', 'Agent swarm parallelSafe must be boolean'));
+    }
   }
   for (const task of request.tasks) {
     const deps: readonly string[] = task.dependsOn ?? [];
     if (deps.length > 3 || new Set(deps).size !== deps.length || deps.includes(task.id) || deps.some((id: string) => !ids.has(id))) return err(appError('INVALID_INPUT', 'Agent swarm dependency graph is invalid'));
   }
   if (hasCycle(request.tasks)) return err(appError('INVALID_INPUT', 'Agent swarm dependency graph must be acyclic'));
-  const concurrency = request.maxConcurrency ?? Math.min(2, request.tasks.length);
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_TASKS || concurrency > request.tasks.length) return err(appError('INVALID_INPUT', 'Agent swarm maxConcurrency is invalid'));
+  if (request.maxConcurrency !== undefined
+    && (!Number.isInteger(request.maxConcurrency) || request.maxConcurrency < 1 || request.maxConcurrency > MAX_TASKS || request.maxConcurrency > request.tasks.length)) {
+    return err(appError('INVALID_INPUT', 'Agent swarm maxConcurrency is invalid'));
+  }
   return ok(undefined);
+}
+
+export interface PlannedSwarmExecution {
+  readonly tasks: readonly AgentSwarmTaskRequest[];
+  readonly maxConcurrency: number;
+}
+
+export function planAgentSwarmExecution(request: AgentSwarmStartRequest): Result<PlannedSwarmExecution> {
+  const strategy = request.executionStrategy ?? 'auto';
+  const dependencyMap = new Map<string, Set<string>>(
+    request.tasks.map((task) => [task.id, new Set(task.dependsOn ?? [])]),
+  );
+
+  if (strategy !== 'serial') {
+    for (let leftIndex = 0; leftIndex < request.tasks.length; leftIndex += 1) {
+      const left = request.tasks[leftIndex]!;
+      for (let rightIndex = leftIndex + 1; rightIndex < request.tasks.length; rightIndex += 1) {
+        const right = request.tasks[rightIndex]!;
+        const collides = collisionKeySetsOverlap(left.collisionKeys ?? [], right.collisionKeys ?? []);
+        if (collides) addSafeOrdering(left.id, right.id, dependencyMap);
+      }
+    }
+
+    for (let index = 0; index < request.tasks.length; index += 1) {
+      const task = request.tasks[index]!;
+      if (task.parallelSafe !== false) continue;
+      for (let prior = 0; prior < index; prior += 1) addSafeOrdering(request.tasks[prior]!.id, task.id, dependencyMap);
+      for (let later = index + 1; later < request.tasks.length; later += 1) addSafeOrdering(task.id, request.tasks[later]!.id, dependencyMap);
+    }
+  }
+
+  const tasks = request.tasks.map((task) => {
+    const dependsOn = [...(dependencyMap.get(task.id) ?? [])];
+    return {
+      ...task,
+      ...(dependsOn.length === 0 ? { dependsOn: [] } : { dependsOn }),
+    };
+  });
+  if (hasCycle(tasks)) return err(appError('INVALID_INPUT', 'Agent swarm planner produced a cyclic dependency graph'));
+
+  if (strategy === 'serial' || (strategy === 'auto' && tasks.every((task) => task.complexity === 'tiny'))) {
+    return ok({ tasks, maxConcurrency: 1 });
+  }
+
+  const width = maximumIndependentWidth(tasks);
+  const requestedCap = request.maxConcurrency ?? MAX_TASKS;
+  return ok({ tasks, maxConcurrency: Math.max(1, Math.min(requestedCap, width)) });
+}
+
+function normalizeCollisionKey(value: string): string {
+  return value.trim().replaceAll('\\', '/').replace(/\/+$/g, '').toLowerCase();
+}
+
+function collisionKeySetsOverlap(left: readonly string[], right: readonly string[]): boolean {
+  for (const leftRaw of left) {
+    const leftKey = normalizeCollisionKey(leftRaw);
+    for (const rightRaw of right) {
+      const rightKey = normalizeCollisionKey(rightRaw);
+      if (leftKey === rightKey || leftKey.startsWith(`${rightKey}/`) || rightKey.startsWith(`${leftKey}/`)) return true;
+    }
+  }
+  return false;
+}
+
+function addSafeOrdering(before: string, after: string, dependencies: Map<string, Set<string>>): void {
+  if (dependsTransitively(before, after, dependencies) || dependsTransitively(after, before, dependencies)) return;
+  dependencies.get(after)?.add(before);
+}
+
+function dependsTransitively(taskId: string, dependencyId: string, dependencies: ReadonlyMap<string, ReadonlySet<string>>, seen = new Set<string>()): boolean {
+  if (taskId === dependencyId) return true;
+  if (seen.has(taskId)) return false;
+  seen.add(taskId);
+  for (const dependency of dependencies.get(taskId) ?? []) {
+    if (dependency === dependencyId || dependsTransitively(dependency, dependencyId, dependencies, seen)) return true;
+  }
+  return false;
+}
+
+function maximumIndependentWidth(tasks: readonly AgentSwarmTaskRequest[]): number {
+  const dependencies = new Map<string, Set<string>>(tasks.map((task) => [task.id, new Set(task.dependsOn ?? [])]));
+  let best = 1;
+  const combinations = 1 << tasks.length;
+  for (let mask = 1; mask < combinations; mask += 1) {
+    const selected = tasks.filter((_task, index) => (mask & (1 << index)) !== 0);
+    if (selected.length <= best) continue;
+    let independent = true;
+    for (let left = 0; left < selected.length && independent; left += 1) {
+      for (let right = left + 1; right < selected.length; right += 1) {
+        const leftId = selected[left]!.id;
+        const rightId = selected[right]!.id;
+        if (dependsTransitively(leftId, rightId, dependencies) || dependsTransitively(rightId, leftId, dependencies)) {
+          independent = false;
+          break;
+        }
+      }
+    }
+    if (independent) best = selected.length;
+  }
+  return best;
 }
 
 function hasCycle(tasks: readonly AgentSwarmTaskRequest[]): boolean {
@@ -312,11 +431,28 @@ function hasCycle(tasks: readonly AgentSwarmTaskRequest[]): boolean {
 }
 
 function toSnapshot(swarm: AgentSwarmRecord): AgentSwarmSnapshot {
+  const dependencyEdges = swarm.tasks.reduce((total, task) => total + task.dependsOn.length, 0);
+  const mode = swarm.maxConcurrency <= 1
+    ? 'serial'
+    : dependencyEdges === 0
+      ? 'parallel'
+      : 'mixed';
+  const reasonCodes = mode === 'serial'
+    ? ['bounded_serial_execution']
+    : mode === 'parallel'
+      ? ['independent_parallel_tasks']
+      : ['dependency_or_collision_constraints', 'bounded_parallel_execution'];
   return {
     swarmId: swarm.id,
     workspaceId: swarm.workspaceId,
     state: swarm.state,
     maxConcurrency: swarm.maxConcurrency,
+    executionDecision: {
+      mode,
+      maxConcurrency: swarm.maxConcurrency,
+      dependencyEdges,
+      reasonCodes,
+    },
     createdAt: swarm.createdAt,
     updatedAt: swarm.updatedAt,
     tasks: swarm.tasks.map(toTaskSnapshot),

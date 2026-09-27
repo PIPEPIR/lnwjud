@@ -12,7 +12,7 @@ import {
   type InvocationAuthorization,
   type Result,
 } from '@lnwjud/domain';
-import type { FileActor } from '@lnwjud/application';
+import { planAgentSwarmExecution, validateAgentSwarmStart, type AgentSwarmTaskRequest, type FileActor } from '@lnwjud/application';
 import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescriptor } from '@lnwjud/capabilities';
 import { createProcessTreeTerminator } from '@lnwjud/process';
 import { normalizeProjectProfile } from '@lnwjud/shared';
@@ -137,8 +137,40 @@ interface WorktreeLedgerEntry {
   readonly worktreePath: string;
   readonly ref: string;
   readonly owner: string;
-  readonly ownerSessionId?: string;
+  readonly ownerSessionId?: string | undefined;
   readonly createdAt: string;
+  readonly state?: 'active' | 'idle' | 'releasing' | 'evicting' | 'quarantined';
+  readonly lastUsedAt?: string;
+  readonly dependencyFingerprint?: string | undefined;
+  readonly leaseToken?: string | undefined;
+  readonly leaseGeneration?: number | undefined;
+}
+
+type WriteSwarmTaskState = 'blocked' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'termination_unverified';
+
+interface WriteSwarmTaskRuntime {
+  readonly id: string;
+  readonly prompt: string;
+  readonly dependsOn: readonly string[];
+  state: WriteSwarmTaskState;
+  codexTaskId?: string;
+  processId?: string;
+  workerWorkspaceId?: string;
+  worktreePath?: string;
+  worktreeLeaseToken?: string;
+  worktreeLeaseGeneration?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+  evidence?: {
+    readonly patch: string;
+    readonly gitStatus: string;
+    readonly logs: string;
+    readonly pooled: boolean;
+    readonly preserved: boolean;
+    readonly untrackedFiles: readonly string[];
+    readonly poolResult?: unknown;
+  };
 }
 
 interface SelfHealFix {
@@ -472,6 +504,8 @@ export class UpgradeRuntimeService {
         return this.selfHealPlan(input, authorization);
       case 'self_heal_apply':
         return this.selfHealApply(input, authorization);
+      case 'write_swarm_run':
+        return this.writeSwarmRun(input, signal, authorization);
       case 'git_worktree_spawn':
         return this.gitWorktreeSpawn(input, authorization);
       case 'event_watch':
@@ -1370,6 +1404,353 @@ export class UpgradeRuntimeService {
     });
   }
 
+  private async writeSwarmRun(
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<unknown>> {
+    const workspaceId = readString(input, 'workspaceId');
+    if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'write_swarm_run requires workspaceId'));
+    const dryRun = input.dryRun !== false && input.dry_run !== false;
+
+    const rawTasks = Array.isArray(input.tasks) ? input.tasks : [];
+    if (rawTasks.length < 1 || rawTasks.length > 4) return err(appError('INVALID_INPUT', 'write_swarm_run requires 1 to 4 tasks'));
+    const tasks: AgentSwarmTaskRequest[] = [];
+    const ids = new Set<string>();
+    for (const raw of rawTasks) {
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return err(appError('INVALID_INPUT', 'write_swarm_run tasks must be objects'));
+      const record = raw as Record<string, unknown>;
+      const id = readString(record, 'id');
+      const prompt = readString(record, 'prompt') ?? readString(record, 'instruction');
+      if (id === undefined || prompt === undefined || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || ids.has(id)) {
+        return err(appError('INVALID_INPUT', 'write_swarm_run task ids must be unique and bounded'));
+      }
+      ids.add(id);
+      const rawDependsOn = record.dependsOn;
+      if (rawDependsOn !== undefined && (!Array.isArray(rawDependsOn) || rawDependsOn.some((entry) => typeof entry !== 'string'))) {
+        return err(appError('INVALID_INPUT', 'write_swarm_run dependsOn must be an array of strings'));
+      }
+      const rawCollisionKeys = record.collisionKeys;
+      if (rawCollisionKeys !== undefined && (!Array.isArray(rawCollisionKeys) || rawCollisionKeys.some((entry) => typeof entry !== 'string'))) {
+        return err(appError('INVALID_INPUT', 'write_swarm_run collisionKeys must be an array of strings'));
+      }
+      const complexity = record.complexity;
+      if (complexity !== undefined && complexity !== 'tiny' && complexity !== 'normal' && complexity !== 'large') {
+        return err(appError('INVALID_INPUT', 'write_swarm_run task complexity must be tiny, normal, or large'));
+      }
+      if (record.parallelSafe !== undefined && typeof record.parallelSafe !== 'boolean') {
+        return err(appError('INVALID_INPUT', 'write_swarm_run parallelSafe must be boolean'));
+      }
+      const dependsOn = rawDependsOn as string[] | undefined;
+      const collisionKeys = rawCollisionKeys as string[] | undefined;
+      const parallelSafe = record.parallelSafe as boolean | undefined;
+      tasks.push({
+        id,
+        prompt,
+        ...(dependsOn === undefined ? {} : { dependsOn }),
+        ...(collisionKeys === undefined ? {} : { collisionKeys }),
+        ...(complexity === undefined ? {} : { complexity }),
+        ...(parallelSafe === undefined ? {} : { parallelSafe }),
+      });
+    }
+
+    const executionStrategyValue = input.executionStrategy;
+    if (executionStrategyValue !== undefined
+      && executionStrategyValue !== 'auto'
+      && executionStrategyValue !== 'serial'
+      && executionStrategyValue !== 'parallel') {
+      return err(appError('INVALID_INPUT', 'write_swarm_run executionStrategy must be auto, serial, or parallel'));
+    }
+    const executionStrategy = executionStrategyValue as 'auto' | 'serial' | 'parallel' | undefined;
+    const maxConcurrencyValue = input.maxConcurrency;
+    if (maxConcurrencyValue !== undefined && (typeof maxConcurrencyValue !== 'number' || !Number.isInteger(maxConcurrencyValue))) {
+      return err(appError('INVALID_INPUT', 'write_swarm_run maxConcurrency must be an integer'));
+    }
+    const maxConcurrency = maxConcurrencyValue as number | undefined;
+    const plannerRequest = {
+      workspaceId,
+      idempotencyKey: digest({ workspaceId, tasks, executionStrategy, maxConcurrency }),
+      accessMode: 'read_only' as const,
+      tasks,
+      ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
+      ...(executionStrategy === undefined ? {} : { executionStrategy }),
+    };
+    const validated = validateAgentSwarmStart(plannerRequest);
+    if (!validated.ok) return validated;
+    const plan = planAgentSwarmExecution(plannerRequest);
+    if (!plan.ok) return plan;
+    const dependencyEdges = plan.value.tasks.reduce((total, task) => total + (task.dependsOn?.length ?? 0), 0);
+    const plannedMode = plan.value.maxConcurrency <= 1 ? 'serial' : dependencyEdges === 0 ? 'parallel' : 'mixed';
+    if (dryRun) {
+      return ok({
+        tool: 'write_swarm_run',
+        status: 'preview',
+        dryRun: true,
+        workspaceId,
+        ref: readString(input, 'ref') ?? 'HEAD',
+        executionDecision: {
+          mode: plannedMode,
+          maxConcurrency: plan.value.maxConcurrency,
+          dependencyEdges,
+        },
+        tasks: plan.value.tasks.map((task) => ({ id: task.id, dependsOn: task.dependsOn ?? [] })),
+      });
+    }
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) {
+      return err(appError('PERMISSION_REQUIRED', 'Starting a write swarm requires explicit user confirmation'));
+    }
+    if (this.services.codex === undefined || this.services.git === undefined || this.services.workspaceInfo?.info === undefined || this.services.workspaceInfo.register === undefined) {
+      return err(appError('INTERNAL_ERROR', 'write_swarm_run requires Codex, Git, and workspace registration services'));
+    }
+
+    const workspaceInfo = await this.services.workspaceInfo.info(this.actor, workspaceId);
+    if (!workspaceInfo.ok) return workspaceInfo;
+    const info = typeof workspaceInfo.value === 'object' && workspaceInfo.value !== null
+      ? workspaceInfo.value as Record<string, unknown>
+      : {};
+    const rootPath = typeof info.realRootPath === 'string'
+      ? info.realRootPath
+      : typeof info.rootPath === 'string'
+        ? info.rootPath
+        : undefined;
+    if (rootPath === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'write_swarm_run could not resolve the parent workspace root'));
+
+    const ref = readString(input, 'ref') ?? 'HEAD';
+    const dependencyFingerprint = readString(input, 'dependencyFingerprint');
+    const reuseIdle = input.reuseIdle !== false;
+    const maxIdle = typeof input.maxIdle === 'number' ? Math.min(8, Math.max(1, Math.trunc(input.maxIdle))) : 2;
+    const runtimeTasks: WriteSwarmTaskRuntime[] = plan.value.tasks.map((task) => ({
+      id: task.id,
+      prompt: task.prompt,
+      dependsOn: task.dependsOn ?? [],
+      state: (task.dependsOn?.length ?? 0) > 0 ? 'blocked' : 'queued',
+    }));
+
+    const acquireWorker = async (task: WriteSwarmTaskRuntime): Promise<Result<void>> => {
+      const requestedPath = `.worktrees/write-swarm-${task.id}-${randomUUID().slice(0, 8)}`;
+      const spawned = await this.gitWorktreeSpawn({
+        workspaceId,
+        worktreePath: requestedPath,
+        ref,
+        reuseIdle,
+        ...(dependencyFingerprint === undefined ? {} : { dependencyFingerprint }),
+        dryRun: false,
+        userConfirmed: true,
+      }, authorization);
+      if (!spawned.ok) return spawned as Result<void>;
+      const spawnValue = typeof spawned.value === 'object' && spawned.value !== null ? spawned.value as Record<string, unknown> : {};
+      const worktreePath = typeof spawnValue.worktreePath === 'string' ? spawnValue.worktreePath : requestedPath;
+      const leaseToken = typeof spawnValue.worktreeLeaseToken === 'string' ? spawnValue.worktreeLeaseToken : undefined;
+      const leaseGeneration = typeof spawnValue.worktreeLeaseGeneration === 'number' ? spawnValue.worktreeLeaseGeneration : undefined;
+      if (leaseToken === undefined || leaseGeneration === undefined) {
+        return err(appError('INTERNAL_ERROR', 'write_swarm_run worktree lease evidence is missing'));
+      }
+      const absoluteWorktreePath = isAbsoluteHostPath(worktreePath, this.diagnostics.platform)
+        ? worktreePath
+        : hostPathApi(this.diagnostics.platform).resolve(rootPath, worktreePath);
+      const registered = await this.services.workspaceInfo!.register!(this.actor, {
+        path: absoluteWorktreePath,
+        displayName: `write swarm ${task.id}`,
+      });
+      if (!registered.ok) return registered as Result<void>;
+      const registeredValue = typeof registered.value === 'object' && registered.value !== null ? registered.value as Record<string, unknown> : {};
+      const workerWorkspaceId = typeof registeredValue.id === 'string' ? registeredValue.id : undefined;
+      if (workerWorkspaceId === undefined) return err(appError('INTERNAL_ERROR', 'write_swarm_run could not register the isolated worker workspace'));
+
+      task.worktreePath = worktreePath;
+      task.worktreeLeaseToken = leaseToken;
+      task.worktreeLeaseGeneration = leaseGeneration;
+      task.workerWorkspaceId = workerWorkspaceId;
+      const started = await this.services.codex!.run(
+        this.actor,
+        workerWorkspaceId,
+        task.prompt,
+        signal,
+        false,
+        authorization,
+        'workspace-write',
+      );
+      if (!started.ok) {
+        task.state = 'failed';
+        task.error = started.error.message;
+        task.finishedAt = new Date().toISOString();
+        const pooled = await this.gitWorktreeRemove({
+          workspaceId,
+          worktreePath,
+          retainIdle: true,
+          evidenceCaptured: true,
+          ...(dependencyFingerprint === undefined ? {} : { dependencyFingerprint }),
+          worktreeLeaseToken: leaseToken,
+          worktreeLeaseGeneration: leaseGeneration,
+          maxIdle,
+          dryRun: false,
+          userConfirmed: true,
+        }, authorization);
+        task.evidence = { patch: '', gitStatus: '', logs: '', pooled: pooled.ok, preserved: !pooled.ok, untrackedFiles: [], ...(pooled.ok ? { poolResult: pooled.value } : {}) };
+        return ok(undefined);
+      }
+      task.codexTaskId = started.value.codexTaskId;
+      task.processId = started.value.processId;
+      task.state = 'running';
+      task.startedAt = new Date().toISOString();
+      return ok(undefined);
+    };
+
+    const captureTerminal = async (task: WriteSwarmTaskRuntime): Promise<void> => {
+      if (task.codexTaskId === undefined || task.workerWorkspaceId === undefined || task.worktreePath === undefined
+        || task.worktreeLeaseToken === undefined || task.worktreeLeaseGeneration === undefined) return;
+      const status = await this.services.codex!.taskStatus(this.actor, task.workerWorkspaceId, task.codexTaskId);
+      if (!status.ok) {
+        if (status.error.code === 'PROCESS_NOT_FOUND') {
+          task.state = 'termination_unverified';
+          task.error = 'verified runtime handle is no longer available';
+          task.finishedAt = new Date().toISOString();
+        }
+        return;
+      }
+      if (status.value.state === 'starting' || status.value.state === 'running') return;
+
+      const logs = await this.services.codex!.taskLogs(this.actor, task.workerWorkspaceId, task.codexTaskId, { tailLines: 500 });
+      const logText = logs.ok ? logs.value.entries.map((entry) => entry.text).join('').slice(-64 * 1024) : '';
+      const gitStatus = await this.services.git!.run(this.actor, {
+        workspaceId: task.workerWorkspaceId,
+        args: ['status', '--porcelain', '--untracked-files=all'],
+      }, undefined, authorization);
+      const patch = await this.services.git!.run(this.actor, {
+        workspaceId: task.workerWorkspaceId,
+        args: ['diff', '--binary', 'HEAD'],
+      }, undefined, authorization);
+      const statusText = gitStatus.ok && gitStatus.value.exitCode === 0 ? gitStatus.value.stdout : '';
+      const patchText = patch.ok && patch.value.exitCode === 0 ? patch.value.stdout.slice(0, 512 * 1024) : '';
+      const untrackedFiles = statusText.split(/\r?\n/).filter((line) => line.startsWith('?? ')).map((line) => line.slice(3).trim()).filter(Boolean);
+      const completed = status.value.state === 'exited' && (status.value.exitCode ?? 0) === 0;
+      task.finishedAt = status.value.finishedAt ?? new Date().toISOString();
+
+      if (!completed) {
+        task.state = status.value.state === 'termination_unverified' ? 'termination_unverified' : 'failed';
+        task.error = status.value.error ?? `Codex worker ended in ${status.value.state}`;
+        task.evidence = { patch: patchText, gitStatus: statusText, logs: logText, pooled: false, preserved: true, untrackedFiles };
+        return;
+      }
+
+      task.state = 'completed';
+      if (untrackedFiles.length > 0 || !gitStatus.ok || gitStatus.value.exitCode !== 0 || !patch.ok || patch.value.exitCode !== 0) {
+        task.evidence = { patch: patchText, gitStatus: statusText, logs: logText, pooled: false, preserved: true, untrackedFiles };
+        return;
+      }
+
+      const reset = await this.services.git!.run(this.actor, {
+        workspaceId: task.workerWorkspaceId,
+        args: ['reset', '--hard', 'HEAD'],
+      }, undefined, authorization);
+      if (!reset.ok || reset.value.exitCode !== 0) {
+        task.evidence = { patch: patchText, gitStatus: statusText, logs: logText, pooled: false, preserved: true, untrackedFiles };
+        return;
+      }
+      const cleaned = await this.services.git!.run(this.actor, {
+        workspaceId: task.workerWorkspaceId,
+        args: ['status', '--porcelain', '--untracked-files=all'],
+      }, undefined, authorization);
+      if (!cleaned.ok || cleaned.value.exitCode !== 0 || cleaned.value.stdout.trim().length > 0) {
+        task.evidence = { patch: patchText, gitStatus: statusText, logs: logText, pooled: false, preserved: true, untrackedFiles };
+        return;
+      }
+      const pooled = await this.gitWorktreeRemove({
+        workspaceId,
+        worktreePath: task.worktreePath,
+        retainIdle: true,
+        evidenceCaptured: true,
+        ...(dependencyFingerprint === undefined ? {} : { dependencyFingerprint }),
+        worktreeLeaseToken: task.worktreeLeaseToken,
+        worktreeLeaseGeneration: task.worktreeLeaseGeneration,
+        maxIdle,
+        dryRun: false,
+        userConfirmed: true,
+      }, authorization);
+      task.evidence = { patch: patchText, gitStatus: statusText, logs: logText, pooled: pooled.ok, preserved: !pooled.ok, untrackedFiles, ...(pooled.ok ? { poolResult: pooled.value } : {}) };
+    };
+
+    const stopRunning = async (): Promise<void> => {
+      for (const task of runtimeTasks.filter((candidate) => candidate.state === 'running' && candidate.codexTaskId !== undefined && candidate.workerWorkspaceId !== undefined)) {
+        const stopped = await this.services.codex!.stop(this.actor, task.workerWorkspaceId!, task.codexTaskId!, false, authorization);
+        task.state = stopped.ok ? 'cancelled' : 'termination_unverified';
+        if (!stopped.ok) task.error = stopped.error.message;
+        task.finishedAt = new Date().toISOString();
+      }
+    };
+
+    while (runtimeTasks.some((task) => !['completed', 'failed', 'cancelled', 'termination_unverified'].includes(task.state))) {
+      if (signal?.aborted === true) {
+        await stopRunning();
+        for (const task of runtimeTasks.filter((candidate) => candidate.state === 'queued' || candidate.state === 'blocked')) {
+          task.state = 'cancelled';
+          task.finishedAt = new Date().toISOString();
+        }
+        break;
+      }
+
+      for (const task of runtimeTasks.filter((candidate) => candidate.state === 'running')) await captureTerminal(task);
+
+      const failedIds = new Set(runtimeTasks.filter((task) => ['failed', 'cancelled', 'termination_unverified'].includes(task.state)).map((task) => task.id));
+      const completedIds = new Set(runtimeTasks.filter((task) => task.state === 'completed').map((task) => task.id));
+      for (const task of runtimeTasks.filter((candidate) => candidate.state === 'blocked')) {
+        if (task.dependsOn.some((dependency) => failedIds.has(dependency))) {
+          task.state = 'failed';
+          task.error = 'dependency did not complete successfully';
+          task.finishedAt = new Date().toISOString();
+        } else if (task.dependsOn.every((dependency) => completedIds.has(dependency))) {
+          task.state = 'queued';
+        }
+      }
+
+      let running = runtimeTasks.filter((task) => task.state === 'running').length;
+      for (const task of runtimeTasks.filter((candidate) => candidate.state === 'queued')) {
+        if (running >= plan.value.maxConcurrency) break;
+        const acquired = await acquireWorker(task);
+        if (!acquired.ok) {
+          task.state = 'failed';
+          task.error = acquired.error.message;
+          task.finishedAt = new Date().toISOString();
+          continue;
+        }
+        if (task.state === 'running') running += 1;
+      }
+      if (runtimeTasks.some((task) => task.state === 'running')) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    const state = runtimeTasks.some((task) => task.state === 'termination_unverified')
+      ? 'termination_unverified'
+      : runtimeTasks.every((task) => task.state === 'completed')
+        ? 'completed'
+        : runtimeTasks.every((task) => task.state === 'cancelled')
+          ? 'cancelled'
+          : 'failed';
+    return ok({
+      tool: 'write_swarm_run',
+      status: state,
+      workspaceId,
+      ref,
+      executionDecision: {
+        mode: plannedMode,
+        maxConcurrency: plan.value.maxConcurrency,
+        dependencyEdges,
+      },
+      tasks: runtimeTasks.map((task) => ({
+        id: task.id,
+        dependsOn: task.dependsOn,
+        state: task.state,
+        ...(task.codexTaskId === undefined ? {} : { codexTaskId: task.codexTaskId }),
+        ...(task.processId === undefined ? {} : { processId: task.processId }),
+        ...(task.workerWorkspaceId === undefined ? {} : { workerWorkspaceId: task.workerWorkspaceId }),
+        ...(task.worktreePath === undefined ? {} : { worktreePath: task.worktreePath }),
+        ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
+        ...(task.finishedAt === undefined ? {} : { finishedAt: task.finishedAt }),
+        ...(task.error === undefined ? {} : { error: task.error }),
+        ...(task.evidence === undefined ? {} : { evidence: task.evidence }),
+      })),
+    });
+  }
+
   private async gitWorktreeSpawn(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'workspaceId is required for a Git worktree'));
@@ -1391,11 +1772,14 @@ export class UpgradeRuntimeService {
     }
     const ref = readString(input, 'ref') ?? 'HEAD';
     if (ref.includes('\0') || ref.length > 256) return err(appError('INVALID_INPUT', 'Git worktree ref is invalid'));
+    const reuseIdle = input.reuseIdle === true;
+    const requestedDependencyFingerprint = readString(input, 'dependencyFingerprint');
     const plan = {
       tool: 'git_worktree_spawn',
       workspaceId,
       worktreePath: normalizedPath,
       ref,
+      reuseIdle,
       owner: this.actor.clientId,
       ownerSessionId: actorSessionId(this.actor),
       collisionPolicy: 'one-owner-per-worktree-path',
@@ -1406,21 +1790,148 @@ export class UpgradeRuntimeService {
     if (dryRun) return ok({ ...plan, dryRun: true });
     if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Creating a Git worktree requires explicit user confirmation'));
     await this.refreshSharedState();
+    if (this.services.git === undefined) return ok({ ...plan, dryRun: false, status: 'optional', available: false, reason: 'Git service is not configured' });
+
+    if (reuseIdle) {
+      let claimed: WorktreeLedgerEntry | undefined;
+      let claimedLeaseToken: string | undefined;
+      let claimedLeaseGeneration: number | undefined;
+      const claimedAt = new Date().toISOString();
+      const claimedPersisted = await this.mutateSharedState((_plugins, worktrees) => {
+        const index = worktrees.findIndex((candidate) =>
+          candidate.workspaceId === workspaceId
+          && candidate.owner === this.actor.clientId
+          && candidate.state === 'idle'
+        );
+        if (index === -1) return;
+        claimed = worktrees[index];
+        claimedLeaseToken = randomUUID();
+        claimedLeaseGeneration = (worktrees[index]!.leaseGeneration ?? 0) + 1;
+        worktrees[index] = {
+          ...worktrees[index]!,
+          state: 'active',
+          ownerSessionId: actorSessionId(this.actor),
+          lastUsedAt: claimedAt,
+          leaseToken: claimedLeaseToken,
+          leaseGeneration: claimedLeaseGeneration,
+        };
+      }, true);
+      if (claimed !== undefined && claimedPersisted) {
+        const status = await this.services.git.run(this.actor, {
+          workspaceId,
+          cwd: claimed.worktreePath,
+          args: ['status', '--porcelain', '--untracked-files=all'],
+        }, undefined, authorization);
+        const clean = status.ok && status.value.exitCode === 0 && status.value.stdout.trim().length === 0;
+        if (clean) {
+          const switched = await this.services.git.run(this.actor, {
+            workspaceId,
+            cwd: claimed.worktreePath,
+            args: ['switch', '--detach', ref],
+            ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
+          }, undefined, authorization);
+          if (switched.ok && switched.value.exitCode === 0) {
+            const verified = await this.services.git.run(this.actor, {
+              workspaceId,
+              cwd: claimed.worktreePath,
+              args: ['status', '--porcelain', '--untracked-files=all'],
+            }, undefined, authorization);
+            if (verified.ok && verified.value.exitCode === 0 && verified.value.stdout.trim().length === 0) {
+              let reuseLeaseConfirmed = false;
+              const reusePersisted = await this.mutateSharedState((_plugins, worktrees) => {
+                const index = worktrees.findIndex((candidate) =>
+                  candidate.workspaceId === workspaceId
+                  && candidate.worktreePath === claimed!.worktreePath
+                  && candidate.state === 'active'
+                  && candidate.leaseToken === claimedLeaseToken
+                  && candidate.leaseGeneration === claimedLeaseGeneration
+                );
+                if (index !== -1) {
+                  reuseLeaseConfirmed = true;
+                  worktrees[index] = {
+                    ...worktrees[index]!,
+                    ref,
+                    state: 'active',
+                    ownerSessionId: actorSessionId(this.actor),
+                    lastUsedAt: new Date().toISOString(),
+                  };
+                }
+              }, true);
+              if (reusePersisted && reuseLeaseConfirmed) {
+                return ok({
+                  ...plan,
+                  worktreePath: claimed.worktreePath,
+                  dryRun: false,
+                  sideEffectsStarted: true,
+                  status: 'completed',
+                  reused: true,
+                  dependenciesReusable: requestedDependencyFingerprint !== undefined
+                    && requestedDependencyFingerprint === claimed.dependencyFingerprint,
+                  worktreeLeaseToken: claimedLeaseToken,
+                  worktreeLeaseGeneration: claimedLeaseGeneration,
+                  ownershipLedger: true,
+                });
+              }
+              return err(appError('CONFLICT', 'Reusable worktree lease changed before base refresh completed', true));
+            }
+          }
+        }
+        await this.mutateSharedState((_plugins, worktrees) => {
+          const index = worktrees.findIndex((candidate) =>
+            candidate.workspaceId === workspaceId
+            && candidate.worktreePath === claimed!.worktreePath
+            && candidate.state === 'active'
+            && candidate.leaseToken === claimedLeaseToken
+            && candidate.leaseGeneration === claimedLeaseGeneration
+          );
+          if (index !== -1) worktrees[index] = { ...worktrees[index]!, state: 'quarantined', lastUsedAt: new Date().toISOString() };
+        });
+      }
+    }
+
+    await this.refreshSharedState();
     if (this.worktrees.some((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === normalizedPath)) {
       return err(appError('INVALID_INPUT', 'Git worktree path is already present in the shared ownership ledger'));
     }
-    if (this.services.git === undefined) return ok({ ...plan, dryRun: false, status: 'optional', available: false, reason: 'Git service is not configured' });
     const result = await this.services.git.run(this.actor, {
       workspaceId,
       args: ['worktree', 'add', '--detach', normalizedPath, ref],
       ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
     }, undefined, authorization);
     if (!result.ok) return result;
-    const ledgerEntry: WorktreeLedgerEntry = { workspaceId, worktreePath: normalizedPath, ref, owner: this.actor.clientId, ownerSessionId: actorSessionId(this.actor), createdAt: new Date().toISOString() };
+    if (result.value.exitCode !== 0) {
+      return err(appError('CONFLICT', `Git worktree add failed with exit code ${result.value.exitCode}: ${result.value.stderr || result.value.stdout || 'unknown Git error'}`, true));
+    }
+    const now = new Date().toISOString();
+    const worktreeLeaseToken = randomUUID();
+    const worktreeLeaseGeneration = 1;
+    const ledgerEntry: WorktreeLedgerEntry = {
+      workspaceId,
+      worktreePath: normalizedPath,
+      ref,
+      owner: this.actor.clientId,
+      ownerSessionId: actorSessionId(this.actor),
+      createdAt: now,
+      state: 'active',
+      lastUsedAt: now,
+      leaseToken: worktreeLeaseToken,
+      leaseGeneration: worktreeLeaseGeneration,
+    };
     await this.mutateSharedState((_plugins, worktrees) => {
       if (!worktrees.some((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === normalizedPath)) worktrees.push(ledgerEntry);
     });
-    return ok({ ...plan, dryRun: false, sideEffectsStarted: true, status: 'completed', result: result.value, ownershipLedger: true });
+    return ok({
+      ...plan,
+      dryRun: false,
+      sideEffectsStarted: true,
+      status: 'completed',
+      reused: false,
+      dependenciesReusable: false,
+      worktreeLeaseToken,
+      worktreeLeaseGeneration,
+      result: result.value,
+      ownershipLedger: true,
+    });
   }
 
   private async gitWorktreeRemove(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -1441,22 +1952,270 @@ export class UpgradeRuntimeService {
     if (entry.owner !== this.actor.clientId || (entry.ownerSessionId !== undefined && entry.ownerSessionId !== actorSessionId(this.actor))) {
       return err(appError('PERMISSION_DENIED', 'Worktree is owned by another client session'));
     }
+    const retainIdle = input.retainIdle === true;
+    const maxIdle = typeof input.maxIdle === 'number' ? Math.min(8, Math.max(1, Math.trunc(input.maxIdle))) : 2;
+    const dependencyFingerprint = readString(input, 'dependencyFingerprint');
     const plan = {
       tool: 'git_worktree_remove', workspaceId, worktreePath,
       owner: entry.owner,
+      retainIdle,
+      maxIdle,
       mutationPolicy: 'explicit-confirmation-and-dry-run',
     };
     if (input.dryRun !== false && input.dry_run !== false) return ok({ ...plan, dryRun: true });
-    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Removing a Git worktree requires explicit user confirmation'));
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Removing or pooling a Git worktree requires explicit user confirmation'));
     if (this.services.git === undefined) return ok({ ...plan, dryRun: false, status: 'optional', available: false, reason: 'Git service is not configured' });
+
+    if (retainIdle) {
+      if (input.evidenceCaptured !== true) {
+        return err(appError('INVALID_INPUT', 'Returning a worktree to the reusable pool requires evidenceCaptured=true'));
+      }
+      const worktreeLeaseToken = readString(input, 'worktreeLeaseToken');
+      const worktreeLeaseGeneration = typeof input.worktreeLeaseGeneration === 'number' && Number.isInteger(input.worktreeLeaseGeneration)
+        ? input.worktreeLeaseGeneration
+        : undefined;
+      if (worktreeLeaseToken === undefined || worktreeLeaseGeneration === undefined) {
+        return err(appError('INVALID_INPUT', 'Returning a worktree to the reusable pool requires the current worktree lease token and generation'));
+      }
+
+      let releaseReserved = false;
+      const releasePersisted = await this.mutateSharedState((_plugins, worktrees) => {
+        const index = worktrees.findIndex((candidate) =>
+          candidate.workspaceId === workspaceId
+          && candidate.worktreePath === worktreePath
+          && candidate.owner === this.actor.clientId
+          && candidate.ownerSessionId === actorSessionId(this.actor)
+          && candidate.state === 'active'
+          && candidate.leaseToken === worktreeLeaseToken
+          && candidate.leaseGeneration === worktreeLeaseGeneration
+        );
+        if (index === -1) return;
+        releaseReserved = true;
+        worktrees[index] = {
+          ...worktrees[index]!,
+          state: 'releasing',
+          lastUsedAt: new Date().toISOString(),
+        };
+      }, true);
+      if (!releasePersisted || !releaseReserved) {
+        return err(appError('CONFLICT', 'Worktree release lease is stale or no longer owns this active worktree', true));
+      }
+
+      const quarantineRelease = async (): Promise<void> => {
+        await this.mutateSharedState((_plugins, worktrees) => {
+          const index = worktrees.findIndex((candidate) =>
+            candidate.workspaceId === workspaceId
+            && candidate.worktreePath === worktreePath
+            && candidate.state === 'releasing'
+            && candidate.leaseToken === worktreeLeaseToken
+            && candidate.leaseGeneration === worktreeLeaseGeneration
+          );
+          if (index !== -1) {
+            worktrees[index] = {
+              ...worktrees[index]!,
+              state: 'quarantined',
+              ownerSessionId: undefined,
+              lastUsedAt: new Date().toISOString(),
+            };
+          }
+        });
+      };
+
+      const status = await this.services.git.run(this.actor, {
+        workspaceId,
+        cwd: worktreePath,
+        args: ['status', '--porcelain', '--untracked-files=all'],
+      }, undefined, authorization);
+      if (!status.ok) {
+        await quarantineRelease();
+        return status;
+      }
+      if (status.value.exitCode !== 0) {
+        await quarantineRelease();
+        return err(appError('CONFLICT', `Git worktree status failed with exit code ${status.value.exitCode}: ${status.value.stderr || status.value.stdout || 'unknown Git error'}`, true));
+      }
+      if (status.value.stdout.trim().length > 0) {
+        await quarantineRelease();
+        return err(appError('CONFLICT', 'Dirty worktrees cannot enter the reusable pool; captured evidence remains quarantined for recovery', true));
+      }
+
+      const evictionCandidates: WorktreeLedgerEntry[] = [];
+      let pooled = false;
+      const now = new Date().toISOString();
+      const poolPersisted = await this.mutateSharedState((_plugins, worktrees) => {
+        const index = worktrees.findIndex((candidate) =>
+          candidate.workspaceId === workspaceId
+          && candidate.worktreePath === worktreePath
+          && candidate.state === 'releasing'
+          && candidate.leaseToken === worktreeLeaseToken
+          && candidate.leaseGeneration === worktreeLeaseGeneration
+        );
+        if (index === -1) return;
+        pooled = true;
+        worktrees[index] = {
+          ...worktrees[index]!,
+          state: 'idle',
+          ownerSessionId: undefined,
+          lastUsedAt: now,
+          dependencyFingerprint,
+          leaseToken: undefined,
+        };
+        const idle = worktrees
+          .filter((candidate) =>
+            candidate.workspaceId === workspaceId
+            && candidate.owner === this.actor.clientId
+            && candidate.state === 'idle'
+          )
+          .sort((left, right) => {
+            const timeOrder = (left.lastUsedAt ?? left.createdAt).localeCompare(right.lastUsedAt ?? right.createdAt);
+            return timeOrder !== 0 ? timeOrder : left.worktreePath.localeCompare(right.worktreePath);
+          });
+        const excess = Math.max(0, idle.length - maxIdle);
+        const selected = idle.filter((candidate) => candidate.worktreePath !== worktreePath).slice(0, excess);
+        for (const candidate of selected) {
+          const candidateIndex = worktrees.findIndex((item) =>
+            item.workspaceId === candidate.workspaceId
+            && item.worktreePath === candidate.worktreePath
+            && item.state === 'idle'
+          );
+          if (candidateIndex === -1) continue;
+          const reserved = { ...worktrees[candidateIndex]!, state: 'evicting' as const, lastUsedAt: new Date().toISOString() };
+          worktrees[candidateIndex] = reserved;
+          evictionCandidates.push(reserved);
+        }
+      }, true);
+      if (!poolPersisted || !pooled) {
+        return err(appError('CONFLICT', 'Worktree release lease changed before the pool transition completed', true));
+      }
+
+      const evicted: string[] = [];
+      const quarantined: string[] = [];
+      for (const candidate of evictionCandidates) {
+        const quarantineCandidate = async (): Promise<void> => {
+          quarantined.push(candidate.worktreePath);
+          await this.mutateSharedState((_plugins, worktrees) => {
+            const index = worktrees.findIndex((item) =>
+              item.workspaceId === workspaceId
+              && item.worktreePath === candidate.worktreePath
+              && item.state === 'evicting'
+            );
+            if (index !== -1) {
+              worktrees[index] = {
+                ...worktrees[index]!,
+                state: 'quarantined',
+                ownerSessionId: undefined,
+                lastUsedAt: new Date().toISOString(),
+              };
+            }
+          });
+        };
+
+        const candidateStatus = await this.services.git.run(this.actor, {
+          workspaceId,
+          cwd: candidate.worktreePath,
+          args: ['status', '--porcelain', '--untracked-files=all'],
+        }, undefined, authorization);
+        if (!candidateStatus.ok || candidateStatus.value.exitCode !== 0 || candidateStatus.value.stdout.trim().length > 0) {
+          await quarantineCandidate();
+          continue;
+        }
+        const removed = await this.services.git.run(this.actor, {
+          workspaceId,
+          args: ['worktree', 'remove', candidate.worktreePath],
+          ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
+        }, undefined, authorization);
+        if (!removed.ok || removed.value.exitCode !== 0) {
+          await quarantineCandidate();
+          continue;
+        }
+        let removalRecorded = false;
+        await this.mutateSharedState((_plugins, worktrees) => {
+          const index = worktrees.findIndex((item) =>
+            item.workspaceId === workspaceId
+            && item.worktreePath === candidate.worktreePath
+            && item.state === 'evicting'
+          );
+          if (index !== -1) {
+            worktrees.splice(index, 1);
+            removalRecorded = true;
+          }
+        });
+        if (removalRecorded) evicted.push(candidate.worktreePath);
+      }
+      return ok({
+        ...plan,
+        dryRun: false,
+        sideEffectsStarted: true,
+        status: 'pooled',
+        pooled: true,
+        evicted,
+        quarantined,
+        dependencyFingerprint: dependencyFingerprint ?? null,
+      });
+    }
+
+    const removalLeaseToken = readString(input, 'worktreeLeaseToken');
+    const removalLeaseGeneration = typeof input.worktreeLeaseGeneration === 'number' && Number.isInteger(input.worktreeLeaseGeneration)
+      ? input.worktreeLeaseGeneration
+      : undefined;
+    let removeReserved = false;
+    const removePersisted = await this.mutateSharedState((_plugins, worktrees) => {
+      const index = worktrees.findIndex((candidate) =>
+        candidate.workspaceId === workspaceId
+        && candidate.worktreePath === worktreePath
+        && candidate.owner === this.actor.clientId
+        && (candidate.ownerSessionId === undefined || candidate.ownerSessionId === actorSessionId(this.actor))
+        && candidate.state !== 'releasing'
+        && candidate.state !== 'evicting'
+        && (
+          candidate.state !== 'active'
+          || candidate.leaseToken === undefined
+          || (
+            removalLeaseToken !== undefined
+            && removalLeaseGeneration !== undefined
+            && candidate.leaseToken === removalLeaseToken
+            && candidate.leaseGeneration === removalLeaseGeneration
+          )
+        )
+      );
+      if (index === -1) return;
+      removeReserved = true;
+      worktrees[index] = { ...worktrees[index]!, state: 'evicting', lastUsedAt: new Date().toISOString() };
+    }, true);
+    if (!removePersisted || !removeReserved) {
+      return err(appError('CONFLICT', 'Worktree removal lease is stale, missing for an active pooled slot, or the worktree is already being released/evicted', true));
+    }
+
     const result = await this.services.git.run(this.actor, {
       workspaceId,
       args: ['worktree', 'remove', worktreePath],
       ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
     }, undefined, authorization);
-    if (!result.ok) return result;
+    if (!result.ok || result.value.exitCode !== 0) {
+      await this.mutateSharedState((_plugins, worktrees) => {
+        const index = worktrees.findIndex((candidate) =>
+          candidate.workspaceId === workspaceId
+          && candidate.worktreePath === worktreePath
+          && candidate.state === 'evicting'
+        );
+        if (index !== -1) {
+          worktrees[index] = {
+            ...worktrees[index]!,
+            state: 'quarantined',
+            ownerSessionId: undefined,
+            lastUsedAt: new Date().toISOString(),
+          };
+        }
+      });
+      if (!result.ok) return result;
+      return err(appError('CONFLICT', `Git worktree remove failed with exit code ${result.value.exitCode}: ${result.value.stderr || result.value.stdout || 'unknown Git error'}`, true));
+    }
     await this.mutateSharedState((_plugins, worktrees) => {
-      const index = worktrees.findIndex((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === worktreePath);
+      const index = worktrees.findIndex((candidate) =>
+        candidate.workspaceId === workspaceId
+        && candidate.worktreePath === worktreePath
+        && candidate.state === 'evicting'
+      );
       if (index !== -1) worktrees.splice(index, 1);
     });
     return ok({ ...plan, dryRun: false, sideEffectsStarted: true, status: 'completed', result: result.value });
@@ -2358,7 +3117,6 @@ export class UpgradeRuntimeService {
     failClosed = false,
   ): Promise<boolean> {
     if (this.stateStore === undefined) {
-      if (failClosed) return false;
       mutate(this.plugins, this.worktrees);
       return true;
     }
@@ -3122,7 +3880,12 @@ function isWorktreeLedgerEntry(value: unknown): value is WorktreeLedgerEntry {
     && typeof record.ref === 'string'
     && typeof record.owner === 'string'
     && (record.ownerSessionId === undefined || typeof record.ownerSessionId === 'string')
-    && typeof record.createdAt === 'string';
+    && typeof record.createdAt === 'string'
+    && (record.state === undefined || record.state === 'active' || record.state === 'idle' || record.state === 'releasing' || record.state === 'evicting' || record.state === 'quarantined')
+    && (record.lastUsedAt === undefined || typeof record.lastUsedAt === 'string')
+    && (record.dependencyFingerprint === undefined || typeof record.dependencyFingerprint === 'string')
+    && (record.leaseToken === undefined || typeof record.leaseToken === 'string')
+    && (record.leaseGeneration === undefined || (typeof record.leaseGeneration === 'number' && Number.isInteger(record.leaseGeneration) && record.leaseGeneration >= 0));
 }
 
 function isRuntimeTask(value: unknown): value is RuntimeTask {

@@ -37,7 +37,13 @@ async function fixture(codex: AgentSwarmCodexPort): Promise<{ database: SqliteDa
   temporaryRoots.push(root);
   const database = new SqliteDatabase(path.join(root, 'state.sqlite'));
   const repository = new SqliteAgentSwarmRepository(database);
-  const service = new AgentSwarmService(repository, codex, () => new Date('2026-08-31T00:00:00.000Z'), () => '11111111-1111-4111-8111-111111111111');
+  let swarmSequence = 0;
+  const service = new AgentSwarmService(
+    repository,
+    codex,
+    () => new Date('2026-08-31T00:00:00.000Z'),
+    () => `11111111-1111-4111-8111-${String(++swarmSequence).padStart(12, '1')}`,
+  );
   return { database, repository, service };
 }
 
@@ -90,6 +96,144 @@ describe('AgentSwarmService', () => {
       ]), undefined, authorization);
       expect(cycle).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
       expect(fake.run).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('auto-plans fully independent work in parallel', async () => {
+    const fake = runningCodex();
+    const { database, service } = await fixture(fake.codex);
+    try {
+      const started = await service.start(actor, {
+        ...startRequest([
+          { id: 'a', prompt: 'A', complexity: 'normal' },
+          { id: 'b', prompt: 'B', complexity: 'normal' },
+          { id: 'c', prompt: 'C', complexity: 'large' },
+          { id: 'd', prompt: 'D', complexity: 'normal' },
+        ]),
+        executionStrategy: 'auto',
+      }, undefined, authorization);
+      expect(started).toMatchObject({
+        ok: true,
+        value: {
+          maxConcurrency: 4,
+          executionDecision: {
+            mode: 'parallel',
+            maxConcurrency: 4,
+            dependencyEdges: 0,
+            reasonCodes: ['independent_parallel_tasks'],
+          },
+        },
+      });
+      expect(fake.run).toHaveBeenCalledTimes(4);
+      if (started.ok) await service.cancel(actor, 'workspace-a', started.value.swarmId, authorization);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps tiny auto-planned batches serial to avoid orchestration overhead', async () => {
+    const fake = runningCodex();
+    const { database, service } = await fixture(fake.codex);
+    try {
+      const started = await service.start(actor, {
+        ...startRequest([
+          { id: 'a', prompt: 'A', complexity: 'tiny' },
+          { id: 'b', prompt: 'B', complexity: 'tiny' },
+        ]),
+        executionStrategy: 'auto',
+      }, undefined, authorization);
+      expect(started).toMatchObject({
+        ok: true,
+        value: {
+          maxConcurrency: 1,
+          executionDecision: { mode: 'serial', maxConcurrency: 1 },
+          tasks: [{ id: 'a', state: 'running' }, { id: 'b', state: 'queued' }],
+        },
+      });
+      expect(fake.run).toHaveBeenCalledTimes(1);
+      if (started.ok) await service.cancel(actor, 'workspace-a', started.value.swarmId, authorization);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('turns collision keys and exclusive tasks into safe dependency barriers', async () => {
+    const fake = runningCodex();
+    const { database, service } = await fixture(fake.codex);
+    try {
+      const collided = await service.start(actor, {
+        ...startRequest([
+          { id: 'a', prompt: 'A', collisionKeys: ['src/shared.ts'] },
+          { id: 'b', prompt: 'B', collisionKeys: ['src\\shared.ts'] },
+          { id: 'c', prompt: 'C', collisionKeys: ['src/other.ts'] },
+        ]),
+        executionStrategy: 'auto',
+      }, undefined, authorization);
+      expect(collided).toMatchObject({
+        ok: true,
+        value: {
+          maxConcurrency: 2,
+          executionDecision: { mode: 'mixed', dependencyEdges: 1 },
+          tasks: [
+            { id: 'a', state: 'running', dependsOn: [] },
+            { id: 'b', state: 'blocked', dependsOn: ['a'] },
+            { id: 'c', state: 'running', dependsOn: [] },
+          ],
+        },
+      });
+      if (collided.ok) await service.cancel(actor, 'workspace-a', collided.value.swarmId, authorization);
+
+      const exclusiveRequest = {
+        ...startRequest([
+          { id: 'before', prompt: 'before' },
+          { id: 'exclusive', prompt: 'exclusive', parallelSafe: false },
+          { id: 'after', prompt: 'after' },
+        ]),
+        idempotencyKey: '33333333-3333-4333-8333-333333333333',
+        executionStrategy: 'auto' as const,
+      };
+      const exclusive = await service.start(actor, exclusiveRequest, undefined, authorization);
+      expect(exclusive).toMatchObject({
+        ok: true,
+        value: {
+          maxConcurrency: 1,
+          executionDecision: { mode: 'serial', dependencyEdges: 2 },
+          tasks: [
+            { id: 'before', dependsOn: [] },
+            { id: 'exclusive', dependsOn: ['before'] },
+            { id: 'after', dependsOn: ['exclusive'] },
+          ],
+        },
+      });
+      if (exclusive.ok) await service.cancel(actor, 'workspace-a', exclusive.value.swarmId, authorization);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('honors explicit serial strategy even when tasks are independent', async () => {
+    const fake = runningCodex();
+    const { database, service } = await fixture(fake.codex);
+    try {
+      const started = await service.start(actor, {
+        ...startRequest([
+          { id: 'a', prompt: 'A' },
+          { id: 'b', prompt: 'B' },
+          { id: 'c', prompt: 'C' },
+        ]),
+        executionStrategy: 'serial',
+      }, undefined, authorization);
+      expect(started).toMatchObject({
+        ok: true,
+        value: {
+          maxConcurrency: 1,
+          executionDecision: { mode: 'serial' },
+        },
+      });
+      expect(fake.run).toHaveBeenCalledTimes(1);
+      if (started.ok) await service.cancel(actor, 'workspace-a', started.value.swarmId, authorization);
     } finally {
       database.close();
     }

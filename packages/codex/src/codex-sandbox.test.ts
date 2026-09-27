@@ -16,7 +16,7 @@ describe('Codex sandbox capability', () => {
       ok: true,
       value: {
         executable: 'codex.exe',
-        args: ['exec', '--sandbox', 'read-only', 'review project'],
+        args: ['-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"', '-c', 'service_tier="priority"', '--enable', 'fast_mode', 'exec', '--sandbox', 'read-only', 'review project'],
       },
     });
   });
@@ -35,7 +35,7 @@ describe('Codex sandbox capability', () => {
       ok: true,
       value: {
         executable: 'codex.exe',
-        args: ['exec', '--sandbox', 'workspace-write', 'review project'],
+        args: ['-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"', '-c', 'service_tier="priority"', '--enable', 'fast_mode', 'exec', '--sandbox', 'workspace-write', 'review project'],
       },
     });
   });
@@ -53,7 +53,7 @@ describe('Codex sandbox capability', () => {
       ok: true,
       value: {
         executable: 'codex.exe',
-        args: ['-p', 'core', 'exec', '--sandbox', 'workspace-write', 'fix local bug'],
+        args: ['-p', 'core', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"', '-c', 'service_tier="priority"', '--enable', 'fast_mode', 'exec', '--sandbox', 'workspace-write', 'fix local bug'],
       },
     });
   });

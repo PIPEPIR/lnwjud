@@ -239,6 +239,28 @@ describe('production desktop IPC acceptance', () => {
     await expect(requiredHandler(ipcChannels.exportWorkLog)(trusted, { rowIds: ['invalid-row-id'] })).rejects.toThrow(/rowIds/);
   });
 
+  it('routes prompt-free Codex monitor calls and rejects unbounded or extra IPC fields', async () => {
+    const services = desktopServices();
+    registerIpcHandlers(() => ({}) as never, services);
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+
+    await expect(requiredHandler(ipcChannels.listCodexTasks)(trusted)).resolves.toEqual([{
+      codexTaskId: 'codex-1', workspaceId: 'workspace-production', state: 'running', startedAt: new Date(0).toISOString(),
+    }]);
+    await expect(requiredHandler(ipcChannels.readCodexTaskLogs)(trusted, { codexTaskId: 'codex-1', tailLines: 20 }))
+      .resolves.toEqual({ entries: [], truncated: false, nextSequence: 0 });
+    expect(services.readCodexTaskLogs).toHaveBeenCalledWith({ codexTaskId: 'codex-1', tailLines: 20 });
+    await expect(requiredHandler(ipcChannels.readCodexTaskLogs)(trusted, { codexTaskId: 'codex-1', tailLines: 201 }))
+      .rejects.toThrow(/tailLines/);
+    await expect(requiredHandler(ipcChannels.readCodexTaskLogs)(trusted, { codexTaskId: 'codex-1', instruction: 'private prompt' }))
+      .rejects.toThrow('Invalid IPC payload');
+    await expect(requiredHandler(ipcChannels.stopCodexTask)(trusted, { codexTaskId: 'codex-1' }))
+      .resolves.toEqual({ stopped: true });
+    await expect(requiredHandler(ipcChannels.stopCodexTask)({ senderFrame: { url: 'https://example.invalid/' } }, { codexTaskId: 'codex-1' }))
+      .rejects.toThrow('IPC sender rejected');
+    expect(services.stopCodexTask).toHaveBeenCalledWith({ codexTaskId: 'codex-1' });
+  });
+
   it('exports an explicit identity marker instead of dropping a captured Live Log line that is unavailable', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-live-export-missing-'));
     temporaryRoots.push(root);
@@ -291,6 +313,9 @@ function desktopServices(): DesktopIpcServices {
     listProcesses: vi.fn(async () => []),
     startProcess: vi.fn(async () => { throw new Error('unused'); }),
     stopProcess: vi.fn(async () => ({ stopped: true })),
+    listCodexTasks: vi.fn(async () => [{ codexTaskId: 'codex-1', workspaceId: 'workspace-production', state: 'running' as const, startedAt: new Date(0).toISOString() }]),
+    readCodexTaskLogs: vi.fn(async () => ({ entries: [], truncated: false, nextSequence: 0 })),
+    stopCodexTask: vi.fn(async () => ({ stopped: true })),
     startMcp: vi.fn(async (request) => ({ running: true, url: null, workspaceId: request.workspaceId })),
     stopMcp: vi.fn(async () => ({ running: false, url: null, workspaceId: null })),
     restartMcp: vi.fn(async () => ({ running: true, url: null, workspaceId: 'workspace-production' })),

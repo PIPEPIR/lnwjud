@@ -1,8 +1,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { InFlightWorkItem, WorkLogEntry } from '@lnwjud/ipc-contracts';
-import { formatWorkLogCopyText, newestFirstWorkLogRows, WorkLogPanel } from '../src/renderer/features/worklog/WorkLogPanel.js';
+import type { CodexTaskLogsResult, CodexTaskMonitorItem, InFlightWorkItem, WorkLogEntry } from '@lnwjud/ipc-contracts';
+import { formatWorkLogCopyText, newestFirstWorkLogRows, parseCodexLogHeader, WorkLogPanel } from '../src/renderer/features/worklog/WorkLogPanel.js';
 import * as workLogPanelModule from '../src/renderer/features/worklog/WorkLogPanel.js';
 import { retainedHistoricalEntriesAfterClear } from '../src/renderer/features/worklog/WorkLogPage.js';
 
@@ -157,6 +157,75 @@ describe('WorkLogPanel', () => {
     expect(markup).toContain('[ERROR]');
     expect(markup).toContain('Destructive operation requires explicit user confirmation');
     expect(markup).not.toContain('python -c &quot;print(1)&quot;');
+  });
+
+  it('shows Codex and delegation activity in the Codex filter', () => {
+    const entries = [
+      { ...mockEntries[0]!, id: 'codex-run', toolName: 'codex_run' },
+      { ...mockEntries[0]!, id: 'swarm-run', toolName: 'agent_swarm_run' },
+      { ...mockEntries[0]!, id: 'ordinary', toolName: 'shell' },
+    ];
+    const inFlight = [
+      { ...mockInFlight[0]!, callId: 'codex-live', toolName: 'codex_task_logs' },
+      { ...mockInFlight[0]!, callId: 'delegation-live', toolName: 'parallel_delegate' },
+      mockInFlight[0]!,
+    ];
+
+    expect(newestFirstWorkLogRows(entries, inFlight, 'codex').map((row) => row.id))
+      .toEqual(expect.arrayContaining(['codex-run', 'swarm-run', 'workspace-1:session-a:codex-live', 'workspace-1:session-a:delegation-live']));
+    expect(newestFirstWorkLogRows(entries, inFlight, 'codex').map((row) => row.id)).not.toContain('ordinary');
+  });
+
+  it('renders Codex task lifecycle, bounded output, and parsed model details in Work Log', () => {
+    const task: CodexTaskMonitorItem = {
+      codexTaskId: 'codex-child-42', workspaceId: 'workspace-1', state: 'running',
+      startedAt: '2026-08-19T14:00:00.000Z',
+    };
+    const finishedTask: CodexTaskMonitorItem = {
+      codexTaskId: 'codex-child-finished', workspaceId: 'workspace-1', state: 'exited',
+      startedAt: '2026-08-19T13:00:00.000Z', finishedAt: '2026-08-19T13:00:05.000Z', exitCode: 0,
+    };
+    const startingTask: CodexTaskMonitorItem = {
+      codexTaskId: 'codex-child-starting', workspaceId: 'workspace-1', state: 'starting',
+      startedAt: '2026-08-19T14:01:00.000Z',
+    };
+    const unverifiedTask: CodexTaskMonitorItem = {
+      codexTaskId: 'codex-child-unverified', workspaceId: 'workspace-1', state: 'termination_unverified',
+      startedAt: '2026-08-19T14:02:00.000Z',
+    };
+    const logs: CodexTaskLogsResult = {
+      entries: [{ sequence: 1, stream: 'stdout', text: 'model: gpt-5.6-sol\nreasoning effort: high\nwork in progress' }],
+      truncated: false,
+      nextSequence: 2,
+    };
+    const markup = renderToStaticMarkup(createElement(WorkLogPanel, {
+      title: 'Work Log', emptyLabel: 'Empty', filterAllLabel: 'All', filterErrorLabel: 'Errors', filterCodexLabel: 'Codex',
+      clearSessionLabel: 'Clear session', clearWorkspaceLabel: 'Clear workspace', clearAllLabel: 'Clear all',
+      filter: 'codex', onFilterChange: () => {}, onClear: async () => {}, entries: [], inFlight: [],
+      codexTasks: [task, finishedTask, startingTask, unverifiedTask], codexTaskLogs: { [task.codexTaskId]: logs }, onStopCodexTask: async () => {},
+      codexLabels: {
+        task: 'Codex task', statuses: { starting: 'Starting', running: 'Running', exited: 'Finished', failed: 'Failed', stopped: 'Stopped', timed_out: 'Timed out', termination_unverified: 'Checking stop' },
+        elapsed: 'Elapsed', finished: 'Finished', output: 'Output', noOutput: 'No output yet', truncated: 'Latest output',
+        stop: 'Stop', stopping: 'Stopping', model: 'Model', reasoning: 'Reasoning', logError: 'Output error', exitCode: 'Exit code',
+      },
+      workspaces: [{ id: 'workspace-1', displayName: 'Project One', rootPath: 'E:\\one', realRootPath: 'E:\\one', createdAt: '2026-08-01T00:00:00.000Z' }],
+    }));
+
+    expect(markup).toContain('codex-child-42');
+    expect(markup).toContain('Project One');
+    expect(markup).toContain('Running');
+    expect(markup).toContain('Finished');
+    expect(markup).toContain('Exit code');
+    expect(markup).toContain('>Stop</button>');
+    expect(markup).toContain('Elapsed');
+    expect(markup).toContain('Starting');
+    expect(markup).toContain('Checking stop');
+    expect(markup.match(/>Stop<\/button>/g)).toHaveLength(3);
+    expect(markup).toContain('gpt-5.6-sol');
+    expect(markup).toContain('high');
+    expect(markup).toContain('work in progress');
+    expect(markup).toContain('<details');
+    expect(parseCodexLogHeader(logs.entries)).toEqual({ model: 'gpt-5.6-sol', reasoning: 'high' });
   });
 
   it('renders search and copy controls and filters rows by full log details', () => {

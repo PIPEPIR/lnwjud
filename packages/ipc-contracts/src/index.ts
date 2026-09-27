@@ -24,6 +24,9 @@ export const ipcChannels = {
   stopMcp: 'lnwjud:stop-mcp',
   restartMcp: 'lnwjud:restart-mcp',
   clearWorkLog: 'lnwjud:clear-work-log',
+  listCodexTasks: 'lnwjud:list-codex-tasks',
+  readCodexTaskLogs: 'lnwjud:read-codex-task-logs',
+  stopCodexTask: 'lnwjud:stop-codex-task',
   saveTunnelApiKey: 'lnwjud:save-tunnel-api-key',
   startTunnel: 'lnwjud:start-tunnel',
   stopTunnel: 'lnwjud:stop-tunnel',
@@ -409,6 +412,41 @@ export interface WorkLogEntry {
   readonly workspaceId: string | null;
   readonly sessionId: string | null;
   readonly callId?: string;
+}
+
+export type CodexTaskMonitorState = 'starting' | 'running' | 'exited' | 'failed' | 'stopped' | 'timed_out' | 'termination_unverified';
+export const MAX_CODEX_TASK_LOG_TAIL_LINES = 200;
+export const MAX_CODEX_TASK_LOG_BYTES = 64 * 1024;
+
+/** Prompt-free projection for the trusted Desktop Work Log monitor. */
+export interface CodexTaskMonitorItem {
+  readonly codexTaskId: string;
+  readonly workspaceId: string;
+  readonly state: CodexTaskMonitorState;
+  readonly startedAt: string;
+  readonly finishedAt?: string;
+  readonly exitCode?: number;
+}
+
+export interface CodexTaskLogEntry {
+  readonly sequence: number;
+  readonly stream: 'stdout' | 'stderr';
+  readonly text: string;
+}
+
+export interface CodexTaskLogsResult {
+  readonly entries: readonly CodexTaskLogEntry[];
+  readonly truncated: boolean;
+  readonly nextSequence: number;
+}
+
+export interface ReadCodexTaskLogsRequest {
+  readonly codexTaskId: string;
+  readonly tailLines?: number;
+}
+
+export interface StopCodexTaskRequest {
+  readonly codexTaskId: string;
 }
 
 export interface InFlightWorkItem {
@@ -1070,6 +1108,9 @@ export interface IpcRequestMap {
   readonly [ipcChannels.stopMcp]: undefined;
   readonly [ipcChannels.restartMcp]: undefined;
   readonly [ipcChannels.clearWorkLog]: ClearWorkLogRequest | undefined;
+  readonly [ipcChannels.listCodexTasks]: undefined;
+  readonly [ipcChannels.readCodexTaskLogs]: ReadCodexTaskLogsRequest;
+  readonly [ipcChannels.stopCodexTask]: StopCodexTaskRequest;
   readonly [ipcChannels.saveTunnelApiKey]: SaveTunnelApiKeyRequest;
   readonly [ipcChannels.startTunnel]: undefined;
   readonly [ipcChannels.stopTunnel]: undefined;
@@ -1143,6 +1184,9 @@ export interface IpcResponseMap {
   readonly [ipcChannels.stopMcp]: McpConnectionStatus;
   readonly [ipcChannels.restartMcp]: McpConnectionStatus;
   readonly [ipcChannels.clearWorkLog]: { readonly cleared: boolean };
+  readonly [ipcChannels.listCodexTasks]: readonly CodexTaskMonitorItem[];
+  readonly [ipcChannels.readCodexTaskLogs]: CodexTaskLogsResult;
+  readonly [ipcChannels.stopCodexTask]: { readonly stopped: boolean };
   readonly [ipcChannels.saveTunnelApiKey]: { readonly saved: boolean };
   readonly [ipcChannels.startTunnel]: TunnelStatus;
   readonly [ipcChannels.stopTunnel]: TunnelStatus;
@@ -1218,6 +1262,9 @@ export interface LnwjudApi {
   stopMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopMcp]>;
   restartMcp(): Promise<IpcResponseMap[typeof ipcChannels.restartMcp]>;
   clearWorkLog(request?: ClearWorkLogRequest): Promise<IpcResponseMap[typeof ipcChannels.clearWorkLog]>;
+  listCodexTasks(): Promise<IpcResponseMap[typeof ipcChannels.listCodexTasks]>;
+  readCodexTaskLogs(request: ReadCodexTaskLogsRequest): Promise<IpcResponseMap[typeof ipcChannels.readCodexTaskLogs]>;
+  stopCodexTask(request: StopCodexTaskRequest): Promise<IpcResponseMap[typeof ipcChannels.stopCodexTask]>;
   saveTunnelApiKey(request: SaveTunnelApiKeyRequest): Promise<IpcResponseMap[typeof ipcChannels.saveTunnelApiKey]>;
   startTunnel(): Promise<IpcResponseMap[typeof ipcChannels.startTunnel]>;
   stopTunnel(): Promise<IpcResponseMap[typeof ipcChannels.stopTunnel]>;

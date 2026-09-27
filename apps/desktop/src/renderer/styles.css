@@ -904,9 +904,28 @@ button.titlebar-version:hover {
 }
 
 .worklog-line > .expandable-log-detail,
+.worklog-line > .codex-task-details,
 .log-line > .expandable-log-detail {
   grid-column: 3 / -1;
   min-width: 0;
+}
+
+.codex-task-details {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.codex-task-details summary {
+  cursor: pointer;
+}
+
+.codex-task-details pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
 }
 
 .log-detail-toggle {
@@ -3125,6 +3144,7 @@ h2 {
   }
 
   .worklog-line > .expandable-log-detail,
+  .worklog-line > .codex-task-details,
   .worklog-line > .log-detail-legacy-warning,
   .log-line > .expandable-log-detail,
   .log-line > .log-detail-legacy-warning {

@@ -10,12 +10,15 @@ import {
   APP_VERSION,
   EMPTY_REMOTE_MCP_STATUS,
   EMPTY_TUNNEL_STATUS,
+  MAX_CODEX_TASK_LOG_TAIL_LINES,
   ipcChannels,
   pushChannels,
   type AddWorkspaceRequest,
   type BackupSummary,
   type ClearLogBufferRequest,
   type ClearWorkLogRequest,
+  type ReadCodexTaskLogsRequest,
+  type StopCodexTaskRequest,
   type ActivityTargetDetail,
   type ActivityTargetSearchCandidate,
   type ConfigureTunnelProfileRequest,
@@ -154,6 +157,9 @@ export interface DesktopIpcServices {
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }>;
+  listCodexTasks(): Promise<IpcResponseMap[typeof ipcChannels.listCodexTasks]>;
+  readCodexTaskLogs(request: ReadCodexTaskLogsRequest): Promise<IpcResponseMap[typeof ipcChannels.readCodexTaskLogs]>;
+  stopCodexTask(request: StopCodexTaskRequest): Promise<IpcResponseMap[typeof ipcChannels.stopCodexTask]>;
   startMcp(request: StartMcpRequest): Promise<McpConnectionStatus>;
   stopMcp(): Promise<McpConnectionStatus>;
   restartMcp(): Promise<McpConnectionStatus>;
@@ -320,6 +326,9 @@ const defaultDesktopServices: DesktopIpcServices = {
     throw new Error('Desktop services are not configured');
   },
   stopProcess: async (): Promise<{ readonly stopped: boolean }> => ({ stopped: false }),
+  listCodexTasks: async (): Promise<IpcResponseMap[typeof ipcChannels.listCodexTasks]> => [],
+  readCodexTaskLogs: async (): Promise<IpcResponseMap[typeof ipcChannels.readCodexTaskLogs]> => ({ entries: [], truncated: false, nextSequence: 0 }),
+  stopCodexTask: async (): Promise<IpcResponseMap[typeof ipcChannels.stopCodexTask]> => ({ stopped: false }),
   startMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
   stopMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
   restartMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
@@ -511,6 +520,19 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.stopProcess, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.stopProcess(parseStopProcessRequest(payload));
+  });
+  registerHandler(ipcChannels.listCodexTasks, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return services.listCodexTasks();
+  });
+  registerHandler(ipcChannels.readCodexTaskLogs, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.readCodexTaskLogs(parseReadCodexTaskLogsRequest(payload));
+  });
+  registerHandler(ipcChannels.stopCodexTask, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.stopCodexTask(parseStopCodexTaskRequest(payload));
   });
   registerHandler(ipcChannels.startMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -1133,6 +1155,23 @@ function broadcastToAllWindows(channel: string, payload: unknown): void {
 function parseStopProcessRequest(payload: unknown): StopProcessRequest {
   if (!isRecord(payload)) throw new Error('Invalid IPC payload');
   return { processId: nonEmptyString(payload.processId, 'processId') };
+}
+
+function parseReadCodexTaskLogsRequest(payload: unknown): ReadCodexTaskLogsRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'codexTaskId' && key !== 'tailLines')) throw new Error('Invalid IPC payload');
+  const codexTaskId = nonEmptyString(payload.codexTaskId, 'codexTaskId');
+  if (codexTaskId.length > 256) throw new Error('Invalid IPC payload: codexTaskId');
+  if (payload.tailLines !== undefined && (!Number.isInteger(payload.tailLines) || (payload.tailLines as number) < 1 || (payload.tailLines as number) > MAX_CODEX_TASK_LOG_TAIL_LINES)) {
+    throw new Error('Invalid IPC payload: tailLines');
+  }
+  return { codexTaskId, ...(payload.tailLines === undefined ? {} : { tailLines: payload.tailLines as number }) };
+}
+
+function parseStopCodexTaskRequest(payload: unknown): StopCodexTaskRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'codexTaskId')) throw new Error('Invalid IPC payload');
+  const codexTaskId = nonEmptyString(payload.codexTaskId, 'codexTaskId');
+  if (codexTaskId.length > 256) throw new Error('Invalid IPC payload: codexTaskId');
+  return { codexTaskId };
 }
 
 function parseStartProcessRequest(payload: unknown): StartProcessRequest {

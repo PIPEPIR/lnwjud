@@ -8,7 +8,7 @@ export interface CodexDiscoveryPort {
 }
 
 export interface CodexProcessManagerPort {
-  start(spec: ManagedProcessStart, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void): Promise<Result<ManagedProcess>>;
+  start(spec: ManagedProcessStart, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void, onTerminal?: (process: ManagedProcess) => void): Promise<Result<ManagedProcess>>;
   status(processId: string): Result<ManagedProcess>;
   logs(processId: string, query: LogQuery): Result<ProcessLogResult>;
   stop(processId: string, autoRetry?: boolean): Promise<Result<void>>;
@@ -40,6 +40,7 @@ export class CodexAdapter {
     signal?: AbortSignal,
     onCreated?: (process: ManagedProcess) => void,
     sandboxMode: CodexSandboxMode = 'workspace-write',
+    onTerminal?: (process: ManagedProcess) => void,
   ): Promise<Result<ManagedProcess>> {
     if (isAborted(signal)) return cancelledCodexStart();
     const discovered = await this.discovery.discover();
@@ -51,7 +52,7 @@ export class CodexAdapter {
     const invocation = this.builder.build(discovered.value.status.executablePath, discovered.value.capabilities, instruction, sandboxMode);
     if (!invocation.ok) return invocation;
     if (isAborted(signal)) return cancelledCodexStart();
-    return this.processManager.start({ executable: invocation.value.executable, args: invocation.value.args, cwd, stdin: 'closed' }, signal, onCreated);
+    return this.processManager.start({ executable: invocation.value.executable, args: invocation.value.args, cwd, stdin: 'closed', redactOutputValues: [instruction] }, signal, onCreated, onTerminal);
   }
 
   public statusProcess(processId: string): Result<ManagedProcess> {

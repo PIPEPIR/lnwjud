@@ -389,13 +389,21 @@ describe('upgrade runtime', () => {
     await expect(runtime.execute('git_worktree_spawn', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', ref: 'main' })).resolves.toMatchObject({ ok: true, value: { dryRun: true, sideEffectsStarted: false } });
     await expect(runtime.execute('git_worktree_spawn', { workspaceId: 'ws-1', worktreePath: '..\\outside', ref: 'main', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
     await expect(runtime.execute('git_worktree_spawn', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', ref: 'main', dryRun: false })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
-    await expect(runtime.execute('git_worktree_spawn', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', ref: 'main', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: true, value: { status: 'completed', sideEffectsStarted: true } });
+    const createdAgent = await runtime.execute('git_worktree_spawn', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', ref: 'main', dryRun: false, userConfirmed: true });
+    expect(createdAgent).toMatchObject({ ok: true, value: { status: 'completed', sideEffectsStarted: true, worktreeLeaseGeneration: 1 } });
+    if (!createdAgent.ok) throw new Error('worktree create failed');
+    const createdAgentLease = createdAgent.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
     expect(calls).toEqual([{ workspaceId: 'ws-1', args: ['worktree', 'add', '--detach', '.worktrees/agent-1', 'main'] }]);
 
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/unknown' })).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1' })).resolves.toMatchObject({ ok: true, value: { dryRun: true } });
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
-    await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1',
+      worktreeLeaseToken: createdAgentLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: createdAgentLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
     expect(calls.at(-1)).toMatchObject({ args: ['worktree', 'remove', '.worktrees/agent-1'] });
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
 
@@ -403,6 +411,577 @@ describe('upgrade runtime', () => {
       workspaceId: 'ws-1', worktreePath: 'E:\\outside\\agent-1', ref: 'main', dryRun: false,
     }, undefined, fullBypassAuthorization)).resolves.toMatchObject({ ok: true, value: { status: 'completed', worktreePath: 'E:/outside/agent-1' } });
     expect(calls.at(-1)).toMatchObject({ args: ['worktree', 'add', '--detach', 'E:/outside/agent-1', 'main'] });
+  });
+
+  it('fails closed on malformed write swarm planner metadata', async () => {
+    const runtime = new UpgradeRuntimeService({ platform: 'win32' }, actor);
+
+    await expect(runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'a', prompt: 'A', collisionKeys: 'src/a.ts' }],
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    await expect(runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'a', prompt: 'A', complexity: 'huge' }],
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    await expect(runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'a', prompt: 'A' }],
+      executionStrategy: 'sometimes',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    await expect(runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'a', prompt: 'A' }],
+      maxConcurrency: 9,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
+  it('runs a write swarm worker in an isolated worktree, captures its patch, sanitizes it, and returns it to the pool', async () => {
+    const gitCalls: Array<{ workspaceId: string; args: readonly string[]; cwd?: string }> = [];
+    const codexCalls: Array<{ workspaceId: string; sandboxMode?: string }> = [];
+    let workerStatusReads = 0;
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      workspaceInfo: {
+        async info(): Promise<ReturnType<typeof ok>> {
+          return ok({ id: 'ws-1', rootPath: 'C:\\repo', realRootPath: 'C:\\repo' });
+        },
+        async register(_actor, request): Promise<ReturnType<typeof ok>> {
+          return ok({ id: 'worker-1', rootPath: request.path, realRootPath: request.path });
+        },
+      },
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          gitCalls.push({ workspaceId: request.workspaceId, args: request.args, ...(request.cwd === undefined ? {} : { cwd: request.cwd }) });
+          if (request.workspaceId === 'worker-1' && request.args[0] === 'status') {
+            workerStatusReads += 1;
+            return ok({ exitCode: 0, stdout: workerStatusReads === 1 ? ' M src/worker.ts\n' : '', stderr: '' });
+          }
+          if (request.workspaceId === 'worker-1' && request.args[0] === 'diff') {
+            return ok({ exitCode: 0, stdout: 'diff --git a/src/worker.ts b/src/worker.ts\n+captured\n', stderr: '' });
+          }
+          return ok({ exitCode: 0, stdout: '', stderr: '' });
+        },
+      },
+      codex: {
+        async run(_actor, workspaceId, _instruction, _signal, _userConfirmed, _authorization, sandboxMode): Promise<ReturnType<typeof ok>> {
+          codexCalls.push({ workspaceId, sandboxMode });
+          return ok({ codexTaskId: 'codex-write-1', processId: 'process-write-1' });
+        },
+        async taskStatus(): Promise<ReturnType<typeof ok>> {
+          return ok({
+            processId: 'process-write-1', executable: 'codex', args: ['exec'], cwd: 'C:\\repo\\.worktrees\\worker',
+            state: 'exited', startedAt: '2026-09-27T00:00:00.000Z', finishedAt: '2026-09-27T00:00:01.000Z', exitCode: 0,
+          });
+        },
+        async taskLogs(): Promise<ReturnType<typeof ok>> {
+          return ok({ entries: [{ sequence: 1, stream: 'stdout', text: 'worker complete\n' }], truncated: false, nextSequence: 2 });
+        },
+        async stop(): Promise<ReturnType<typeof ok>> {
+          return ok(undefined);
+        },
+      },
+    }, actor);
+
+    const result = await runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'worker', prompt: 'Edit only src/worker.ts.', collisionKeys: ['src/worker.ts'] }],
+      executionStrategy: 'auto',
+      reuseIdle: true,
+      dependencyFingerprint: 'lock-v1',
+      dryRun: false,
+      userConfirmed: true,
+    }, undefined, fullBypassAuthorization);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: 'completed',
+        executionDecision: { mode: 'serial', maxConcurrency: 1, dependencyEdges: 0 },
+        tasks: [{
+          id: 'worker',
+          state: 'completed',
+          evidence: {
+            patch: expect.stringContaining('src/worker.ts'),
+            pooled: true,
+            preserved: false,
+            untrackedFiles: [],
+          },
+        }],
+      },
+    });
+    expect(codexCalls).toEqual([{ workspaceId: 'worker-1', sandboxMode: 'workspace-write' }]);
+    expect(gitCalls.some((call) => call.args[0] === 'worktree' && call.args[1] === 'add')).toBe(true);
+    expect(gitCalls.some((call) => call.workspaceId === 'worker-1' && call.args[0] === 'reset' && call.args[1] === '--hard')).toBe(true);
+  });
+
+  it('preserves successful write workers with untracked output instead of pooling them', async () => {
+    let resetCalled = false;
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      workspaceInfo: {
+        async info(): Promise<ReturnType<typeof ok>> {
+          return ok({ id: 'ws-1', rootPath: 'C:\\repo', realRootPath: 'C:\\repo' });
+        },
+        async register(_actor, request): Promise<ReturnType<typeof ok>> {
+          return ok({ id: 'worker-untracked', rootPath: request.path, realRootPath: request.path });
+        },
+      },
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          if (request.workspaceId === 'worker-untracked' && request.args[0] === 'status') {
+            return ok({ exitCode: 0, stdout: '?? NEW_FILE.txt\n', stderr: '' });
+          }
+          if (request.workspaceId === 'worker-untracked' && request.args[0] === 'diff') {
+            return ok({ exitCode: 0, stdout: '', stderr: '' });
+          }
+          if (request.workspaceId === 'worker-untracked' && request.args[0] === 'reset') {
+            resetCalled = true;
+          }
+          return ok({ exitCode: 0, stdout: '', stderr: '' });
+        },
+      },
+      codex: {
+        async run(): Promise<ReturnType<typeof ok>> {
+          return ok({ codexTaskId: 'codex-untracked', processId: 'process-untracked' });
+        },
+        async taskStatus(): Promise<ReturnType<typeof ok>> {
+          return ok({
+            processId: 'process-untracked', executable: 'codex', args: ['exec'], cwd: 'C:\\repo\\.worktrees\\worker-untracked',
+            state: 'exited', startedAt: '2026-09-27T00:00:00.000Z', finishedAt: '2026-09-27T00:00:01.000Z', exitCode: 0,
+          });
+        },
+        async taskLogs(): Promise<ReturnType<typeof ok>> {
+          return ok({ entries: [], truncated: false, nextSequence: 0 });
+        },
+        async stop(): Promise<ReturnType<typeof ok>> {
+          return ok(undefined);
+        },
+      },
+    }, actor);
+
+    const result = await runtime.execute('write_swarm_run', {
+      workspaceId: 'ws-1',
+      tasks: [{ id: 'untracked', prompt: 'Create NEW_FILE.txt.' }],
+      dryRun: false,
+      userConfirmed: true,
+      reuseIdle: false,
+    }, undefined, fullBypassAuthorization);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: 'completed',
+        tasks: [{
+          id: 'untracked',
+          state: 'completed',
+          evidence: {
+            pooled: false,
+            preserved: true,
+            untrackedFiles: ['NEW_FILE.txt'],
+          },
+        }],
+      },
+    });
+    expect(resetCalled).toBe(false);
+  });
+
+  it('preserves the worktree ownership ledger when Git add or remove exits non-zero', async () => {
+    let failAdd = true;
+    let failRemove = true;
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          if (request.args[1] === 'add' && failAdd) {
+            return ok({ exitCode: 128, stdout: '', stderr: 'fatal: worktree path already exists' });
+          }
+          if (request.args[1] === 'remove' && failRemove) {
+            return ok({ exitCode: 128, stdout: '', stderr: 'fatal: worktree contains modified files' });
+          }
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    const input = { workspaceId: 'ws-1', worktreePath: '.worktrees/gc-agent', ref: 'main', dryRun: false, userConfirmed: true };
+    await expect(runtime.execute('git_worktree_spawn', input)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    failAdd = false;
+    const createdGc = await runtime.execute('git_worktree_spawn', input);
+    expect(createdGc).toMatchObject({ ok: true, value: { status: 'completed', ownershipLedger: true, worktreeLeaseGeneration: 1 } });
+    if (!createdGc.ok) throw new Error('worktree create failed');
+    const gcLease = createdGc.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+
+    const removeInput = {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/gc-agent',
+      worktreeLeaseToken: gcLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: gcLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    };
+    await expect(runtime.execute('git_worktree_remove', removeInput)).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    failRemove = false;
+    await expect(runtime.execute('git_worktree_remove', removeInput)).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    await expect(runtime.execute('git_worktree_remove', removeInput)).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+  });
+
+  it('reuses only clean idle worktrees and reports dependency compatibility', async () => {
+    const calls: Array<{ readonly args: readonly string[]; readonly cwd?: string }> = [];
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          calls.push({ args: request.args, ...(request.cwd === undefined ? {} : { cwd: request.cwd }) });
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    const created = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/pool-a', ref: 'base-a',
+      dryRun: false, userConfirmed: true,
+    });
+    expect(created).toMatchObject({ ok: true, value: { reused: false, dependenciesReusable: false, worktreeLeaseGeneration: 1 } });
+    if (!created.ok) throw new Error('worktree create failed');
+    const firstLease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/pool-a',
+      retainIdle: true, evidenceCaptured: true, dependencyFingerprint: 'lock-v1',
+      worktreeLeaseToken: firstLease.worktreeLeaseToken, worktreeLeaseGeneration: firstLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { status: 'pooled', pooled: true, evicted: [], dependencyFingerprint: 'lock-v1' } });
+
+    const reused = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/new-slot', ref: 'base-b',
+      reuseIdle: true, dependencyFingerprint: 'lock-v1',
+      dryRun: false, userConfirmed: true,
+    });
+    expect(reused).toMatchObject({
+      ok: true,
+      value: { reused: true, worktreePath: '.worktrees/pool-a', dependenciesReusable: true, worktreeLeaseGeneration: 2 },
+    });
+    if (!reused.ok) throw new Error('worktree reuse failed');
+    const secondLease = reused.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    expect(secondLease.worktreeLeaseToken).not.toBe(firstLease.worktreeLeaseToken);
+    expect(calls.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'add')).toHaveLength(1);
+    expect(calls).toContainEqual({ cwd: '.worktrees/pool-a', args: ['switch', '--detach', 'base-b'] });
+
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/pool-a',
+      retainIdle: true, evidenceCaptured: true,
+      worktreeLeaseToken: secondLease.worktreeLeaseToken, worktreeLeaseGeneration: secondLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { dependencyFingerprint: null } });
+
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/new-slot-2', ref: 'base-c',
+      reuseIdle: true, dependencyFingerprint: 'lock-v1',
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: { reused: true, worktreePath: '.worktrees/pool-a', dependenciesReusable: false, worktreeLeaseGeneration: 3 },
+    });
+  });
+
+  it('reuses an idle pool slot across later sessions of the same stable client', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-pool-'));
+    try {
+      const runtimeStatePath = path.join(directory, 'runtime.json');
+      const git = {
+        async run(_actor: FileActor, request: { readonly args: readonly string[] }): Promise<ReturnType<typeof ok>> {
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      };
+      const firstActor: FileActor = { clientId: 'stable-client', clientName: 'test', sessionId: 'session-a' };
+      const secondActor: FileActor = { clientId: 'stable-client', clientName: 'test', sessionId: 'session-b' };
+      const first = new UpgradeRuntimeService({ platform: 'win32', runtimeStatePath, git }, firstActor);
+      const created = await first.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: '.worktrees/persisted-a', ref: 'main',
+        dryRun: false, userConfirmed: true,
+      });
+      if (!created.ok) throw new Error('worktree create failed');
+      const lease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+      await expect(first.execute('git_worktree_remove', {
+        workspaceId: 'ws-1', worktreePath: '.worktrees/persisted-a',
+        retainIdle: true, evidenceCaptured: true, dependencyFingerprint: 'lock-v1',
+        worktreeLeaseToken: lease.worktreeLeaseToken, worktreeLeaseGeneration: lease.worktreeLeaseGeneration,
+        dryRun: false, userConfirmed: true,
+      })).resolves.toMatchObject({ ok: true, value: { pooled: true } });
+
+      const second = new UpgradeRuntimeService({ platform: 'win32', runtimeStatePath, git }, secondActor);
+      await expect(second.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: '.worktrees/fallback', ref: 'next',
+        reuseIdle: true, dependencyFingerprint: 'lock-v1',
+        dryRun: false, userConfirmed: true,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: { reused: true, worktreePath: '.worktrees/persisted-a', dependenciesReusable: true, worktreeLeaseGeneration: 2 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a stale release after a pooled worktree has been leased again', async () => {
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    const created = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/stale-a', ref: 'main',
+      dryRun: false, userConfirmed: true,
+    });
+    if (!created.ok) throw new Error('worktree create failed');
+    const staleLease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    await runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/stale-a',
+      retainIdle: true, evidenceCaptured: true,
+      worktreeLeaseToken: staleLease.worktreeLeaseToken, worktreeLeaseGeneration: staleLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    });
+    const leasedAgain = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/fallback', ref: 'next',
+      reuseIdle: true, dryRun: false, userConfirmed: true,
+    });
+    expect(leasedAgain).toMatchObject({ ok: true, value: { reused: true, worktreeLeaseGeneration: 2 } });
+
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/stale-a',
+      retainIdle: true, evidenceCaptured: true,
+      worktreeLeaseToken: staleLease.worktreeLeaseToken, worktreeLeaseGeneration: staleLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  });
+
+  it('refuses dirty pool release and never reuses that worktree', async () => {
+    let dirty = false;
+    const calls: Array<{ readonly args: readonly string[]; readonly cwd?: string }> = [];
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          calls.push({ args: request.args, ...(request.cwd === undefined ? {} : { cwd: request.cwd }) });
+          if (request.args[0] === 'status') {
+            return ok({ exitCode: 0, stdout: dirty ? '?? unfinished.txt\n' : '', stderr: '' });
+          }
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    const created = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/dirty-a', ref: 'main',
+      dryRun: false, userConfirmed: true,
+    });
+    if (!created.ok) throw new Error('worktree create failed');
+    const lease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    dirty = true;
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/dirty-a',
+      retainIdle: true, evidenceCaptured: true,
+      worktreeLeaseToken: lease.worktreeLeaseToken, worktreeLeaseGeneration: lease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+    dirty = false;
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/clean-b', ref: 'main',
+      reuseIdle: true, dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: { reused: false, worktreePath: '.worktrees/clean-b' },
+    });
+    expect(calls.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'add')).toHaveLength(2);
+  });
+
+  it('leases different idle worktrees concurrently and evicts the oldest clean idle slot', async () => {
+    const calls: Array<{ readonly args: readonly string[]; readonly cwd?: string }> = [];
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          calls.push({ args: request.args, ...(request.cwd === undefined ? {} : { cwd: request.cwd }) });
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    for (const name of ['pool-1', 'pool-2', 'pool-3']) {
+      const created = await runtime.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: `.worktrees/${name}`, ref: 'main',
+        dryRun: false, userConfirmed: true,
+      });
+      if (!created.ok) throw new Error('worktree create failed');
+      const lease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+      await runtime.execute('git_worktree_remove', {
+        workspaceId: 'ws-1', worktreePath: `.worktrees/${name}`,
+        retainIdle: true, evidenceCaptured: true, maxIdle: 2,
+        worktreeLeaseToken: lease.worktreeLeaseToken, worktreeLeaseGeneration: lease.worktreeLeaseGeneration,
+        dryRun: false, userConfirmed: true,
+      });
+    }
+
+    expect(calls).toContainEqual({ args: ['worktree', 'remove', '.worktrees/pool-1'] });
+
+    const [first, second] = await Promise.all([
+      runtime.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: '.worktrees/fallback-1', ref: 'next-a',
+        reuseIdle: true, dryRun: false, userConfirmed: true,
+      }),
+      runtime.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: '.worktrees/fallback-2', ref: 'next-b',
+        reuseIdle: true, dryRun: false, userConfirmed: true,
+      }),
+    ]);
+    expect(first).toMatchObject({ ok: true, value: { reused: true } });
+    expect(second).toMatchObject({ ok: true, value: { reused: true } });
+    if (first.ok && second.ok) {
+      expect((first.value as { worktreePath: string }).worktreePath)
+        .not.toBe((second.value as { worktreePath: string }).worktreePath);
+    }
+  });
+
+  it('does not lease a worktree while that slot is reserved for eviction', async () => {
+    let blockPoolOneStatus = false;
+    let announceEviction!: () => void;
+    let continueEviction!: () => void;
+    const evictionStarted = new Promise<void>((resolve) => { announceEviction = resolve; });
+    const evictionContinue = new Promise<void>((resolve) => { continueEviction = resolve; });
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          if (request.args[0] === 'status' && request.cwd === '.worktrees/evict-1' && blockPoolOneStatus) {
+            announceEviction();
+            await evictionContinue;
+          }
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    for (const name of ['evict-1', 'evict-2']) {
+      const created = await runtime.execute('git_worktree_spawn', {
+        workspaceId: 'ws-1', worktreePath: `.worktrees/${name}`, ref: 'main',
+        dryRun: false, userConfirmed: true,
+      });
+      if (!created.ok) throw new Error('worktree create failed');
+      const lease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+      await runtime.execute('git_worktree_remove', {
+        workspaceId: 'ws-1', worktreePath: `.worktrees/${name}`,
+        retainIdle: true, evidenceCaptured: true, maxIdle: 2,
+        worktreeLeaseToken: lease.worktreeLeaseToken, worktreeLeaseGeneration: lease.worktreeLeaseGeneration,
+        dryRun: false, userConfirmed: true,
+      });
+    }
+
+    const third = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/evict-3', ref: 'main',
+      dryRun: false, userConfirmed: true,
+    });
+    if (!third.ok) throw new Error('worktree create failed');
+    const thirdLease = third.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    blockPoolOneStatus = true;
+    const releaseThird = runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/evict-3',
+      retainIdle: true, evidenceCaptured: true, maxIdle: 2,
+      worktreeLeaseToken: thirdLease.worktreeLeaseToken, worktreeLeaseGeneration: thirdLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    });
+
+    await evictionStarted;
+    const concurrentLease = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/fallback', ref: 'next',
+      reuseIdle: true, dryRun: false, userConfirmed: true,
+    });
+    expect(concurrentLease).toMatchObject({ ok: true, value: { reused: true, worktreePath: '.worktrees/evict-2' } });
+    continueEviction();
+    await expect(releaseThird).resolves.toMatchObject({ ok: true, value: { evicted: ['.worktrees/evict-1'] } });
+  });
+
+  it('prevents ordinary removal from racing a newly reused active lease', async () => {
+    let blockReuseStatus = false;
+    let announceReuseClaim!: () => void;
+    let continueReuse!: () => void;
+    const reuseClaimed = new Promise<void>((resolve) => { announceReuseClaim = resolve; });
+    const reuseContinue = new Promise<void>((resolve) => { continueReuse = resolve; });
+    const calls: Array<{ readonly args: readonly string[]; readonly cwd?: string }> = [];
+    const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          calls.push({ args: request.args, ...(request.cwd === undefined ? {} : { cwd: request.cwd }) });
+          if (request.args[0] === 'status' && request.cwd === '.worktrees/remove-race' && blockReuseStatus) {
+            announceReuseClaim();
+            await reuseContinue;
+          }
+          if (request.args[0] === 'status') return ok({ exitCode: 0, stdout: '', stderr: '' });
+          return ok({ exitCode: 0, stdout: 'ok', stderr: '' });
+        },
+      },
+    }, actor);
+
+    const created = await runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/remove-race', ref: 'main',
+      dryRun: false, userConfirmed: true,
+    });
+    if (!created.ok) throw new Error('worktree create failed');
+    const firstLease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/remove-race',
+      retainIdle: true, evidenceCaptured: true,
+      worktreeLeaseToken: firstLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: firstLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { pooled: true } });
+
+    blockReuseStatus = true;
+    const reuse = runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/fallback-remove-race', ref: 'next',
+      reuseIdle: true, dryRun: false, userConfirmed: true,
+    });
+    await reuseClaimed;
+
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/remove-race',
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/remove-race',
+      worktreeLeaseToken: firstLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: firstLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(calls.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'remove')).toHaveLength(0);
+
+    continueReuse();
+    const reused = await reuse;
+    expect(reused).toMatchObject({ ok: true, value: { reused: true, worktreeLeaseGeneration: 2 } });
+    if (!reused.ok) throw new Error('worktree reuse failed');
+    const currentLease = reused.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
+
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-1', worktreePath: '.worktrees/remove-race',
+      worktreeLeaseToken: currentLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: currentLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    expect(calls.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'remove')).toHaveLength(1);
   });
 
   it('uses POSIX worktree syntax without rewriting foreign Windows paths', async () => {

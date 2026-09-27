@@ -40,11 +40,17 @@ describe('upgrade administrative recovery snapshots', () => {
       },
     }, actor);
 
-    await expect(runtime.execute('git_worktree_spawn', {
+    const created = await runtime.execute('git_worktree_spawn', {
       workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', ref: 'main', dryRun: false, userConfirmed: true,
-    })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    });
+    expect(created).toMatchObject({ ok: true, value: { status: 'completed', worktreeLeaseGeneration: 1 } });
+    if (!created.ok) throw new Error('worktree create failed');
+    const worktreeLease = created.value as { worktreeLeaseToken: string; worktreeLeaseGeneration: number };
     await expect(runtime.execute('git_worktree_remove', {
-      workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true,
+      workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1',
+      worktreeLeaseToken: worktreeLease.worktreeLeaseToken,
+      worktreeLeaseGeneration: worktreeLease.worktreeLeaseGeneration,
+      dryRun: false, userConfirmed: true,
     })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
 
     expect(mutableCalls.at(-1)).toEqual(['worktree', 'remove', '.worktrees/agent-1']);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
-import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type LogSessionSummary, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type CodexTaskLogsResult, type CodexTaskMonitorItem, type CodexTaskMonitorState, type InFlightWorkItem, type LogSessionSummary, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
@@ -8,7 +8,23 @@ import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
 import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
 import { collectSessionFilterOptions, collectWorkspaceFilterOptions, type ScopeFilterSample } from '../../scope-filter-options.js';
 
-export type WorkLogFilter = 'all' | 'error';
+export type WorkLogFilter = 'all' | 'error' | 'codex';
+
+export interface CodexWorkLogLabels {
+  readonly task: string;
+  readonly statuses: Readonly<Record<CodexTaskMonitorState, string>>;
+  readonly elapsed: string;
+  readonly finished: string;
+  readonly output: string;
+  readonly noOutput: string;
+  readonly truncated: string;
+  readonly stop: string;
+  readonly stopping: string;
+  readonly model: string;
+  readonly reasoning: string;
+  readonly logError: string;
+  readonly exitCode: string;
+}
 
 export interface LogScopeSelection {
   readonly workspaceId: string | null;
@@ -25,6 +41,7 @@ interface WorkLogPanelProps {
   readonly emptyLabel: string;
   readonly filterAllLabel: string;
   readonly filterErrorLabel: string;
+  readonly filterCodexLabel?: string;
   readonly clearSessionLabel: string;
   readonly clearWorkspaceLabel: string;
   readonly clearAllLabel: string;
@@ -45,6 +62,13 @@ interface WorkLogPanelProps {
   readonly compact?: boolean;
   readonly workspaces?: readonly WorkspaceSummary[];
   readonly defaultWorkspaceId?: string | null;
+  readonly codexTasks?: readonly CodexTaskMonitorItem[];
+  readonly codexTaskLogs?: Readonly<Record<string, CodexTaskLogsResult>>;
+  readonly codexTaskLogErrors?: ReadonlySet<string>;
+  readonly codexTaskStoppingIds?: ReadonlySet<string>;
+  readonly codexLabels?: CodexWorkLogLabels;
+  readonly onCodexTaskExpanded?: (codexTaskId: string, expanded: boolean) => void;
+  readonly onStopCodexTask?: (codexTaskId: string) => Promise<void>;
   readonly workspaceLabel?: string;
   readonly sessionLabel?: string;
   readonly scopeAllLabel?: string;
@@ -70,16 +94,17 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
   const currentFeed = useMemo(
-    () => ({ entries: props.entries, inFlight: props.inFlight, workspaces: props.workspaces }),
-    [props.entries, props.inFlight, props.workspaces],
+    () => ({ entries: props.entries, inFlight: props.inFlight, workspaces: props.workspaces, codexTasks: props.codexTasks ?? [] }),
+    [props.entries, props.inFlight, props.workspaces, props.codexTasks],
   );
   const [feedFreeze, setFeedFreeze] = useState<typeof currentFeed | null>(null);
   const feed = activeLogFeed(feedFreeze, currentFeed);
   const scopeFilterSamples = useMemo<readonly ScopeFilterSample[]>(() => [
     ...feed.entries.map((entry) => ({ workspaceId: entry.workspaceId, sessionId: entry.sessionId, timestamp: entry.timestamp })),
     ...feed.inFlight.map((item) => ({ workspaceId: item.workspaceId, sessionId: item.sessionId, timestamp: item.startedAt })),
+    ...(props.filter === 'codex' ? feed.codexTasks.map((item) => ({ workspaceId: item.workspaceId, sessionId: null, timestamp: item.finishedAt ?? item.startedAt })) : []),
     ...(props.sessions ?? []).map((session) => ({ workspaceId: session.workspaceId, sessionId: session.sessionId, timestamp: session.startedAt })),
-  ], [feed, props.sessions]);
+  ], [feed, props.filter, props.sessions]);
   const workspaceOptions = useMemo(() => collectWorkspaceFilterOptions(scopeFilterSamples, feed.workspaces), [scopeFilterSamples, feed.workspaces]);
   const sessionOptions = useMemo(
     () => collectSessionFilterOptions(scopeFilterSamples, workspaceId, feed.workspaces, props.locale ?? 'th', props.sessionLabel ?? 'Session'),
@@ -130,6 +155,12 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
     () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, feed.workspaces, hiddenMatches),
     [feed, props.filter, search, scope, hiddenMatches],
   );
+  const codexTasks = useMemo(() => filteredCodexTasks(
+    props.filter === 'codex' ? feed.codexTasks : [],
+    search,
+    { workspaceId, sessionId },
+    feed.workspaces,
+  ), [feed, props.filter, search, workspaceId, sessionId]);
   useEffect(() => setVisibleCount(PROGRESSIVE_PAGE_SIZE), [props.filter, search, workspaceId, sessionId]);
   const visible = props.compact ? rows.slice(0, 40) : rows.slice(0, visibleCount);
   const resolvedTargets = useMemo(() => completedTargetByCallId(feed.entries), [feed]);
@@ -173,6 +204,13 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
             onClick={() => props.onFilterChange('error')}
           >
             {props.filterErrorLabel}
+          </button>
+          <button
+            type="button"
+            className={props.filter === 'codex' ? 'active' : undefined}
+            onClick={() => props.onFilterChange('codex')}
+          >
+            {props.filterCodexLabel ?? 'Codex'}
           </button>
           {props.onExport === undefined ? null : <button type="button" onClick={() => { void props.onExport?.(rows.map(workLogRowIdentity)); }}>{props.exportLabel ?? 'Export'}</button>}
           <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
@@ -219,7 +257,21 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
       <div className="worklog-stream" data-testid="work-log" onScroll={loadMoreOnScroll}>
-        {visible.length === 0 && detailSearchState.status !== 'loading' ? <p>{props.emptyLabel}</p> : null}
+        {visible.length === 0 && codexTasks.length === 0 && detailSearchState.status !== 'loading' ? <p>{props.emptyLabel}</p> : null}
+        {codexTasks.map((task) => (
+          <CodexTaskRow
+            key={task.codexTaskId}
+            task={task}
+            workspaceName={feed.workspaces?.find((workspace) => workspace.id === task.workspaceId)?.displayName ?? task.workspaceId}
+            locale={props.locale ?? 'th'}
+            logs={props.codexTaskLogs?.[task.codexTaskId]}
+            hasLogError={props.codexTaskLogErrors?.has(task.codexTaskId) ?? false}
+            isStopping={props.codexTaskStoppingIds?.has(task.codexTaskId) ?? false}
+            labels={props.codexLabels}
+            onExpanded={props.onCodexTaskExpanded}
+            onStop={props.onStopCodexTask}
+          />
+        ))}
         {visible.map((row) => row.kind === 'inflight' ? (
           <div key={`inflight:${row.id}`} className="worklog-line inflight">
             <time>{formatLogUiTime(row.item.startedAt, props.locale ?? 'th')}</time>
@@ -246,6 +298,94 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       </div>
     </section>
   );
+}
+
+const defaultCodexLabels: CodexWorkLogLabels = {
+  task: 'Codex task',
+  statuses: {
+    starting: 'Starting', running: 'Running', exited: 'Finished', failed: 'Failed', stopped: 'Stopped', timed_out: 'Timed out', termination_unverified: 'Checking stop',
+  },
+  elapsed: 'Elapsed', finished: 'Finished', output: 'Output', noOutput: 'No output yet', truncated: 'Showing the latest output',
+  stop: 'Stop', stopping: 'Stopping…', model: 'Model', reasoning: 'Reasoning', logError: 'Codex output is unavailable',
+  exitCode: 'Exit code',
+};
+
+function filteredCodexTasks(
+  tasks: readonly CodexTaskMonitorItem[],
+  search: string,
+  scope: LogScopeSelection,
+  workspaces: readonly WorkspaceSummary[] | undefined,
+): readonly CodexTaskMonitorItem[] {
+  const needle = search.trim().toLowerCase();
+  return tasks.filter((task) => {
+    if (scope.sessionId !== null || (scope.workspaceId !== null && !workspaceScopeMatches(workspaces ?? [], task.workspaceId, scope.workspaceId))) return false;
+    if (needle.length === 0) return true;
+    const workspaceName = workspaces?.find((workspace) => workspace.id === task.workspaceId)?.displayName ?? '';
+    return `${task.codexTaskId} ${task.workspaceId} ${workspaceName} ${task.state}`.toLowerCase().includes(needle);
+  }).sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
+
+function CodexTaskRow(props: {
+  readonly task: CodexTaskMonitorItem;
+  readonly workspaceName: string;
+  readonly locale: UiLocale;
+  readonly logs: CodexTaskLogsResult | undefined;
+  readonly hasLogError: boolean;
+  readonly isStopping: boolean;
+  readonly labels: CodexWorkLogLabels | undefined;
+  readonly onExpanded: ((codexTaskId: string, expanded: boolean) => void) | undefined;
+  readonly onStop: ((codexTaskId: string) => Promise<void>) | undefined;
+}): ReactElement {
+  const labels = props.labels ?? defaultCodexLabels;
+  const task = props.task;
+  const startedAt = Date.parse(task.startedAt);
+  const finishedAt = task.finishedAt;
+  const live = task.state === 'starting' || task.state === 'running';
+  const canStop = live || task.state === 'termination_unverified';
+  const displayState = task.state === 'exited' && task.exitCode !== undefined && task.exitCode !== 0 ? 'failed' : task.state;
+  const durationMs = Math.max(0, Date.parse(finishedAt ?? new Date().toISOString()) - startedAt);
+  const model = parseCodexLogHeader(props.logs?.entries ?? []);
+  const output = props.logs?.entries.map((entry) => `${entry.stream}: ${entry.text}`).join('\n');
+  return (
+    <div className={`worklog-line codex-task ${task.state}`} data-codex-task-id={task.codexTaskId}>
+      <time>{formatLogUiTime(finishedAt ?? task.startedAt, props.locale)}</time>
+      <strong>{labels.task}</strong>
+      <span className="codex-task-state">{labels.statuses[displayState]}</span>
+      <span className="worklog-summary">{props.workspaceName}</span>
+      <code>{task.codexTaskId}</code>
+      <em>{live ? `${labels.elapsed} ${formatCodexDuration(durationMs, props.locale)}` : `${labels.finished} ${finishedAt === undefined ? '' : formatLogUiTime(finishedAt, props.locale)}`}</em>
+      {!canStop || props.onStop === undefined ? null : (
+        <button type="button" disabled={props.isStopping} onClick={() => { void props.onStop?.(task.codexTaskId); }}>
+          {props.isStopping ? labels.stopping : labels.stop}
+        </button>
+      )}
+      <details className="codex-task-details" onToggle={(event) => props.onExpanded?.(task.codexTaskId, event.currentTarget.open)}>
+        <summary>{labels.output}</summary>
+        {model.model === undefined ? null : <p>{labels.model}: {model.model}</p>}
+        {model.reasoning === undefined ? null : <p>{labels.reasoning}: {model.reasoning}</p>}
+        {task.exitCode === undefined ? null : <p>{labels.exitCode}: {task.exitCode}</p>}
+        {props.hasLogError ? <p role="alert">{labels.logError}</p> : null}
+        {props.logs?.truncated ? <p>{labels.truncated}</p> : null}
+        <pre>{output === undefined || output.length === 0 ? labels.noOutput : output}</pre>
+      </details>
+    </div>
+  );
+}
+
+function formatCodexDuration(milliseconds: number, locale: UiLocale): string {
+  const seconds = Math.floor(milliseconds / 1_000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  const minutesText = new Intl.NumberFormat(locale, { style: 'unit', unit: 'minute', unitDisplay: 'short' }).format(minutes);
+  const secondsText = new Intl.NumberFormat(locale, { style: 'unit', unit: 'second', unitDisplay: 'short' }).format(remainingSeconds);
+  return `${minutesText} ${secondsText}`;
+}
+
+export function parseCodexLogHeader(entries: CodexTaskLogsResult['entries']): { readonly model?: string; readonly reasoning?: string } {
+  const header = entries.slice(0, 20).map((entry) => entry.text).join('\n');
+  const model = /\b["']?model["']?\s*[:=]\s*["']?([A-Za-z0-9][A-Za-z0-9_.:/+-]{0,127})/i.exec(header)?.[1];
+  const reasoning = /\b["']?reasoning(?:[\s_-]+effort)?["']?\s*[:=]\s*["']?([A-Za-z0-9_-]{1,48})/i.exec(header)?.[1];
+  return { ...(model === undefined ? {} : { model }), ...(reasoning === undefined ? {} : { reasoning }) };
 }
 
 function CopyButton(props: {
@@ -276,11 +416,17 @@ export function newestFirstWorkLogRows(
   const needle = search.trim().toLowerCase();
   const scopedEntries = entries.filter((entry) => matchesScope(entry, scope, workspaces));
   const scopedInFlight = inFlight.filter((entry) => matchesScope(entry, scope, workspaces));
-  const entryRows = (filter === 'error' ? scopedEntries.filter((entry) => entry.kind === 'error') : scopedEntries)
+  const matchingEntries = filter === 'error'
+    ? scopedEntries.filter((entry) => entry.kind === 'error')
+    : filter === 'codex'
+      ? scopedEntries.filter((entry) => isCodexRelatedActivity(entry.toolName))
+      : scopedEntries;
+  const entryRows = matchingEntries
     .map((item): WorkLogRow => ({ kind: 'entry', timestamp: item.timestamp, id: item.id, item }));
   const inFlightRows = filter === 'error'
     ? []
-    : scopedInFlight.map((item): WorkLogRow => ({ kind: 'inflight', timestamp: item.startedAt, id: scopedActivityId(item), item }));
+    : (filter === 'codex' ? scopedInFlight.filter((item) => isCodexRelatedActivity(item.toolName)) : scopedInFlight)
+      .map((item): WorkLogRow => ({ kind: 'inflight', timestamp: item.startedAt, id: scopedActivityId(item), item }));
   return [...entryRows, ...inFlightRows]
     .filter((row) => needle.length === 0 || workLogSearchText(row).includes(needle) || hiddenMatches.has(workLogRowIdentity(row)))
     .sort((left, right) => {
@@ -290,6 +436,12 @@ export function newestFirstWorkLogRows(
       const timestampOrder = right.timestamp.localeCompare(left.timestamp);
       return timestampOrder !== 0 ? timestampOrder : right.id.localeCompare(left.id);
     });
+}
+
+function isCodexRelatedActivity(toolName: string): boolean {
+  return toolName.startsWith('codex_') || toolName.startsWith('agent_swarm_')
+    || toolName === 'delegate' || toolName.startsWith('delegate_')
+    || toolName === 'parallel_delegate' || toolName === 'task_create' || toolName === 'task_cancel';
 }
 
 function workLogSearchText(row: WorkLogRow): string {

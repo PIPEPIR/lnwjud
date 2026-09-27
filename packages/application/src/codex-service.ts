@@ -3,7 +3,7 @@ import { appError, err, isApplicationAuthorized, ok, type GoalTaskCancellationOb
 import { CodexAdapter, type CodexSandboxMode, type CodexStatus } from '@lnwjud/codex';
 import type { CodexRunAuditInput } from '@lnwjud/audit';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
-import type { LogQuery, ManagedProcess, ProcessLogResult } from '@lnwjud/process';
+import type { LogQuery, ManagedProcess, ManagedProcessState, ProcessLogResult } from '@lnwjud/process';
 import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
 
@@ -11,7 +11,7 @@ export const MAX_CODEX_INSTRUCTION_BYTES = 256 * 1024;
 
 export interface CodexAdapterPort {
   status(): Promise<Result<CodexStatus>>;
-  start(cwd: string, instruction: string, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void, sandboxMode?: CodexSandboxMode): Promise<Result<ManagedProcess>>;
+  start(cwd: string, instruction: string, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void, sandboxMode?: CodexSandboxMode, onTerminal?: (process: ManagedProcess) => void): Promise<Result<ManagedProcess>>;
   statusProcess(processId: string): Result<ManagedProcess>;
   logs(processId: string, query: LogQuery): Result<ProcessLogResult>;
   stop(processId: string, autoRetry?: boolean): Promise<Result<void>>;
@@ -30,6 +30,7 @@ export interface CodexServiceDependencies {
   readonly auditService?: CodexAuditPort;
   readonly taskIdFactory?: () => string;
   readonly diagnostic?: (message: string) => void;
+  readonly onTaskTerminal?: (event: CodexTaskTerminalEvent) => void;
 }
 
 interface CodexTaskOwner {
@@ -49,6 +50,33 @@ export interface CodexTaskListItem {
   readonly process: ManagedProcess;
 }
 
+export type CodexTerminalState = Extract<ManagedProcessState, 'exited' | 'failed' | 'stopped' | 'timed_out'>;
+
+export interface CodexTaskTerminalEvent {
+  readonly codexTaskId: string;
+  readonly workspaceId: string;
+  readonly state: CodexTerminalState;
+  readonly startedAt: string;
+  readonly finishedAt?: string;
+  readonly exitCode?: number;
+}
+
+export interface CodexHostTaskSummary extends CodexTaskTerminalFields {
+  readonly codexTaskId: string;
+  readonly workspaceId: string;
+}
+
+interface CodexTaskTerminalFields {
+  readonly state: ManagedProcessState;
+  readonly startedAt: string;
+  readonly finishedAt?: string;
+  readonly exitCode?: number;
+}
+
+export const MAX_CODEX_HOST_LOG_TAIL_LINES = 200;
+export const DEFAULT_CODEX_HOST_LOG_TAIL_LINES = 100;
+export const MAX_CODEX_HOST_LOG_BYTES = 64 * 1024;
+
 export class CodexService {
   private readonly adapter: CodexAdapterPort;
   private readonly guard: WorkspacePathGuard;
@@ -57,6 +85,7 @@ export class CodexService {
   private readonly auditService: CodexAuditPort | undefined;
   private readonly taskIdFactory: () => string;
   private readonly diagnostic: (message: string) => void;
+  private readonly onTaskTerminal: ((event: CodexTaskTerminalEvent) => void) | undefined;
   private readonly owners = new Map<string, CodexTaskOwner>();
 
   public constructor(
@@ -70,6 +99,7 @@ export class CodexService {
     this.auditService = dependencies.auditService;
     this.taskIdFactory = dependencies.taskIdFactory ?? randomUUID;
     this.diagnostic = dependencies.diagnostic ?? ((message: string): void => { console.error(message); });
+    this.onTaskTerminal = dependencies.onTaskTerminal;
   }
 
   public async status(actor: FileActor): Promise<Result<CodexStatus>> {
@@ -106,10 +136,28 @@ export class CodexService {
 
     if (isAborted(signal)) return cancelledCodexRun();
     const codexTaskId = this.taskIdFactory();
+    let terminalNotified = false;
     const registerOwner = (process: ManagedProcess): void => {
       this.owners.set(codexTaskId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId, processId: process.processId });
     };
-    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction, signal, registerOwner, sandboxMode);
+    const reportTerminal = (process: ManagedProcess): void => {
+      if (terminalNotified || !isVerifiedTerminalProcess(process.state)) return;
+      terminalNotified = true;
+      const event: CodexTaskTerminalEvent = {
+        codexTaskId,
+        workspaceId,
+        state: process.state,
+        startedAt: process.startedAt,
+        ...(process.finishedAt === undefined ? {} : { finishedAt: process.finishedAt }),
+        ...(process.exitCode === undefined ? {} : { exitCode: process.exitCode }),
+      };
+      try {
+        this.onTaskTerminal?.(event);
+      } catch {
+        this.diagnostic(`Codex terminal callback failed for task ${codexTaskId}`);
+      }
+    };
+    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction, signal, registerOwner, sandboxMode, reportTerminal);
     if (!started.ok) return started;
     if (isAborted(signal)) {
       await this.adapter.stop(started.value.processId, true);
@@ -183,6 +231,51 @@ export class CodexService {
     return ok(tasks);
   }
 
+  /** Trusted Desktop-only task projection; it intentionally omits process args and MCP ownership fields. */
+  public hostTaskList(): Result<readonly CodexHostTaskSummary[]> {
+    const tasks: CodexHostTaskSummary[] = [];
+    for (const [codexTaskId, owner] of this.owners) {
+      const process = this.adapter.statusProcess(owner.processId);
+      if (!process.ok) {
+        if (process.error.code === 'PROCESS_NOT_FOUND') this.owners.delete(codexTaskId);
+        continue;
+      }
+      tasks.push({
+        codexTaskId,
+        workspaceId: owner.workspaceId,
+        state: process.value.state,
+        startedAt: process.value.startedAt,
+        ...(process.value.finishedAt === undefined ? {} : { finishedAt: process.value.finishedAt }),
+        ...(process.value.exitCode === undefined ? {} : { exitCode: process.value.exitCode }),
+      });
+    }
+    return ok(tasks);
+  }
+
+  /** Trusted Desktop-only bounded log read for a task handle already known to this service. */
+  public hostTaskLogs(codexTaskId: string, query: LogQuery = {}): Result<ProcessLogResult> {
+    if (!isCodexTaskId(codexTaskId)) return err(appError('INVALID_INPUT', 'Codex task ID is invalid'));
+    const tailLines = query.tailLines ?? DEFAULT_CODEX_HOST_LOG_TAIL_LINES;
+    if (!Number.isInteger(tailLines) || tailLines < 1 || tailLines > MAX_CODEX_HOST_LOG_TAIL_LINES) {
+      return err(appError('INVALID_INPUT', 'Codex log tail limit is invalid'));
+    }
+    const owner = this.owners.get(codexTaskId);
+    if (owner === undefined) return err(appError('PROCESS_NOT_FOUND', 'Codex task was not found'));
+    const result = this.adapter.logs(owner.processId, { tailLines });
+    return result.ok ? ok(boundCodexHostLogs(result.value)) : result;
+  }
+
+  /** Trusted Desktop-only stop path; a caller must name a task handle retained by this service. */
+  public async hostStopTask(codexTaskId: string): Promise<Result<void>> {
+    if (!isCodexTaskId(codexTaskId)) return err(appError('INVALID_INPUT', 'Codex task ID is invalid'));
+    const owner = this.owners.get(codexTaskId);
+    if (owner === undefined) return err(appError('PROCESS_NOT_FOUND', 'Codex task was not found'));
+    const process = this.adapter.statusProcess(owner.processId);
+    if (!process.ok) return process.error.code === 'PROCESS_NOT_FOUND' ? ok(undefined) : process;
+    if (!isActiveProcess(process.value.state)) return ok(undefined);
+    return this.adapter.stop(owner.processId, true);
+  }
+
   public async taskLogs(actor: FileActor, workspaceId: string, codexTaskId: string, query: LogQuery): Promise<Result<ProcessLogResult>> {
     const owner = this.authorize(actor, workspaceId, codexTaskId);
     if (!owner.ok) return owner;
@@ -237,6 +330,37 @@ function cancelledCodexRun(): Result<never> {
   return err(appError('PROCESS_TIMEOUT', 'Codex run was cancelled before launch completed', true));
 }
 
-function isVerifiedTerminalProcess(state: ManagedProcess['state']): boolean {
+function isVerifiedTerminalProcess(state: ManagedProcess['state']): state is CodexTerminalState {
   return state === 'exited' || state === 'failed' || state === 'stopped' || state === 'timed_out';
+}
+
+function isActiveProcess(state: ManagedProcess['state']): boolean {
+  return state === 'starting' || state === 'running' || state === 'termination_unverified';
+}
+
+function isCodexTaskId(value: string): boolean {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 256;
+}
+
+function boundCodexHostLogs(result: ProcessLogResult): ProcessLogResult {
+  let bytes = 0;
+  let omitted = false;
+  const entries: ProcessLogResult['entries'][number][] = [];
+  for (const entry of [...result.entries].reverse()) {
+    const size = Buffer.byteLength(entry.text, 'utf8');
+    const remaining = MAX_CODEX_HOST_LOG_BYTES - bytes;
+    if (remaining <= 0) {
+      omitted = true;
+      break;
+    }
+    if (size > remaining) {
+      const text = Buffer.from(entry.text, 'utf8').subarray(size - remaining).toString('utf8');
+      entries.push({ ...entry, text });
+      omitted = true;
+      break;
+    }
+    bytes += size;
+    entries.push(entry);
+  }
+  return { entries: entries.reverse(), truncated: result.truncated || omitted, nextSequence: result.nextSequence };
 }

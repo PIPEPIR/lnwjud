@@ -106,6 +106,37 @@ describe('preload Tool Catalog validation', () => {
     expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.factoryReset);
   });
 
+  it('validates prompt-free Codex monitor responses and bounded log requests', async () => {
+    const task = {
+      codexTaskId: 'codex-1', workspaceId: 'workspace-1', state: 'running', startedAt: checkedAt,
+    };
+    electron.invoke.mockResolvedValueOnce([task]);
+    await expect(electron.exposed!.listCodexTasks()).resolves.toEqual([task]);
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.listCodexTasks);
+
+    electron.invoke.mockResolvedValueOnce({
+      entries: [{ sequence: 1, stream: 'stdout', text: 'redacted output' }], truncated: false, nextSequence: 2,
+    });
+    await expect(electron.exposed!.readCodexTaskLogs({ codexTaskId: 'codex-1', tailLines: 20 })).resolves.toMatchObject({
+      entries: [{ sequence: 1, stream: 'stdout', text: 'redacted output' }], nextSequence: 2,
+    });
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.readCodexTaskLogs, { codexTaskId: 'codex-1', tailLines: 20 });
+
+    await expect(electron.exposed!.readCodexTaskLogs({ codexTaskId: '', tailLines: 20 }))
+      .rejects.toThrow('Invalid IPC request');
+    await expect(electron.exposed!.readCodexTaskLogs({ codexTaskId: 'codex-1', tailLines: 201 }))
+      .rejects.toThrow('Invalid IPC request');
+    electron.invoke.mockResolvedValueOnce([{ ...task, error: 'private delegated prompt' }]);
+    await expect(electron.exposed!.listCodexTasks()).rejects.toThrow('Invalid IPC response');
+  });
+
+  it('validates the host-only Codex stop result through preload', async () => {
+    electron.invoke.mockResolvedValueOnce({ stopped: true });
+    await expect(electron.exposed!.stopCodexTask({ codexTaskId: 'codex-1' })).resolves.toEqual({ stopped: true });
+    expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.stopCodexTask, { codexTaskId: 'codex-1' });
+    await expect(electron.exposed!.stopCodexTask({ codexTaskId: ' ' })).rejects.toThrow('Invalid IPC request');
+  });
+
   it('allows the ngrok authtoken setup target through the preload bridge', async () => {
     electron.invoke.mockResolvedValueOnce({ opened: true });
     await expect(electron.exposed!.openExternalSetupPage({ target: 'ngrok_authtoken' })).resolves.toEqual({ opened: true });

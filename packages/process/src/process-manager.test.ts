@@ -36,6 +36,67 @@ describe('ProcessManager', () => {
     ]));
   });
 
+  it('preserves ordinary process output when Codex redaction is not enabled', async () => {
+    const manager = new ProcessManager();
+    const started = await manager.start({
+      executable: process.execPath,
+      args: ['-e', 'process.stdout.write(JSON.stringify({ api_key: "ordinary-output" }))'],
+      cwd: process.cwd(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForState(manager, started.value.processId, 'exited');
+    const logs = manager.logs(started.value.processId, {});
+
+    expect(logs).toMatchObject({ ok: true, value: { entries: [{ text: '{"api_key":"ordinary-output"}' }] } });
+  });
+
+  it('redacts delegated prompts from process snapshots and retained logs', async () => {
+    const manager = new ProcessManager();
+    const prompt = 'private delegated prompt with API_TOKEN=secret-value';
+    const started = await manager.start({
+      executable: process.execPath,
+      args: ['-e', 'const value = process.argv[1]; process.stdout.write(value.slice(0, 12)); setTimeout(() => { process.stdout.write(value.slice(12)); process.stdout.write(\'\\n{"api_key":"unrelated-secret"}\\n{"password":"semi;colon-secret"}\\n{"access_token":"split-secret-frag-\'); setTimeout(() => { process.stdout.write(\'ment-987"}\\n\'); process.stdout.write(value.slice(0, 8)); }, 40); }, 40);', prompt],
+      cwd: process.cwd(),
+      redactOutputValues: [prompt],
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    expect(started.value.args).not.toContain(prompt);
+    expect(JSON.stringify(manager.list())).not.toContain(prompt);
+
+    await waitForState(manager, started.value.processId, 'exited');
+    const status = manager.status(started.value.processId);
+    const logs = manager.logs(started.value.processId, {});
+
+    expect(status.ok && status.value.args).not.toContain(prompt);
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain(prompt);
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('secret-value');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('unrelated-secret');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('semi;colon-secret');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('colon-secret');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('split-secret-frag');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain('ment-987');
+    expect(logs.ok && JSON.stringify(logs.value)).not.toContain(prompt.slice(0, 8));
+    expect(logs.ok && JSON.stringify(logs.value)).toContain('[REDACTED]');
+  });
+
+  it('reports one terminal snapshot to the optional process observer', async () => {
+    const manager = new ProcessManager();
+    const terminal: string[] = [];
+    const started = await manager.start({ executable: process.execPath, args: ['-e', 'process.exit(0)'], cwd: process.cwd() }, undefined, undefined, (process) => {
+      terminal.push(`${process.processId}:${process.state}`);
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForState(manager, started.value.processId, 'exited');
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+    expect(terminal).toEqual([`${started.value.processId}:exited`]);
+  });
+
   it('can close stdin for non-interactive children that wait for EOF', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({

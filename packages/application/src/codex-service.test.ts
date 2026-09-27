@@ -7,7 +7,7 @@ import { permissionProfiles } from '@lnwjud/permissions';
 import type { ManagedProcess, ProcessLogResult } from '@lnwjud/process';
 import type { Workspace, WorkspaceRepository } from '@lnwjud/workspace';
 import type { CodexStatus } from '@lnwjud/codex';
-import { CodexService, type CodexAdapterPort } from './codex-service.js';
+import { CodexService, MAX_CODEX_HOST_LOG_BYTES, type CodexAdapterPort } from './codex-service.js';
 
 const roots: string[] = [];
 
@@ -165,6 +165,107 @@ describe('CodexService', () => {
     await expect(service.taskStatus(owner, workspace.id, started.value.codexTaskId)).resolves.toMatchObject({ ok: true });
     expect(service.statusForGoalLiveness(workspace.id, started.value.codexTaskId)).toMatchObject({ ok: true, value: { state: 'running' } });
     expect(service.statusForGoalLiveness('another-workspace', started.value.codexTaskId)).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+  });
+
+  it('lists host task metadata across MCP sessions and reads bounded logs by known task id', async () => {
+    const workspace = await createWorkspace();
+    const queries: unknown[] = [];
+    const stoppedProcessIds: string[] = [];
+    const adapter = fakeAdapter();
+    adapter.logs = (_processId, query): Result<ProcessLogResult> => {
+      queries.push(query);
+      return ok({ entries: [{ sequence: 1, stream: 'stdout', text: 'safe output' }], truncated: false, nextSequence: 2 });
+    };
+    adapter.stop = async (processId): Promise<Result<void>> => { stoppedProcessIds.push(processId); return ok(undefined); };
+    let nextTaskId = 0;
+    const service = new CodexService(repository(workspace), {
+      adapter,
+      taskIdFactory: (): string => `host-task-${++nextTaskId}`,
+    });
+    const firstActor = { clientId: 'client-1', clientName: 'test', sessionId: 'session-a' };
+    const secondActor = { clientId: 'client-1', clientName: 'test', sessionId: 'session-b' };
+    await service.run(firstActor, workspace.id, 'private prompt A', undefined, true);
+    await service.run(secondActor, workspace.id, 'private prompt B', undefined, true);
+
+    const hostTasks = service.hostTaskList();
+    expect(hostTasks).toMatchObject({
+      ok: true,
+      value: [
+        { codexTaskId: 'host-task-1', workspaceId: workspace.id, state: 'running' },
+        { codexTaskId: 'host-task-2', workspaceId: workspace.id, state: 'running' },
+      ],
+    });
+    expect(JSON.stringify(hostTasks)).not.toContain('private prompt');
+    adapter.statusProcess = (): Result<ManagedProcess> => ok({
+      processId: 'process-1', executable: 'codex', args: ['[REDACTED]'], cwd: workspace.realRootPath,
+      state: 'failed', startedAt: new Date(0).toISOString(), finishedAt: new Date(1).toISOString(),
+      exitCode: 1, error: 'private prompt API_TOKEN=secret-value',
+    });
+    const failedHostTasks = service.hostTaskList();
+    expect(failedHostTasks).toMatchObject({ ok: true, value: [{ state: 'failed', exitCode: 1 }, { state: 'failed', exitCode: 1 }] });
+    expect(JSON.stringify(failedHostTasks)).not.toContain('private prompt');
+    expect(JSON.stringify(failedHostTasks)).not.toContain('secret-value');
+    adapter.statusProcess = fakeAdapter().statusProcess;
+    await expect(service.list(firstActor, workspace.id)).resolves.toMatchObject({
+      ok: true,
+      value: [{ codexTaskId: 'host-task-1' }],
+    });
+    await expect(service.taskStatus(secondActor, workspace.id, 'host-task-1'))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    expect(service.hostTaskLogs('host-task-1', { tailLines: 20 })).toMatchObject({
+      ok: true,
+      value: { entries: [{ text: 'safe output' }] },
+    });
+    expect(queries).toEqual([{ tailLines: 20 }]);
+    expect(service.hostTaskLogs('missing-task', { tailLines: 20 }))
+      .toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+    expect(service.hostTaskLogs('host-task-1', { tailLines: 201 }))
+      .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    adapter.logs = (): Result<ProcessLogResult> => ok({
+      entries: [{ sequence: 1, stream: 'stdout', text: 'x'.repeat(MAX_CODEX_HOST_LOG_BYTES + 100) }],
+      truncated: false,
+      nextSequence: 2,
+    });
+    const boundedLogs = service.hostTaskLogs('host-task-1', { tailLines: 20 });
+    expect(boundedLogs.ok).toBe(true);
+    if (boundedLogs.ok) {
+      expect(Buffer.byteLength(boundedLogs.value.entries.map((entry) => entry.text).join(''))).toBeLessThanOrEqual(MAX_CODEX_HOST_LOG_BYTES);
+      expect(boundedLogs.value.truncated).toBe(true);
+    }
+    await expect(service.hostStopTask('host-task-1')).resolves.toMatchObject({ ok: true });
+    expect(stoppedProcessIds).toEqual(['process-1']);
+    await expect(service.hostStopTask('unknown-task')).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+  });
+
+  it('fires the optional host terminal callback only once and contains callback failures', async () => {
+    const workspace = await createWorkspace();
+    const terminalListeners: Array<(process: ManagedProcess) => void> = [];
+    const adapter = fakeAdapter();
+    adapter.start = async (cwd, _instruction, _signal, _onCreated, _sandboxMode, onTerminal): Promise<Result<ManagedProcess>> => {
+      if (onTerminal !== undefined) terminalListeners.push(onTerminal);
+      return ok({ processId: 'process-1', executable: 'codex', args: ['exec'], cwd, state: 'running', startedAt: new Date(0).toISOString() });
+    };
+    const events: unknown[] = [];
+    const service = new CodexService(repository(workspace), {
+      adapter,
+      taskIdFactory: (): string => 'terminal-task',
+      diagnostic: (): void => {},
+      onTaskTerminal: (event): void => { events.push(event); throw new Error('notification failed'); },
+    });
+
+    await expect(service.run({ clientId: 'client-1', clientName: 'test' }, workspace.id, 'private prompt', undefined, true))
+      .resolves.toMatchObject({ ok: true });
+    const terminal = {
+      processId: 'process-1', executable: 'codex', args: [], cwd: workspace.realRootPath,
+      state: 'exited', startedAt: new Date(0).toISOString(), finishedAt: new Date(1).toISOString(), exitCode: 0,
+    } satisfies ManagedProcess;
+    terminalListeners[0]?.(terminal);
+    terminalListeners[0]?.(terminal);
+
+    expect(events).toEqual([{
+      codexTaskId: 'terminal-task', workspaceId: workspace.id, state: 'exited',
+      startedAt: terminal.startedAt, finishedAt: terminal.finishedAt, exitCode: 0,
+    }]);
   });
 
   it('cancels a tracked Codex task across MCP sessions while enforcing stable client/workspace ownership', async () => {

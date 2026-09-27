@@ -3,6 +3,7 @@ import { releaseNotesForVersion } from '../src/renderer/features/release-notes/r
 
 describe('release notes registry', () => {
   it('resolves the exact installed version only', () => {
+    expect(releaseNotesForVersion('5.6.4')).toMatchObject({ version: '5.6.4' });
     expect(releaseNotesForVersion('5.6.1')).toMatchObject({ version: '5.6.1' });
     expect(releaseNotesForVersion(' 5.6.1 ')).toMatchObject({ version: '5.6.1' });
     expect(releaseNotesForVersion('5.6.0')).toMatchObject({ version: '5.6.0' });
@@ -15,7 +16,7 @@ describe('release notes registry', () => {
   });
 
   it('keeps release-note categories non-empty so the modal can hide empty groups deterministically', () => {
-    const note = releaseNotesForVersion('5.6.1');
+    const note = releaseNotesForVersion('5.6.4');
     expect(note).toBeDefined();
     expect(note?.categories.length).toBeGreaterThan(0);
     for (const category of note?.categories ?? []) {

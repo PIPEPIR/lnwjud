@@ -6,6 +6,8 @@ export interface ManagedProcessStart {
   readonly cwd: string;
   readonly timeoutMs?: number;
   readonly stdin?: 'ignore' | 'pipe' | 'closed';
+  /** Runtime-only values removed from process snapshots and redacted from captured output. */
+  readonly redactOutputValues?: readonly string[];
 }
 
 export interface ManagedProcess {

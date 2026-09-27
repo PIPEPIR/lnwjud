@@ -100,6 +100,7 @@ export function createMcpContinuationState(): McpContinuationState {
 
 const CODEX_DELEGATION_EXTRA_TOOL_NAMES = [
   'agent_swarm_run',
+  'write_swarm_run',
   'delegate',
   'delegate_status',
   'delegate_cancel',
@@ -1155,7 +1156,7 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file',
   'restore_deleted_file', 'restore_checkpoint', 'git', 'shell', 'wsl_exec',
   'process_start', 'process_stop', 'project_dev', 'project_test', 'project_lint', 'project_typecheck', 'project_build',
-  'verify_incremental', 'codex_run', 'codex_stop', 'agent_swarm_run', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply',
+  'verify_incremental', 'codex_run', 'codex_stop', 'agent_swarm_run', 'write_swarm_run', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply',
   'computer_use', 'dom_cdp', 'accessibility', 'input_event', 'ui_target_action', 'window',
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt', ...OFFICE_SEMANTIC_TOOL_NAMES,
@@ -1444,7 +1445,7 @@ function prohibitedInvocationReason(toolName: string, input: unknown): string | 
   return undefined;
 }
 
-const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply', ...OFFICE_SEMANTIC_TOOL_NAMES]);
+const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'write_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply', ...OFFICE_SEMANTIC_TOOL_NAMES]);
 const LOCAL_OUTPUT_REPLACEMENT_TOOLS = new Set(['audio', 'screen_record']);
 function requiresActiveWorkspaceScope(toolName: string, decision: MutationPolicyDecision): boolean {
   return decision.kind !== 'read' && (LOCAL_MUTATION_TOOLS.has(toolName) || (decision.kind === 'replace' && LOCAL_OUTPUT_REPLACEMENT_TOOLS.has(toolName)));
