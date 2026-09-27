@@ -847,6 +847,10 @@ export class FileService {
     }
   }
 
+  public async purgeAllRecoveryItems(): Promise<number> {
+    return this.purgeRecoveryItemsOlderThan('9999-12-31T23:59:59.999Z');
+  }
+
   public async purgeRecoveryItemsOlderThan(cutoffIso: string): Promise<number> {
     if (this.recoveryTrashRoot === undefined) return 0;
     const cutoffMs = Date.parse(cutoffIso);

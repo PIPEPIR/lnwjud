@@ -440,6 +440,9 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('same native task remains runnable across normal firings');
       expect(result.value.scheduleRequest.prompt).toContain('must never create, retime, replace, or consume a successor task');
       expect(result.value.scheduleRequest.prompt).toContain('recurring_acquired');
+      expect(result.value.scheduleRequest.prompt).toContain('A fixable failure discovered during that work');
+      expect(result.value.scheduleRequest.prompt).toContain('Never spend an hourly wake merely reporting an intermediate problem');
+      expect(result.value.scheduleRequest.prompt).toContain('do not substitute user-visible progress prose for execution');
       expect(result.value.scheduleRequest.prompt).toContain('worker_busy_noop');
       expect(result.value.scheduleRequest.prompt).toContain('orphan_probe_noop');
       expect(result.value.scheduleRequest.prompt).toContain('terminal_noop');

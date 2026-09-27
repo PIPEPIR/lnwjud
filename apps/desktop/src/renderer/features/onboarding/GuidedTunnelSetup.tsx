@@ -70,7 +70,7 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
 
   const stepIndex = STEPS.indexOf(step);
   const credentialAvailable = tunnelRuntimeCredentialAvailable(props.tunnel);
-  const canStart = credentialAvailable && props.tunnel.profileExists && busyAction === null;
+  const canStart = credentialAvailable && props.tunnel.profileExists && props.tunnel.state !== 'starting' && busyAction === null;
 
   function close(): void {
     setApiKey('');

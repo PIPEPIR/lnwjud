@@ -69,7 +69,7 @@ export function GitPage({
   };
 
   return (
-    <div className="page-content viewport-list-page git-page">
+    <div className={`page-content viewport-list-page git-page ${selectedFile === null ? '' : 'git-page--diff-open'}`}>
       <div className="page-heading">
         <div>
           <h1>{t('git.title')}</h1>

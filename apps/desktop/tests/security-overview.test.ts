@@ -56,6 +56,26 @@ function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): strin
 }
 
 describe('Security Overview', () => {
+  it('locks both Tunnel controls while a runtime is starting and restores the valid action afterward', () => {
+    const configuredTunnel = {
+      ...baseDashboard.tunnel,
+      hasApiKey: true,
+      runtimeCredentialAvailable: true,
+      profileExists: true,
+    };
+    const starting = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'starting' } });
+    expect(starting).toContain('<button type="button" disabled="">Start Tunnel</button>');
+    expect(starting).toContain('<button type="button" disabled="">Stop Tunnel</button>');
+
+    const running = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'running' } });
+    expect(running).toContain('<button type="button" disabled="">Start Tunnel</button>');
+    expect(running).toContain('<button type="button">Stop Tunnel</button>');
+
+    const stopped = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'stopped' } });
+    expect(stopped).toContain('<button type="button">Start Tunnel</button>');
+    expect(stopped).toContain('<button type="button" disabled="">Stop Tunnel</button>');
+  });
+
   it('shows a restricted posture when STDIO uses strict roots and risky switches are off', () => {
     const markup = render(baseDashboard);
     expect(markup).toContain('Security Overview');

@@ -46,6 +46,7 @@ import {
   type PdfProviderInstallResult,
   type McpConnectionStatus,
   type ProcessSummary,
+  type PurgeRecoveryDataRequest,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
   type PermissionProfileName,
@@ -151,6 +152,7 @@ export interface DesktopIpcServices {
   setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<{ readonly enabled: boolean; readonly policy: DestructiveDeletePolicy }>;
   setStdioPolicy(request: SetStdioPolicyRequest): Promise<{ readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean }>;
   createBackup(): Promise<BackupSummary>;
+  purgeRecoveryData(request: PurgeRecoveryDataRequest): Promise<{ readonly category: PurgeRecoveryDataRequest['category']; readonly deleted: number }>;
   scheduleRestoreBackup(request: ScheduleRestoreBackupRequest): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }>;
   restoreRecoveryItem(request: RestoreRecoveryItemRequest): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }>;
   restoreCheckpoint(request: RestoreCheckpointRequest): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }>;
@@ -318,6 +320,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     profile: request.profile, strictRoots: request.strictRoots, allowedRoots: request.allowedRoots, restartRequired: false,
   }),
   createBackup: async (): Promise<BackupSummary> => ({ id: 'unavailable', createdAt: new Date(0).toISOString(), reason: 'manual', sizeBytes: 0 }),
+  purgeRecoveryData: async (request: PurgeRecoveryDataRequest): Promise<{ readonly category: PurgeRecoveryDataRequest['category']; readonly deleted: number }> => ({ category: request.category, deleted: 0 }),
   scheduleRestoreBackup: async (): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }> => ({ scheduled: false, restartRequired: false }),
   restoreRecoveryItem: async (): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }> => ({ restored: false, path: '', rollbackRecoveryId: null }),
   restoreCheckpoint: async (): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }> => ({ restored: false, paths: [], rollbackCheckpointId: null }),
@@ -495,6 +498,10 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.createBackup();
+  });
+  registerHandler(ipcChannels.purgeRecoveryData, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.purgeRecoveryData(parsePurgeRecoveryDataRequest(payload));
   });
   registerHandler(ipcChannels.scheduleRestoreBackup, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -896,6 +903,14 @@ function parseDestructiveDeletePolicy(value: unknown): DestructiveDeletePolicy {
     return [key, enabled];
   })) as Record<(typeof keys)[number], boolean>;
   return { protectCriticalFiles: value.protectCriticalFiles, recoverableDelete: value.recoverableDelete, approvals };
+}
+
+function parsePurgeRecoveryDataRequest(payload: unknown): PurgeRecoveryDataRequest {
+  if (!isRecord(payload) || payload.userConfirmed !== true
+    || (payload.category !== 'trash' && payload.category !== 'checkpoints' && payload.category !== 'backups')) {
+    throw new Error('Invalid IPC payload: purge recovery data');
+  }
+  return { category: payload.category, userConfirmed: true };
 }
 
 function parseScheduleRestoreBackupRequest(payload: unknown): ScheduleRestoreBackupRequest {

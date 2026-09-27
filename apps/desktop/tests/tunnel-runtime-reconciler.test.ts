@@ -46,6 +46,31 @@ function adapter(status: NativeTunnelRuntimeStatus, connect = runtime()): Tunnel
 }
 
 describe('TunnelRuntimeReconciler', () => {
+  it('cleans up a verified orphan before accepting a healthy official alias', async () => {
+    const runtimeAdapter = adapter(runtime());
+    const guard = vi.fn(async () => undefined);
+    runtimeAdapter.ensureSingleProcess = guard;
+    const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
+
+    const result = await reconciler.reconcile();
+
+    expect(result.action).toBe('healthy');
+    expect(guard).toHaveBeenCalledExactlyOnceWith(desired.tunnelId, expect.objectContaining({ pid: 1234 }));
+    expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+  });
+
+  it('does not report a healthy runtime when duplicate-process verification fails', async () => {
+    const runtimeAdapter = adapter(runtime());
+    runtimeAdapter.ensureSingleProcess = vi.fn(async () => { throw new Error('Could not verify tunnel-client PID 200'); });
+    const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
+
+    const result = await reconciler.reconcile();
+
+    expect(result.action).toBe('operator-required');
+    expect(result.snapshot.message).toContain('PID 200');
+    expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+  });
+
   it('does nothing when the same tunnel and local binding are already healthy', async () => {
     const runtimeAdapter = adapter(runtime());
     const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
@@ -70,12 +95,33 @@ describe('TunnelRuntimeReconciler', () => {
 
   it('rebinds the same tunnel when the Desktop MCP loopback port changes', async () => {
     const runtimeAdapter = adapter(runtime({ mcpServerUrl: 'http://127.0.0.1:19999/mcp' }));
+    const steps: string[] = [];
+    vi.mocked(runtimeAdapter.stop).mockImplementation(async () => {
+      steps.push('stop');
+      return runtime({ running: false });
+    });
+    vi.mocked(runtimeAdapter.connect).mockImplementation(async () => {
+      steps.push('connect');
+      return runtime();
+    });
     const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
     const result = await reconciler.reconcile();
     expect(result.action).toBe('reconnected');
+    expect(steps).toEqual(['stop', 'connect']);
     expect(runtimeAdapter.connect).toHaveBeenCalledWith({ tunnelId: desired.tunnelId, mcpServerUrl: desired.mcpServerUrl });
     expect(result.snapshot.tunnelId).toBe(desired.tunnelId);
     expect(result.snapshot.message).toContain('same tunnel ID');
+  });
+
+  it('does not reconnect over a stale live binding when the old process cannot be stopped', async () => {
+    const runtimeAdapter = adapter(runtime({ mcpServerUrl: 'http://127.0.0.1:19999/mcp' }));
+    vi.mocked(runtimeAdapter.stop).mockRejectedValue(new Error('runtime is still running after stop'));
+    const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
+
+    const result = await reconciler.reconcile();
+
+    expect(result.action).toBe('retry-required');
+    expect(runtimeAdapter.connect).not.toHaveBeenCalled();
   });
 
   it('refuses automatic replacement when an existing alias reports a different tunnel ID', async () => {

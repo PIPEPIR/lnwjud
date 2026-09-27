@@ -28,6 +28,8 @@ import { APP_NAME, APP_VERSION } from '@lnwjud/shared';
 
 export const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
 export const LNWJUD_MCP_IDENTITY_PATH = '/_lnwjud/identity';
+const OAUTH_PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
+const OAUTH_PROTECTED_RESOURCE_MCP_PATH = `${OAUTH_PROTECTED_RESOURCE_PATH}/mcp`;
 
 export interface McpHttpServerOptions extends McpServerOptions {
   readonly port: number;
@@ -418,7 +420,12 @@ async function handleRequest(
   maxBodyBytes: number,
 ): Promise<void> {
   const requestedPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-  if (requestedPath !== '/mcp' && requestedPath !== LNWJUD_MCP_IDENTITY_PATH) {
+  if (
+    requestedPath !== '/mcp'
+    && requestedPath !== LNWJUD_MCP_IDENTITY_PATH
+    && requestedPath !== OAUTH_PROTECTED_RESOURCE_PATH
+    && requestedPath !== OAUTH_PROTECTED_RESOURCE_MCP_PATH
+  ) {
     sendStatus(response, 404, 'Not found');
     return;
   }
@@ -434,6 +441,17 @@ async function handleRequest(
     ?? originPolicy.validate(fetchRequest);
   if (rejected !== undefined) {
     await writeFetchResponse(response, rejected);
+    return;
+  }
+
+  if (requestedPath === OAUTH_PROTECTED_RESOURCE_PATH || requestedPath === OAUTH_PROTECTED_RESOURCE_MCP_PATH) {
+    // Secure Tunnel intentionally uses tunnel-client's sample_mcp_remote_no_auth
+    // profile. tunnel-client v0.0.15 treats empty 404s on every PRMD candidate as
+    // the explicit no-OAuth contract, while a text body such as "Not found"
+    // is parsed as malformed metadata and degrades discovery/readiness.
+    response.statusCode = 404;
+    response.setHeader('cache-control', 'no-store');
+    response.end();
     return;
   }
 

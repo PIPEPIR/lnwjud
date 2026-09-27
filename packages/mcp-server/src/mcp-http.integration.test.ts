@@ -64,6 +64,14 @@ describe('MCP localhost HTTP transport', () => {
     }
   });
 
+  it('advertises the Secure Tunnel no-OAuth contract with empty protected-resource 404s', async () => {
+    for (const pathname of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
+      const response = await fetch(new URL(pathname, handle.endpoint));
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe('');
+    }
+  });
+
   it('tears down every modern per-request MCP server after successful requests', async () => {
     await handle.close();
     const listeners = new Set<(snapshot: ToolAvailabilitySnapshot) => void>();

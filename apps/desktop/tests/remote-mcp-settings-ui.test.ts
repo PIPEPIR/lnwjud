@@ -33,11 +33,12 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(homeSource).toContain("t('home.advancedOption')");
   });
 
-  it('locks Secure Tunnel actions while a start or stop transition is in flight', () => {
+  it('locks Secure Tunnel actions during a UI transition or a runtime starting state', () => {
     expect(appSource).toContain('tunnelBusy={tunnelBusy}');
     expect(settingsSource).toContain('const tunnelBusy = props.tunnelBusy === true || localTunnelBusy;');
-    expect(settingsSource).toContain("disabled={tunnelBusy || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'}");
-    expect(settingsSource).toContain("disabled={tunnelBusy || props.dashboard.tunnel.state === 'stopped'}");
+    expect(settingsSource).toContain("const tunnelControlsLocked = tunnelBusy || props.dashboard.tunnel.state === 'starting';");
+    expect(settingsSource).toContain("disabled={tunnelControlsLocked || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'}");
+    expect(settingsSource).toContain("disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'}");
   });
 
   it('explains Secure Tunnel multi-chat and multi-host topology without recommending one profile per chat', () => {

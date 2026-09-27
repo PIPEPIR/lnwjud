@@ -14,6 +14,7 @@ export const ipcChannels = {
   setAiDeletePolicy: 'lnwjud:set-ai-delete-policy',
   setStdioPolicy: 'lnwjud:set-stdio-policy',
   createBackup: 'lnwjud:create-backup',
+  purgeRecoveryData: 'lnwjud:purge-recovery-data',
   scheduleRestoreBackup: 'lnwjud:schedule-restore-backup',
   restoreRecoveryItem: 'lnwjud:restore-recovery-item',
   restoreCheckpoint: 'lnwjud:restore-checkpoint',
@@ -986,6 +987,11 @@ export interface SetStdioPolicyRequest {
   readonly allowedRoots: readonly string[];
 }
 
+export interface PurgeRecoveryDataRequest {
+  readonly category: 'trash' | 'checkpoints' | 'backups';
+  readonly userConfirmed: true;
+}
+
 export interface ScheduleRestoreBackupRequest {
   readonly backupId: string;
 }
@@ -1098,6 +1104,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setAiDeletePolicy]: SetAiDeletePolicyRequest;
   readonly [ipcChannels.setStdioPolicy]: SetStdioPolicyRequest;
   readonly [ipcChannels.createBackup]: undefined;
+  readonly [ipcChannels.purgeRecoveryData]: PurgeRecoveryDataRequest;
   readonly [ipcChannels.scheduleRestoreBackup]: ScheduleRestoreBackupRequest;
   readonly [ipcChannels.restoreRecoveryItem]: RestoreRecoveryItemRequest;
   readonly [ipcChannels.restoreCheckpoint]: RestoreCheckpointRequest;
@@ -1174,6 +1181,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.setAiDeletePolicy]: { readonly enabled: boolean; readonly policy: DestructiveDeletePolicy };
   readonly [ipcChannels.setStdioPolicy]: { readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean };
   readonly [ipcChannels.createBackup]: BackupSummary;
+  readonly [ipcChannels.purgeRecoveryData]: { readonly category: PurgeRecoveryDataRequest['category']; readonly deleted: number };
   readonly [ipcChannels.scheduleRestoreBackup]: { readonly scheduled: boolean; readonly restartRequired: boolean };
   readonly [ipcChannels.restoreRecoveryItem]: { readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null };
   readonly [ipcChannels.restoreCheckpoint]: { readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null };
@@ -1252,6 +1260,7 @@ export interface LnwjudApi {
   setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<IpcResponseMap[typeof ipcChannels.setAiDeletePolicy]>;
   setStdioPolicy(request: SetStdioPolicyRequest): Promise<IpcResponseMap[typeof ipcChannels.setStdioPolicy]>;
   createBackup(): Promise<IpcResponseMap[typeof ipcChannels.createBackup]>;
+  purgeRecoveryData(request: PurgeRecoveryDataRequest): Promise<IpcResponseMap[typeof ipcChannels.purgeRecoveryData]>;
   scheduleRestoreBackup(request: ScheduleRestoreBackupRequest): Promise<IpcResponseMap[typeof ipcChannels.scheduleRestoreBackup]>;
   restoreRecoveryItem(request: RestoreRecoveryItemRequest): Promise<IpcResponseMap[typeof ipcChannels.restoreRecoveryItem]>;
   restoreCheckpoint(request: RestoreCheckpointRequest): Promise<IpcResponseMap[typeof ipcChannels.restoreCheckpoint]>;

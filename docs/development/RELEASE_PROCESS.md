@@ -87,7 +87,11 @@ not move tags, rebuild artifacts, or alter published binaries.
 The pull-request run answers whether the proposed merge is safe to accept. The
 `main` run answers whether the exact commit that will be tagged is verified and
 produces the release artifacts. GitHub may create a merge commit whose SHA
-differs from the `dev` head, so both checks are necessary.
+differs from the `dev` head, so both checks are necessary. On PRs and `main`, the
+complete Windows workspace suite runs alongside the remaining Windows release
+gate. The required `Authoritative Release Verification (Windows)` check succeeds
+only when both jobs succeed. A local `verify-release.ps1` run still executes the
+whole gate without splitting it.
 
 PR CI and explicitly dispatched verification runs the full portable/test
 contract while allowing the expensive Windows installer packaging to be
@@ -101,9 +105,10 @@ macOS, and Linux. Its non-desktop workspace tests run in the
 normal bounded pnpm pool, while each desktop shard first builds the workspace
 packages used by acceptance fixtures and then runs an isolated half of the
 desktop suite per operating system so the slowest files run concurrently. A
-protected push to `main` additionally runs Windows packaging and
-the target-native macOS/Linux package matrix, including macOS arm64/x64 and
-Linux x64/arm64. The macOS packages are built on `macos-15` / `macos-15-intel`,
+protected push to `main` additionally runs Windows packaging and the
+target-native macOS/Linux package matrix alongside the test jobs, including
+macOS arm64/x64 and Linux x64/arm64. The macOS packages are built on
+`macos-15` / `macos-15-intel`,
 then those exact SHA-scoped DMG/ZIP artifacts are downloaded and verified on
 `macos-26` / `macos-26-intel`; the macOS 26 compatibility job is a publication
 gate and must not rebuild the app. macOS provenance embeds the post-seal
@@ -202,13 +207,16 @@ the Action is fixed while the replacement run is queued or in progress.
 
 Push `dev` and open or update the `dev -> main` pull request. The required
 Windows check keeps the stable name `Authoritative Release Verification
-(Windows)` for branch-protection compatibility. On a pull request it invokes:
+(Windows)` for branch-protection compatibility. On a pull request, one Windows
+job runs `test:release` while another invokes:
 
 ```powershell
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -SkipWindowsPackaging
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -SkipWindowsPackaging -SkipWorkspaceTests
 ```
 
-Do not merge until the required PR check succeeds and GitHub reports the
+The required check depends on both jobs; `-SkipWorkspaceTests` is used only
+when the separate workspace test job runs on the same commit. Do not merge
+until the required PR check succeeds and GitHub reports the
 branch as mergeable/up to date under the configured protection rules.
 
 ## 3. Merge to `main` and wait for authoritative CI
@@ -220,8 +228,9 @@ suppresses downstream Actions, manually dispatch `ci.yml` with `main` as the
 ref and verify that the run's `headSha` is still the exact SHA being prepared
 for release. In either case, the run must complete all of these target boundaries:
 
-- `Authoritative Release Verification (Windows)` completes the full Windows
-  gate and uploads `windows-release-<main merge SHA>`.
+- The full Windows workspace suite and the remaining Windows release gate both
+  succeed. The build job uploads `windows-release-<main merge SHA>` and their
+  aggregate `Authoritative Release Verification (Windows)` check passes.
 - `Native Platform Contract` passes on Windows, macOS, and Linux, including
   Swift protocol tests on macOS and locked Cargo tests on Linux.
 - `Native Package Verification` builds on macOS 15 arm64, macOS 15 Intel x64,

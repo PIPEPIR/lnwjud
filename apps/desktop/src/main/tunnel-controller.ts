@@ -1158,6 +1158,7 @@ export class TunnelController {
       throw new Error(`Could not verify the recorded Persistent Tunnel Runtime owner through ${clientPath}: ${detail}`);
     }
     if (!nativeStatus.exists) {
+      if (storedTunnelId !== null) await adapter.ensureSingleProcess?.(storedTunnelId, nativeStatus);
       if (recordedOwner !== null) {
         return this.clearRecordedRuntimeOwnerOnlyWhenExternalGone('the recorded owner reports that the lnwjud alias is absent');
       }
@@ -1167,10 +1168,13 @@ export class TunnelController {
       throw new Error('Persistent tunnel alias lnwjud belongs to a different Tunnel ID; refusing to stop it automatically');
     }
     if (nativeStatus.running) {
-      const stopped = await adapter.stop();
+      const stopped = await adapter.stop(storedTunnelId ?? nativeStatus.tunnelId ?? undefined);
       if (stopped.exists && stopped.running) {
         throw new Error('Could not positively verify the recorded Persistent Tunnel Runtime stopped');
       }
+    } else {
+      const expectedTunnelId = storedTunnelId ?? nativeStatus.tunnelId;
+      if (expectedTunnelId !== null) await adapter.ensureSingleProcess?.(expectedTunnelId, nativeStatus);
     }
     if (recordedOwner !== null) {
       return this.clearRecordedRuntimeOwnerOnlyWhenExternalGone('the recorded owner reports that the lnwjud alias is stopped');
@@ -1252,6 +1256,14 @@ export class TunnelController {
     if (restartPersistentRuntime && this.runtimeConfigurationDirty && nativeStatus.running) {
       this.state = 'starting';
       this.message = 'Applying updated tunnel credentials/configuration while preserving the current managed runtime until reconnect readiness is confirmed.';
+    }
+    // A managed process can outlive the alias metadata after an upgrade. Verify
+    // and retire that exact process before treating the external probe as a
+    // separate legacy runtime or launching another managed client.
+    if (!nativeStatus.exists && externalProbe === 'live') {
+      await adapter.ensureSingleProcess?.(desiredTunnelId, nativeStatus);
+      this.invalidateExternalProbeCache();
+      externalProbe = await this.probeExternalRunning(true);
     }
     // A legacy/profile process may already be running outside native alias
     // supervision. Never create a second tunnel-client in that case. A known

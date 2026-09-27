@@ -58,6 +58,9 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('A checkpoint is not a turn boundary');
     expect(skill).toContain('Work-conserving worker behavior');
     expect(skill).toContain('One failed poll never justifies abandoning the task');
+    expect(skill).toContain('Discovering a fixable failure is the next unit of work, not a turn boundary');
+    expect(skill).toContain('Never spend an hourly wake merely reporting a problem that can still be acted on');
+    expect(skill).toContain('User-visible progress prose is not a substitute for execution');
     expect(skill).toContain('inspect its terminal result in the same turn');
     expect(skill).toContain('Never deliberately wait for lease expiry as a continuation strategy');
     expect(skill).toContain('Yield only when the goal is terminal');

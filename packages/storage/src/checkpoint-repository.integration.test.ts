@@ -42,6 +42,25 @@ describe('SqliteCheckpointRepository', () => {
     database.close();
   });
 
+  it('deletes every checkpoint without touching unrelated database state', async () => {
+    const root = await temporaryRoot();
+    const database = new SqliteDatabase(path.join(root, 'state.db'));
+    const repository = new SqliteCheckpointRepository(database);
+    const first = { ...fixtureCheckpoint('first'), id: 'checkpoint-a' };
+    const second = { ...fixtureCheckpoint('second'), id: 'checkpoint-b', workspaceId: 'workspace-2' };
+    database.connection.exec('CREATE TABLE checkpoint_purge_sentinel (value TEXT NOT NULL);');
+    database.connection.prepare('INSERT INTO checkpoint_purge_sentinel (value) VALUES (?)').run('keep-me');
+    await repository.insert(first);
+    await repository.insert(second);
+
+    await expect(repository.deleteAll()).resolves.toBe(2);
+    await expect(repository.list('workspace-1')).resolves.toEqual([]);
+    await expect(repository.list('workspace-2')).resolves.toEqual([]);
+    const sentinel = database.connection.prepare('SELECT value FROM checkpoint_purge_sentinel').get() as { value?: string } | undefined;
+    expect(sentinel?.value).toBe('keep-me');
+    database.close();
+  });
+
   it('encrypts checkpoint file content at rest with AES-256-GCM', async () => {
     const root = await temporaryRoot();
     const database = new SqliteDatabase(path.join(root, 'state.db'));

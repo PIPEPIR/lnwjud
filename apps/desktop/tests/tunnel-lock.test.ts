@@ -202,7 +202,11 @@ describe('lnwjud tunnel ownership lock', () => {
       inspectProcess: async (pid) => pid === stale.pid ? { state: 'gone' } : { state: 'live', processStartedAt: firstOwner.processStartedAt },
       hooks: { afterStaleQuarantine: async () => { quarantined.resolve(); await allowPublish.promise; } },
     });
-    await expect(Promise.race([quarantined.promise, rejectAfter(2_000, 'stale quarantine hook was not called')])).resolves.toBeUndefined();
+    // The production Windows helper intentionally allows up to 10s of PowerShell startup headroom
+    // before its 5s mutex contention window. Keep this synchronization guard above that bound so
+    // a saturated hosted runner cannot time out the test, trigger afterEach cleanup, and race the
+    // still-running quarantine rename with removal of the temporary lock directory.
+    await expect(Promise.race([quarantined.promise, rejectAfter(20_000, 'stale quarantine hook was not called')])).resolves.toBeUndefined();
 
     let secondSettled = false;
     let thirdSettled = false;

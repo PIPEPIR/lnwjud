@@ -30,7 +30,8 @@ describe('platform verification orchestrator', () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('native-package-verification:');
     expect(workflow).toContain('desktop-test-shards:');
-    expect(workflow).toContain('needs: [native-platform-contract, desktop-test-shards]');
+    const packageHeader = workflow.slice(workflow.indexOf('  native-package-verification:'), workflow.indexOf('    strategy:', workflow.indexOf('  native-package-verification:')));
+    expect(packageHeader).not.toContain('needs:');
     expect(workflow).toContain('macos-15');
     expect(workflow).toContain('macos-15-intel');
     expect(workflow).toContain('macos-26-package-compatibility:');
@@ -52,7 +53,7 @@ describe('platform verification orchestrator', () => {
     expect(workflow.indexOf('Run packaged Electron smoke on macOS 26'))
       .toBeLessThan(workflow.indexOf('Launch exact DMG and ZIP apps through LaunchServices'));
     expect(workflow).toContain('ubuntu-24.04-arm');
-    expect(workflow).toContain('sigstore/cosign-installer@v4.1.2');
+    expect(workflow).toContain('sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2');
     expect(workflow).toContain("cosign-release: 'v3.1.3'");
     expect(workflow).toContain('verify:platform -- --package');
     expect(workflow).toContain('verify:macos-release');

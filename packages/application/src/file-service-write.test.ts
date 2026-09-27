@@ -515,6 +515,33 @@ describe('FileService writes', () => {
     await expect(readFile(result.value.recoveryPath!, 'utf8')).rejects.toThrow();
   });
 
+  it('purges every validated recovery item without deleting unknown recovery data', async () => {
+    const workspace = await createWorkspace();
+    const recoveryRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-recovery-purge-'));
+    temporaryRoots.push(recoveryRoot);
+    const source = path.join(workspace.rootPath, 'src', 'purge-me.txt');
+    await writeFile(source, 'recoverable payload', 'utf8');
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      profile: permissionProfiles.balanced,
+      checkpointService: checkpointService(),
+      allowDeleteWithoutConfirmation: (): boolean => true,
+      protectCriticalFiles: (): boolean => true,
+      recoverableDelete: (): boolean => true,
+      recoveryTrashRoot: recoveryRoot,
+    });
+
+    const deleted = await service.deleteFile(actor, workspace.id, { path: 'src/purge-me.txt' });
+    if (!deleted.ok || deleted.value.recoveryId === undefined) throw new Error('recovery item was not created');
+    const unknownDirectory = path.join(recoveryRoot, workspace.id, 'unknown-entry');
+    const sentinel = path.join(unknownDirectory, 'sentinel.txt');
+    await mkdir(unknownDirectory, { recursive: true });
+    await writeFile(sentinel, 'preserve me', 'utf8');
+
+    await expect(service.purgeAllRecoveryItems()).resolves.toBe(1);
+    await expect(service.listRecoveryItems(workspace.id)).resolves.toMatchObject({ ok: true, value: { items: [] } });
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('preserve me');
+  });
+
   it('backs up binary replacement targets and keeps the replaced version as rollback when restored', async () => {
     const workspace = await createWorkspace();
     const recoveryRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-replacement-recovery-'));

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipWindowsPackaging
+    [switch]$SkipWindowsPackaging,
+    [switch]$SkipWorkspaceTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +66,12 @@ try {
     Invoke-ReleaseStage 'test:version' @('test:version')
     Invoke-ReleaseStage 'lint' @('lint')
     Invoke-ReleaseStage 'typecheck' @('typecheck')
-    Invoke-ReleaseStage 'test:release' @('test:release')
+    if ($SkipWorkspaceTests) {
+        Write-Host '==> test:release (verified by the parallel Windows Workspace Release Tests job)'
+    }
+    else {
+        Invoke-ReleaseStage 'test:release' @('test:release')
+    }
     Invoke-ReleaseStage 'test:acceptance' @('test:acceptance')
     Invoke-ReleaseStage 'test:integration' @('test:integration')
     Invoke-ReleaseStage 'test:e2e' @('test:e2e')

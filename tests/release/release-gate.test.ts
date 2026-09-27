@@ -126,13 +126,38 @@ describe('MVP release verification gate', () => {
     expect(script).toContain('[switch]$SkipWindowsPackaging');
     expect(script).toContain("if ($SkipWindowsPackaging)");
     expect(script).toContain("package:windows (skipped for non-main CI)");
+    expect(script).toContain('[switch]$SkipWorkspaceTests');
+    expect(script).toContain("if ($SkipWorkspaceTests)");
+    expect(script).toContain("Invoke-ReleaseStage 'test:release' @('test:release')");
     expect(workflow).toContain('name: Authoritative Release Verification (Windows)');
     expect(workflow).toContain('Run pull-request verification gate');
-    expect(workflow).toContain('scripts/verify-release.ps1 -SkipWindowsPackaging');
+    expect(workflow).toContain('scripts/verify-release.ps1 -SkipWindowsPackaging -SkipWorkspaceTests');
     expect(workflow).toContain("github.ref != 'refs/heads/main'");
     expect(workflow).toContain('Run authoritative release verification gate');
     expect(workflow).toContain("github.ref == 'refs/heads/main'");
     expect(workflow).toContain("(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'");
+  });
+
+  it('requires both parallel Windows jobs before the protected release check succeeds', async () => {
+    const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const testJob = workflow.slice(workflow.indexOf('  windows-release-tests:\n'), workflow.indexOf('  windows-release-build:\n'));
+    const buildJob = workflow.slice(workflow.indexOf('  windows-release-build:\n'), workflow.indexOf('  verify:\n'));
+    const requiredJob = workflow.slice(workflow.indexOf('  verify:\n'));
+
+    expect(testJob).toContain('run: corepack pnpm@10.15.0 test:release');
+    expect(testJob.indexOf('Build workspace type declarations')).toBeGreaterThan(testJob.indexOf('Install dependencies'));
+    expect(testJob).toContain('run: corepack pnpm@10.15.0 typecheck');
+    expect(testJob.indexOf('Build workspace type declarations')).toBeLessThan(testJob.indexOf('Run complete Windows workspace release suite'));
+    expect(testJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
+    expect(buildJob).toContain('scripts/verify-release.ps1 -SkipWorkspaceTests');
+    expect(buildJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
+    expect(buildJob).toContain('windows-release-${{ github.sha }}');
+    expect(requiredJob).toContain('name: Authoritative Release Verification (Windows)');
+    expect(requiredJob).toContain('needs: [windows-release-tests, windows-release-build]');
+    expect(requiredJob).toContain('WORKSPACE_TESTS_RESULT: ${{ needs.windows-release-tests.result }}');
+    expect(requiredJob).toContain('BUILD_RESULT: ${{ needs.windows-release-build.result }}');
+    expect(requiredJob).toContain('test "$WORKSPACE_TESTS_RESULT" = success');
+    expect(requiredJob).toContain('test "$BUILD_RESULT" = success');
   });
 
   it('does not repeat the full Windows verification gate on direct non-main pushes', async () => {
@@ -140,7 +165,7 @@ describe('MVP release verification gate', () => {
     const verifyStart = workflow.indexOf('  verify:\n');
     expect(verifyStart).toBeGreaterThan(-1);
     const verifyJob = workflow.slice(verifyStart, workflow.indexOf('\n\n', verifyStart));
-    expect(verifyJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
+    expect(verifyJob).toContain("if: always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')");
   });
 
   it('splits desktop tests into isolated native shards for the contract matrix', async () => {
@@ -154,9 +179,9 @@ describe('MVP release verification gate', () => {
 
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {
     const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
-    const authoritativeStart = workflow.indexOf('  verify:');
+    const authoritativeStart = workflow.indexOf('  windows-release-build:');
     expect(authoritativeStart).toBeGreaterThan(-1);
-    const authoritativeJob = workflow.slice(authoritativeStart);
+    const authoritativeJob = workflow.slice(authoritativeStart, workflow.indexOf('  verify:', authoritativeStart));
     const cosign = authoritativeJob.indexOf('Install cosign for tunnel provenance verification');
     const authoritative = authoritativeJob.indexOf('Run authoritative release verification gate');
     expect(cosign).toBeGreaterThan(-1);

@@ -1040,13 +1040,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     const now = Date.now();
     if (!force && now - lastRecoveryRetentionSweepAt < recoveryRetentionSweepIntervalMs) return;
     const cutoffIso = new Date(now - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-    const [trashDeleted, checkpointsDeleted] = await Promise.all([
+    const [trashDeleted, checkpointsDeleted, archivedBackupsDeleted] = await Promise.all([
       fileService.purgeRecoveryItemsOlderThan(cutoffIso),
       checkpointRepository.deleteOlderThan(cutoffIso),
+      backupService.purgeArchivedOlderThan(cutoffIso),
     ]);
     lastRecoveryRetentionSweepAt = now;
-    if (trashDeleted > 0 || checkpointsDeleted > 0) {
-      console.log('[Recovery] retention=' + retentionDays + 'd purged trash=' + trashDeleted + ' checkpoints=' + checkpointsDeleted);
+    if (trashDeleted > 0 || checkpointsDeleted > 0 || archivedBackupsDeleted > 0) {
+      console.log('[Recovery] retention=' + retentionDays + 'd purged trash=' + trashDeleted + ' checkpoints=' + checkpointsDeleted + ' archivedBackups=' + archivedBackupsDeleted);
     }
   }
 
@@ -1643,6 +1644,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { profile: request.profile, strictRoots: request.strictRoots, allowedRoots, restartRequired: true };
     },
     createBackup: async (): Promise<IpcBackupSummary> => toIpcBackupSummary(await backupService.create('manual')),
+    purgeRecoveryData: async (request: PurgeRecoveryDataRequest): Promise<{ readonly category: PurgeRecoveryDataRequest['category']; readonly deleted: number }> => {
+      if (request.userConfirmed !== true) throw new Error('Deleting recovery data requires explicit confirmation');
+      if (request.category === 'trash') return { category: request.category, deleted: await fileService.purgeAllRecoveryItems() };
+      if (request.category === 'checkpoints') return { category: request.category, deleted: await checkpointRepository.deleteAll() };
+      await startupBackup;
+      return { category: request.category, deleted: await backupService.purgeAll() };
+    },
     scheduleRestoreBackup: async (request: ScheduleRestoreBackupRequest): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }> => {
       const tunnelStatus = await tunnelController.status();
       if (tunnelStatus.state === 'running') throw new Error('Stop Secure MCP Tunnel before scheduling a database restore');

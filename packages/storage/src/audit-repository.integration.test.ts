@@ -72,15 +72,22 @@ describe('SqliteAuditRepository', () => {
     temporaryRoots.push(root);
     const database = new SqliteDatabase(path.join(root, 'state.db'));
     const repository = new SqliteAuditRepository(database);
-    await repository.insert(scopedEvent('old-session-event', '2026-08-20T00:00:00.000Z', 'workspace-old', 'session-old'));
     const base = Date.parse('2026-08-21T00:00:00.000Z');
-    for (let index = 0; index < 520; index += 1) {
-      await repository.insert(scopedEvent(
-        `noise-${index}`,
-        new Date(base + index * 1_000).toISOString(),
-        'workspace-new',
-        'session-new',
-      ));
+    database.connection.exec('BEGIN');
+    try {
+      await repository.insert(scopedEvent('old-session-event', '2026-08-20T00:00:00.000Z', 'workspace-old', 'session-old'));
+      for (let index = 0; index < 520; index += 1) {
+        await repository.insert(scopedEvent(
+          `noise-${index}`,
+          new Date(base + index * 1_000).toISOString(),
+          'workspace-new',
+          'session-new',
+        ));
+      }
+      database.connection.exec('COMMIT');
+    } catch (error) {
+      database.connection.exec('ROLLBACK');
+      throw error;
     }
 
     const sessions = await repository.listActivitySessions('mcp_tool:');

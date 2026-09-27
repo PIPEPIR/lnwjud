@@ -574,12 +574,13 @@ describe('TunnelController lifecycle', () => {
       exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
       tunnelId: 'tunnel_fixture012345', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
     }));
+    const stop = vi.fn(async () => undefined);
     const adapter: TunnelRuntimeReconcilerAdapter = {
       runtimeAlias: (): string => 'lnwjud',
       capabilities: vi.fn(async () => capabilities),
       status,
       connect,
-      stop: vi.fn(async () => { throw new Error('stop should not be called'); }),
+      stop,
     };
     const controller = new TunnelController({
       getClientPath: (): string => clientPath,
@@ -603,6 +604,8 @@ describe('TunnelController lifecycle', () => {
       tunnelId: 'tunnel_fixture012345',
       mcpServerUrl: 'http://127.0.0.1:18765/mcp',
     });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(connect.mock.invocationCallOrder[0]!);
   });
 
   it('manual Start refuses retire-before-ready replacement when the running runtime has a different Tunnel ID', async () => {
@@ -868,6 +871,45 @@ describe('TunnelController lifecycle', () => {
 
     await expect(controller.stop()).resolves.toMatchObject({ state: 'stopped' });
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires a verified orphan when Stop finds no official runtime alias', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-orphan-alias-stop-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture');
+    let ownerPath = clientPath;
+    let externalLive = true;
+    const missing = {
+      exists: false, running: false, healthy: null, ready: null, pollHealthy: null,
+      tunnelId: null, mcpServerUrl: null, pid: null, uiUrl: null, message: 'alias lnwjud not found',
+    };
+    const ensureSingleProcess = vi.fn(async () => { externalLive = false; });
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getTunnelId: (): string => 'tunnel_fixture012345',
+      getRuntimeOwnerPath: (): string => ownerPath,
+      setRuntimeOwnerPath: (value): void => { ownerPath = value; },
+      isExternalTunnelRunning: async (): Promise<boolean> => externalLive,
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => ({
+        runtimeAlias: (): string => 'lnwjud',
+        capabilities: vi.fn(async () => ({
+          clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+          pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+        })),
+        status: vi.fn(async () => missing),
+        connect: vi.fn(),
+        stop: vi.fn(),
+        ensureSingleProcess,
+      }),
+    });
+
+    await expect(controller.stop()).resolves.toMatchObject({ state: 'stopped' });
+    expect(ensureSingleProcess).toHaveBeenCalledExactlyOnceWith('tunnel_fixture012345', missing);
+    expect(ownerPath).toBe('');
   });
 
   it('stops the dedicated lnwjud persistent alias even after the saved Tunnel ID was deleted', async () => {

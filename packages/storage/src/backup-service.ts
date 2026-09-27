@@ -166,6 +166,26 @@ export class SqliteBackupService {
     }
   }
 
+  public async purgeArchivedOlderThan(cutoffIso: string): Promise<number> {
+    if (!Number.isFinite(Date.parse(cutoffIso))) throw new Error('Backup recovery retention cutoff is invalid');
+    const archiveDirectory = retentionArchiveDirectory(this.backupDirectory);
+    const expired = (await listManifests(archiveDirectory)).filter((value) => value.createdAt < cutoffIso);
+    await Promise.all(expired.map((value) => deleteBackupFiles(archiveDirectory, value)));
+    return expired.length;
+  }
+
+  public async purgeAll(): Promise<number> {
+    const archiveDirectory = retentionArchiveDirectory(this.backupDirectory);
+    const active = await listManifests(this.backupDirectory);
+    const archived = await listManifests(archiveDirectory);
+    await Promise.all([
+      ...active.map((value) => deleteBackupFiles(this.backupDirectory, value)),
+      ...archived.map((value) => deleteBackupFiles(archiveDirectory, value)),
+    ]);
+    await rm(restoreMarkerPath(this.backupDirectory), { force: true });
+    return active.length + archived.length;
+  }
+
   private async rotateRetention(): Promise<void> {
     const manifests = await listManifests(this.backupDirectory);
     const daily = manifests.filter((value) => value.reason === 'daily');
@@ -931,6 +951,13 @@ async function archiveBeyond(directory: string, values: readonly BackupManifest[
 
 async function archiveNotKept(directory: string, values: readonly BackupManifest[], keep: ReadonlySet<string>): Promise<void> {
   for (const value of values) if (!keep.has(value.id)) await archiveBackup(directory, value);
+}
+
+async function deleteBackupFiles(directory: string, value: BackupManifest): Promise<void> {
+  await Promise.all([
+    rm(path.join(directory, value.databaseFile), { force: true }),
+    rm(manifestPath(directory, value.id), { force: true }),
+  ]);
 }
 
 async function archiveBackup(directory: string, value: BackupManifest): Promise<void> {

@@ -86,6 +86,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [tunnelId, setTunnelId] = useState('');
   const [localTunnelBusy, setLocalTunnelBusy] = useState(false);
   const tunnelBusy = props.tunnelBusy === true || localTunnelBusy;
+  const tunnelControlsLocked = tunnelBusy || props.dashboard.tunnel.state === 'starting';
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [remoteMcpAuthtoken, setRemoteMcpAuthtoken] = useState('');
   const [remoteMcpPublicOrigin, setRemoteMcpPublicOrigin] = useState(remoteMcp.configuredPublicOrigin ?? '');
@@ -110,6 +111,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [checkpointVisibleCount, setCheckpointVisibleCount] = useState(RECOVERY_PAGE_SIZE);
   const [backupVisibleCount, setBackupVisibleCount] = useState(RECOVERY_PAGE_SIZE);
   const [retentionBusy, setRetentionBusy] = useState(false);
+  const [purgeBusyCategory, setPurgeBusyCategory] = useState<'trash' | 'checkpoints' | 'backups' | null>(null);
   const [eccBusy, setEccBusy] = useState(false);
   const [eccMessage, setEccMessage] = useState<string | null>(null);
   const [factoryResetBusy, setFactoryResetBusy] = useState(false);
@@ -357,6 +359,29 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       setRecoveryError(cause instanceof Error ? cause.message : t('settingsPage.retentionSaveFailed'));
     } finally {
       setRetentionBusy(false);
+    }
+  }
+
+  async function purgeRecoveryData(category: 'trash' | 'checkpoints' | 'backups'): Promise<void> {
+    const confirmKey = category === 'trash' ? 'settingsPage.deleteTrashConfirm'
+      : category === 'checkpoints' ? 'settingsPage.deleteCheckpointsConfirm'
+        : 'settingsPage.deleteBackupsConfirm';
+    if (!window.confirm(t(confirmKey))) return;
+    setPurgeBusyCategory(category);
+    if (category === 'backups') setBackupError(null);
+    else setRecoveryError(null);
+    try {
+      const result = await window.lnwjud.purgeRecoveryData({ category, userConfirmed: true });
+      await props.onRefresh();
+      const message = t('settingsPage.deletedRecoveryCount', { count: result.deleted });
+      if (category === 'backups') setBackupMessage(message);
+      else setRecoveryMessage(message);
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : t('settingsPage.deleteRecoveryFailed');
+      if (category === 'backups') setBackupError(message);
+      else setRecoveryError(message);
+    } finally {
+      setPurgeBusyCategory(null);
     }
   }
 
@@ -877,8 +902,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   {props.dashboard.tunnel.auth?.message === null || props.dashboard.tunnel.auth?.message === undefined ? null : <p className="hint">{props.dashboard.tunnel.auth.message}</p>}
                   <div className="inline-actions">
                     {!props.dashboard.tunnel.auth?.authReady ? <button type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>{t('settingsPage.signInOauth')}</button> : null}
-                    <button type="button" disabled={tunnelBusy || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</button>
-                    <button type="button" disabled={tunnelBusy || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>{t(tunnelPresentation.stopKey)}</button>
+                    <button type="button" disabled={tunnelControlsLocked || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</button>
+                    <button type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>{t(tunnelPresentation.stopKey)}</button>
                   </div>
                 </section>
               ) : (
@@ -927,7 +952,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <div className="tunnel-setup-box">
                 <div className="settings-mini-heading"><strong>{t('settingsPage.setupWizard')}</strong><span>{t('settingsPage.setupWizardNoInit')}</span></div>
                 <label className="field-label" htmlFor="tunnel-id">{t('settingsPage.openAiTunnelId')}</label>
-                <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? t('settingsPage.configuring') : t('settingsPage.configureTunnel')}</button></div>
+                <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? t('settingsPage.configuring') : t('settingsPage.configureTunnel')}</button></div>
                 <p className="hint">{t('settingsPage.tunnelIdentityHint')}</p>
               </div>
               {savedMessage === null ? null : <div className="toast-success-banner" role="status">✓ {savedMessage}</div>}
@@ -942,13 +967,14 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <div className="setting-field"><span className="field-label">{t('settingsPage.reconnectCount')}</span><strong>{props.dashboard.tunnel.persistent.reconnectCount}</strong></div>
                     <div className="setting-field"><span className="field-label">{t('settingsPage.healthReadyPoll')}</span><strong>{formatTunnelTriState(t, props.dashboard.tunnel.persistent.healthy)} / {formatTunnelTriState(t, props.dashboard.tunnel.persistent.ready)} / {formatTunnelTriState(t, props.dashboard.tunnel.persistent.pollHealthy)}</strong></div>
                     <div className="setting-field"><span className="field-label">{t('settingsPage.localMcp')}</span><code className="settings-path-display">{props.dashboard.tunnel.persistent.localMcpUrl ?? '—'}</code></div>
+                    <div className="setting-field"><span className="field-label">{t('settingsPage.tunnelAdminUi')}</span><code className="settings-path-display">{props.dashboard.tunnel.persistent.uiUrl ?? '—'}</code></div>
                   </div>
                   <div className={props.dashboard.tunnel.persistent.strictZeroDowntime ? 'toast-success-banner' : 'alert-box-warning'}>
                     {props.dashboard.tunnel.persistent.strictZeroDowntime
                       ? t('settingsPage.zeroDowntimeProven')
                       : t('settingsPage.zeroDowntimeUnproven')}
                   </div>
-                  <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</button><button type="button" disabled={tunnelBusy || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</button></div>
+                  <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</button><button type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</button></div>
                   {props.dashboard.tunnel.persistent.capabilityEvidence === null ? null : <p className="hint">{props.dashboard.tunnel.persistent.capabilityEvidence}</p>}
                 </div>
               )}
@@ -981,7 +1007,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     {[7, 14, 30, 60, 90, 180, 365].map((days) => <option key={days} value={days}>{days} {t('settingsPage.days')}</option>)}
                   </select>
                 </div>
-                <div className="settings-mini-heading"><strong>{t('settingsPage.deletedBackups')}</strong><span>{props.dashboard.recovery.trashItems.length}</span></div>
+                <div className="settings-mini-heading"><strong>{t('settingsPage.deletedBackups')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.trashItems.length}</span><button type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('trash'); }}>{purgeBusyCategory === 'trash' ? t('settingsPage.deleting') : t('settingsPage.deleteAllTrash')}</button></div></div>
                 {props.dashboard.recovery.trashItems.length === 0 ? <EmptyState>{t('settingsPage.recoveryEmpty')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setTrashVisibleCount((current) => Math.min(props.dashboard.recovery.trashItems.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.trashItems.slice(0, trashVisibleCount).map((item) => (
                     <div key={item.recoveryId} className="backup-item">
@@ -990,7 +1016,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     </div>
                   ))}</div>
                 )}
-                <div className="settings-mini-heading"><strong>{t('settingsPage.checkpoints')}</strong><span>{props.dashboard.recovery.checkpoints.length}</span></div>
+                <div className="settings-mini-heading"><strong>{t('settingsPage.checkpoints')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.checkpoints.length}</span><button type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('checkpoints'); }}>{purgeBusyCategory === 'checkpoints' ? t('settingsPage.deleting') : t('settingsPage.deleteAllCheckpoints')}</button></div></div>
                 {props.dashboard.recovery.checkpoints.length === 0 ? <EmptyState>{t('settingsPage.noCheckpoints')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setCheckpointVisibleCount((current) => Math.min(props.dashboard.recovery.checkpoints.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.checkpoints.slice(0, checkpointVisibleCount).map((checkpoint) => {
                     const paths = checkpoint.files.map((file) => file.path);
@@ -1007,7 +1033,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     ⚠️ {t('backup.crossHostNotice')} {props.dashboard.restoreNotice.relinkRequired ? t('backup.crossHostRelink') : null} {props.dashboard.restoreNotice.incomplete ? t('backup.crossHostSecret') : null}
                   </div>
                 ) : null}
-                <SettingsCardHeading icon="▣" title={t('settingsPage.databaseBackup')} subtitle={t('settingsPage.sqliteSnapshots')} action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? t('settingsPage.working') : t('settingsPage.backupNow')}</button>} />
+                <SettingsCardHeading icon="▣" title={t('settingsPage.databaseBackup')} subtitle={t('settingsPage.sqliteSnapshots')} action={<div className="inline-actions"><button type="button" className="btn-save-gold" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void createBackupNow(); }}>{backupBusy ? t('settingsPage.working') : t('settingsPage.backupNow')}</button><button type="button" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void purgeRecoveryData('backups'); }}>{purgeBusyCategory === 'backups' ? t('settingsPage.deleting') : t('settingsPage.deleteAllBackups')}</button></div>} />
                 {props.dashboard.backups.length === 0 ? <EmptyState>{t('settingsPage.noBackups')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setBackupVisibleCount((current) => Math.min(props.dashboard.backups.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.backups.slice(0, backupVisibleCount).map((backup) => (
                     <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt, '—', props.locale)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{t('settingsPage.restoreBackup')}</button></div>

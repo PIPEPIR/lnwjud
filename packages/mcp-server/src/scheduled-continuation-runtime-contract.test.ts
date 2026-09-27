@@ -34,6 +34,8 @@ describe('scheduled continuation runtime contract', () => {
     expect(goalLifecycleSerialized).toContain('work-conserving');
     expect(goalLifecycleSerialized).toContain('checkpoint is not a turn boundary');
     expect(goalLifecycleSerialized).toContain('transient tool/task-observation failure is not a handoff signal');
+    expect(goalLifecycleSerialized).toContain('concrete fixable failure discovered during CI, tests, code scanning, packaging, release validation');
+    expect(serialized).toContain('discovering a fixable CI, test, code-scanning, packaging, release, or tool failure is not permission to yield');
     expect(goalLifecycleSerialized).toContain('not a turn boundary or permission to yield');
     expect(goalLifecycleSerialized).toContain('terminal result inspected before handoff');
   });

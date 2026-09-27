@@ -3,6 +3,7 @@ import { open as openFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { promisify } from 'node:util';
 import type { ExecFileOptionsWithStringEncoding } from 'node:child_process';
+import { reconcileLocalTunnelRuntimeProcesses, type LocalTunnelRuntimeGuardRequest } from './tunnel-runtime-process-guard.js';
 import {
   TUNNEL_RUNTIME_ALIAS,
   type NativeTunnelRuntimeStatus,
@@ -35,6 +36,7 @@ export interface TunnelRuntimeAdapterOptions {
   readonly stopVerifyAttempts?: number;
   readonly stopVerifyIntervalMs?: number;
   readonly sleep?: (delayMs: number) => Promise<void>;
+  readonly processGuard?: (request: LocalTunnelRuntimeGuardRequest) => Promise<void>;
 }
 
 export interface NativeRuntimeConnectRequest {
@@ -47,10 +49,12 @@ export class TunnelRuntimeAdapter {
   private lastStatus: NativeTunnelRuntimeStatus | null = null;
   private readonly alias: string;
   private readonly execute: TunnelRuntimeExecutor;
+  private readonly processGuard: (request: LocalTunnelRuntimeGuardRequest) => Promise<void>;
 
   public constructor(private readonly options: TunnelRuntimeAdapterOptions) {
     this.alias = options.alias?.trim() || TUNNEL_RUNTIME_ALIAS;
     this.execute = options.execute ?? defaultExecutor;
+    this.processGuard = options.processGuard ?? reconcileLocalTunnelRuntimeProcesses;
   }
 
   public runtimeAlias(): string {
@@ -116,7 +120,8 @@ export class TunnelRuntimeAdapter {
       }
       throw new Error(message || `tunnel-client runtimes status ${this.alias} failed`);
     }
-    this.lastStatus = parseNativeRuntimeStatus(result.stdout, result.stderr);
+    const parsed = parseNativeRuntimeStatus(result.stdout, result.stderr);
+    this.lastStatus = await probeLocalRuntimeStatus(parsed) ?? parsed;
     return this.lastStatus;
   }
 
@@ -139,15 +144,38 @@ export class TunnelRuntimeAdapter {
     if (parsed.tunnelId !== null && parsed.tunnelId !== tunnelId) {
       throw new Error(`Native runtime tunnel ID mismatch: expected ${tunnelId}`);
     }
-    this.lastStatus = parsed;
-    return parsed;
+    this.lastStatus = await probeLocalRuntimeStatus(parsed) ?? parsed;
+    await this.ensureSingleProcess(tunnelId, this.lastStatus);
+    return this.lastStatus;
   }
 
-  public async stop(): Promise<NativeTunnelRuntimeStatus> {
+  public async ensureSingleProcess(tunnelId: string, status: NativeTunnelRuntimeStatus): Promise<void> {
+    if (process.platform !== 'win32') return;
+    try {
+      if (status.running && status.pid === null) throw new Error('Managed tunnel PID is missing; refusing to retire local runtimes without an authoritative owner');
+      await this.processGuard({
+        clientPath: this.options.clientPath,
+        profileDirectory: this.options.profileDirectory,
+        alias: this.alias,
+        tunnelId,
+        keepPid: status.running ? status.pid : null,
+      });
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`lnwjud could not safely check the local Tunnel processes. Restart Windows, reopen lnwjud, then check the Tunnel status. Details: ${detail}`);
+    }
+  }
+
+  public async stop(tunnelId?: string): Promise<NativeTunnelRuntimeStatus> {
+    const expectedTunnelId = tunnelId ?? this.lastStatus?.tunnelId ?? null;
     const result = await this.capture(['runtimes', 'stop', this.alias, '--json'], 30_000);
     if (!result.ok) {
       const message = normalizedCliMessage(result.stderr, result.stdout);
-      if (isUnknownAliasMessage(message)) return missingRuntime(message);
+      if (isUnknownAliasMessage(message)) {
+        const missing = missingRuntime(message);
+        if (expectedTunnelId !== null) await this.ensureSingleProcess(expectedTunnelId, missing);
+        return missing;
+      }
       throw new Error(message || 'tunnel-client runtimes stop failed');
     }
 
@@ -156,7 +184,10 @@ export class TunnelRuntimeAdapter {
     const sleep = this.options.sleep ?? delay;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const current = await this.status(true);
-      if (!current.exists || !current.running) return current;
+      if (!current.exists || !current.running) {
+        if (expectedTunnelId !== null) await this.ensureSingleProcess(expectedTunnelId, current);
+        return current;
+      }
       if (attempt + 1 < attempts && intervalMs > 0) await sleep(intervalMs);
     }
     throw new Error(`Tunnel runtime ${this.alias} is still running after stop`);
@@ -199,8 +230,8 @@ async function probeLocalRuntimeStatus(status: NativeTunnelRuntimeStatus): Promi
     probeLoopbackEndpoint(baseUrl, '/api/status', 1_500, 64 * 1024),
   ]);
   if (healthz === null || readyz === null || adminStatus === null) return null;
-  const adminTunnelId = parseAdminTunnelId(adminStatus.body);
-  if (adminTunnelId === undefined || (status.tunnelId !== null && adminTunnelId !== status.tunnelId)) return null;
+  const admin = parseAdminRuntimeStatus(adminStatus.body);
+  if (admin === null || (status.tunnelId !== null && admin.tunnelId !== status.tunnelId)) return null;
   const legacySystem = await probeLoopbackEndpoint(baseUrl, '/api/system', 1_500, 256 * 1024);
   let pollHealthy = legacySystem === null ? undefined : parseLegacySystemPollHealth(legacySystem.body);
   if (pollHealthy === undefined) {
@@ -212,6 +243,7 @@ async function probeLocalRuntimeStatus(status: NativeTunnelRuntimeStatus): Promi
   return {
     ...status,
     running: true,
+    mcpServerUrl: admin.mcpServerUrl ?? status.mcpServerUrl,
     healthy: healthz.statusCode === 200,
     ready: readyz.statusCode === 200,
     pollHealthy,
@@ -287,10 +319,10 @@ function probeLoopbackEndpoint(baseUrl: string, pathname: string, timeoutMs = 1_
   });
 }
 
-function parseAdminTunnelId(body: string): string | undefined {
+function parseAdminRuntimeStatus(body: string): { readonly tunnelId: string; readonly mcpServerUrl: string | null } | null {
   try {
     const parsed: unknown = JSON.parse(body);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
     const value = typeof record.control_plane_tunnel_id === 'string'
       ? record.control_plane_tunnel_id
@@ -298,9 +330,13 @@ function parseAdminTunnelId(body: string): string | undefined {
         ? record.tunnel_id
         : undefined;
     const trimmed = value?.trim();
-    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+    if (trimmed === undefined || trimmed.length === 0) return null;
+    return {
+      tunnelId: trimmed,
+      mcpServerUrl: typeof record.mcp_server_url === 'string' ? matchMcpUrl(record.mcp_server_url) : null,
+    };
   } catch {
-    return undefined;
+    return null;
   }
 }
 

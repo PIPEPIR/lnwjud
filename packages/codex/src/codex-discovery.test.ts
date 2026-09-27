@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -155,6 +155,21 @@ describe('CodexDiscovery', () => {
       const resolver = new PathCodexExecutableResolver({ Path: root, PATHEXT: '.CMD' });
 
       await expect(resolver.resolve()).resolves.toMatchObject({ ok: true, value: expect.stringMatching(/\.cmd$/i) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('finds the official Windows Codex install when the desktop process PATH is stale', async () => {
+    if (process.platform !== 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-codex-localappdata-'));
+    try {
+      const bin = path.join(root, 'Programs', 'OpenAI', 'Codex', 'bin');
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'codex.exe'), '', 'utf8');
+      const resolver = new PathCodexExecutableResolver({ Path: '', LOCALAPPDATA: root, PATHEXT: '.EXE' }, 'win32');
+
+      await expect(resolver.resolve()).resolves.toMatchObject({ ok: true, value: expect.stringMatching(/OpenAI\\Codex\\bin\\codex\.exe$/i) });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

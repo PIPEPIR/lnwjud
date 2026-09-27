@@ -111,6 +111,63 @@ describe('TunnelRuntimeAdapter', () => {
     }
   });
 
+  it('uses the live admin MCP target when persisted runtime status reports a newer port', async () => {
+    const staleMcpServerUrl = 'http://127.0.0.1:59159/mcp';
+    const configuredMcpServerUrl = 'http://127.0.0.1:61572/mcp';
+    const server = createServer((request, response) => {
+      if (request.url === '/healthz' || request.url === '/readyz') {
+        response.statusCode = 200;
+        response.end('ok');
+        return;
+      }
+      if (request.url === '/api/status') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          control_plane_tunnel_id: 'tunnel_fixture012345',
+          mcp_server_url: staleMcpServerUrl,
+        }));
+        return;
+      }
+      if (request.url === '/api/system') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          proxy_health: [{ health_state: 'healthy', route: { kind: 'control_plane' } }],
+        }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('missing');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('expected TCP health server');
+      const execute = executor({
+        'runtimes status lnwjud --json': {
+          stdout: JSON.stringify({
+            tunnel_id: 'tunnel_fixture012345',
+            process_running: true,
+            target_value: configuredMcpServerUrl,
+            health_url: `http://127.0.0.1:${address.port}`,
+          }),
+        },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute });
+
+      await expect(adapter.status()).resolves.toMatchObject({ mcpServerUrl: staleMcpServerUrl });
+      await expect(adapter.status()).resolves.toMatchObject({ mcpServerUrl: staleMcpServerUrl });
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
   it('maps v0.0.14 control-plane unhealthy state without spawning a second CLI status', async () => {
     const server = createServer((request, response) => {
       if (request.url === '/healthz' || request.url === '/readyz') {
@@ -317,6 +374,34 @@ describe('TunnelRuntimeAdapter', () => {
     const call = vi.mocked(execute).mock.calls[0];
     expect(call?.[1]).not.toContain(environment.CONTROL_PLANE_API_KEY);
     expect(call?.[1]).toContain('env:CONTROL_PLANE_API_KEY');
+  });
+
+  it.runIf(process.platform === 'win32')('does not report a successful connect while an old Windows process still needs retirement', async () => {
+    const tunnelId = 'tunnel_0123456789abcdef';
+    const mcpServerUrl = 'http://127.0.0.1:18765/mcp';
+    const execute = executor({
+      [`runtimes connect --alias lnwjud --tunnel-id ${tunnelId} --runtime-api-key env:CONTROL_PLANE_API_KEY --mcp-server-url ${mcpServerUrl} --profile lnwjud --profile-dir C:\\profile --json`]: {
+        stdout: JSON.stringify({ tunnel_id: tunnelId, process: { running: true, pid: 1234 }, mcp_server_url: mcpServerUrl }),
+      },
+    });
+    const processGuard = vi.fn(async () => { throw new Error('Could not verify tunnel-client PID 99'); });
+    const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'C:\\profile', environment: {}, execute, processGuard });
+
+    await expect(adapter.connect({ tunnelId, mcpServerUrl })).rejects.toThrow(/Restart Windows.*PID 99/);
+    expect(processGuard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ tunnelId, keepPid: 1234 }));
+  });
+
+  it.runIf(process.platform === 'win32')('checks for orphaned Windows processes after the official alias stops', async () => {
+    const tunnelId = 'tunnel_0123456789abcdef';
+    const execute = executor({
+      'runtimes stop lnwjud --json': { stdout: JSON.stringify({ alias: 'lnwjud' }) },
+      'runtimes status lnwjud --json': { stdout: JSON.stringify({ tunnel_id: tunnelId, process: { running: false } }) },
+    });
+    const processGuard = vi.fn(async () => undefined);
+    const adapter = new TunnelRuntimeAdapter({ clientPath: 'client.exe', profileDirectory: 'C:\\profile', environment: {}, execute, processGuard });
+
+    await expect(adapter.stop(tunnelId)).resolves.toMatchObject({ running: false });
+    expect(processGuard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ tunnelId, keepPid: null }));
   });
 });
 

@@ -453,7 +453,7 @@ function parseTunnelLine(raw: string): { readonly level: LogLevel; readonly text
     const lifecycle = lifecycleFields.length === 0
       ? normalizeTunnelLifecycle(message)
       : normalizeStructuredTunnelLifecycle(lifecycleFields);
-    const timestamp = boundedTimestamp(record.timestamp);
+    const timestamp = boundedTimestamp(record.timestamp) ?? boundedTimestamp(record.time);
     return { level: level.includes('error') ? 'error' : level.includes('warn') ? 'warn' : 'info', text: message.slice(0, MAX_LINE_BYTES), ...(timestamp === undefined ? {} : { timestamp }), correlation: { kind: 'tunnel', lifecycle, ...(instanceId === undefined ? {} : { instanceId }), ...(requestId === undefined ? {} : { requestId }), ...(pid === undefined ? {} : { pid }) } };
   }
   const lowered = raw.toLowerCase();

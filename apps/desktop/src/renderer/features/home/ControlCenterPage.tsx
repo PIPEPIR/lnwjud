@@ -39,6 +39,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
   const activeProjects = props.workspaces.filter((workspace) => activeWorkspaceIds.has(workspace.id));
   const tunnelCredentialAvailable = tunnelRuntimeCredentialAvailable(dashboard.tunnel);
   const tunnelPresentation = tunnelAuthPresentation(dashboard.tunnel);
+  const tunnelControlsLocked = props.tunnelBusy || dashboard.tunnel.state === 'starting';
   const remoteMcp = dashboard.remoteMcp ?? { ...EMPTY_REMOTE_MCP_STATUS, localMcpUrl: dashboard.mcp.url };
 
   const remoteMcpOnline = remoteMcp.state === 'running';
@@ -232,10 +233,10 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
                 </div>
               )}
               <div className="inline-actions">
-                <button type="button" disabled={props.tunnelBusy || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
+                <button type="button" disabled={tunnelControlsLocked || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
                   {t(tunnelPresentation.startKey)}
                 </button>
-                <button type="button" disabled={props.tunnelBusy || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
+                <button type="button" disabled={tunnelControlsLocked || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
                   {t(tunnelPresentation.stopKey)}
                 </button>
               </div>

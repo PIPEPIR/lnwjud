@@ -146,18 +146,13 @@ jobs:
         shell: bash
         run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts --passWithNoTests --shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}
 
-      - name: Run process-tree and external MCP lifecycle tests
-        shell: bash
-        run: corepack pnpm@10.15.0 --filter @lnwjud/process --filter @lnwjud/extensions test
-
   native-package-verification:
     name: Native Package Verification (${{ matrix.name }})
     timeout-minutes: 45
-    # Packaging downloads target-native runtimes and builds unsigned local
-    # artifacts. Keep it on protected main pushes/manual runs; non-main pushes
-    # and pull requests receive the fast platform-contract matrix above.
+    # Build target-native artifacts alongside the test matrix on main. The
+    # release workflow accepts artifacts only from a successful exact-SHA CI
+    # run, so test failures still prevent publication.
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-    needs: [native-platform-contract, desktop-test-shards]
     strategy:
       fail-fast: false
       matrix:
@@ -572,13 +567,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  verify:
-    # Keep this check name stable because main branch protection requires it.
-    # Direct non-main pushes already run the native platform contract matrix;
-    # skip this duplicate portable gate there while retaining it for PRs,
-    # protected main pushes, and explicit manual dispatches.
+  windows-release-tests:
+    name: Windows Workspace Release Tests
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    name: Authoritative Release Verification (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Build workspace type declarations
+        run: corepack pnpm@10.15.0 typecheck
+
+      - name: Run complete Windows workspace release suite
+        run: corepack pnpm@10.15.0 test:release
+
+  windows-release-build:
+    # Direct non-main pushes already run the native platform contract matrix;
+    # keep this portable gate for PRs, main, and explicit manual dispatches.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Windows Release Build and Checks
     runs-on: windows-latest
 
     steps:
@@ -669,7 +690,7 @@ jobs:
       - name: Run pull-request verification gate
         if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         shell: powershell
-        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWindowsPackaging
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWindowsPackaging -SkipWorkspaceTests
 
       - name: Run authoritative release verification gate
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -679,7 +700,7 @@ jobs:
           # Unsigned community releases remain supported; Release verifies provenance/hashes and reports signing state.
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWorkspaceTests
 
       - name: Verify packaged Windows legacy-profile startup
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -713,3 +734,19 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  verify:
+    # Preserve the branch-protection check name. Both Windows jobs must pass
+    # before this required status can succeed or a release can use the run.
+    name: Authoritative Release Verification (Windows)
+    if: always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    needs: [windows-release-tests, windows-release-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require complete Windows release gates
+        env:
+          WORKSPACE_TESTS_RESULT: ${{ needs.windows-release-tests.result }}
+          BUILD_RESULT: ${{ needs.windows-release-build.result }}
+        run: |
+          test "$WORKSPACE_TESTS_RESULT" = success
+          test "$BUILD_RESULT" = success

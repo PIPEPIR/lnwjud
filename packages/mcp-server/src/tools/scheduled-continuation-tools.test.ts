@@ -36,6 +36,8 @@ describe('scheduled continuation MCP tools', () => {
     const parsedDefaultPrepare = byName.get('prepare_scheduled_continuation')?.parse(validPrepare);
     expect(parsedDefaultPrepare).toMatchObject({ ok: true, value: { executionPreference: 'cloud' } });
     if (parsedDefaultPrepare?.ok) expect(parsedDefaultPrepare.value).not.toHaveProperty('successorDelayMinutes');
+    const advertisedPrepare = new ToolRegistry({}, actor).describeInputJsonSchema('prepare_scheduled_continuation');
+    expect(advertisedPrepare).not.toHaveProperty('properties.connectorMention.pattern');
     expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: '@custom-lnwjud_42' }))
       .toMatchObject({ ok: true, value: { connectorMention: '@custom-lnwjud_42' } });
     expect(byName.get('prepare_scheduled_continuation')?.parse({ ...validPrepare, connectorMention: '@ปลั๊กอิน_ทีม' }))

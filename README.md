@@ -22,27 +22,27 @@
 </p>
 
 <h2 align="center">Download lnwjud</h2>
-<p align="center">Choose your platform and download the current v5.6.2 release directly.</p>
+<p align="center">Choose your platform and download the current v5.6.4 release directly.</p>
 
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.2.exe">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Setup-5.6.4.exe">
         <img src="assets/download/download-windows.svg" width="300" alt="Download lnwjud for Windows" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.2.exe">Portable x64</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-Portable-5.6.4.exe">Portable x64</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-arm64.dmg">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.4-arm64.dmg">
         <img src="assets/download/download-macos.svg" width="300" alt="Download lnwjud for macOS" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.4-x64.dmg">Intel x64 DMG</a> · <a href="docs/INSTALL_MACOS.md">Install guide</a></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.deb">
+      <a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.4-x64.deb">
         <img src="assets/download/download-linux.svg" width="300" alt="Download lnwjud for Linux" />
       </a><br />
-      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.2-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
+      <sub><a href="https://github.com/engasnm111/lnwjud/releases/latest/download/lnwjud-5.6.4-x64.AppImage">x64 AppImage</a> · <a href="docs/INSTALL_LINUX.md">Other architectures</a></sub>
     </td>
   </tr>
 </table>
@@ -51,11 +51,31 @@
 
 ---
 
-## Current published version: v5.6.2
+## Current published version: v5.6.4
 
 ## Current source version: v5.6.5
 
-Latest published release: **v5.6.2**. The download buttons above point directly to the v5.6.2 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+Latest published release: **v5.6.4**. The download buttons above point directly to the v5.6.4 assets. The release is published only after the exact tagged main commit passes the target-native release gates.
+
+### What's new in v5.6.4
+
+- **ChatGPT Tunnel after an app restart:** lnwjud reconnects the existing Tunnel ID to its current local MCP port. On Windows, it closes an older duplicate client only after confirming that it belongs to the same lnwjud Tunnel. If verification is inconclusive, restart Windows and open lnwjud again; there is no need to create another Tunnel ID.
+- **Connect in ChatGPT:** choose **Tunnel**, select your existing Tunnel ID, and choose **No authentication** for lnwjud's Runtime API key setup. The Runtime API key belongs in lnwjud, not in ChatGPT's OAuth fields. If the connection already exists, refresh it after updating. Secure Tunnel is for private/developer-mode connections; public plugin submission needs a public HTTPS MCP endpoint.
+- **Easier to use:** Tunnel buttons are disabled while starting, old Live Log entries keep their real timestamps, and the Git changed-files list fills the available window height.
+- **Faster release checks:** Windows workspace tests and the remaining release checks run together in CI; main also starts target-native package builds alongside test jobs. The required checks still gate publication.
+
+See the [Thai setup and recovery guide](docs/USAGE_TH.md#5-เชื่อม-lnwjud-เข้ากับ-chatgpt) for step-by-step help. The separate ngrok + OAuth option is described there as well.
+
+### What's new in v5.6.3
+
+v5.6.3 fixes Secure Tunnel discovery and Codex runtime detection, updates the bundled OpenAI tunnel runtime, and prevents recovery data from growing without bound.
+
+- **Secure Tunnel no-auth discovery:** the Desktop MCP listener now returns empty 404 responses for protected-resource metadata candidates, matching the no-auth contract used by `sample_mcp_remote_no_auth` in OpenAI `tunnel-client` and eliminating the previous `invalid character 'N'` failure caused by a `text/plain Not found` body.
+- **OpenAI tunnel-client v0.0.15:** packaged runtimes are pinned to official v0.0.15 target-native artifacts with SHA-256 and Sigstore provenance verification. The daily dependency workflow still checks upstream releases, while installed users receive the new bundled runtime through a normal lnwjud app update.
+- **Windows Codex detection:** Requirements now falls back to the official `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin` install path when the Desktop process inherited an older PATH, avoiding a false “Codex is not installed” warning after Codex is installed.
+- **Bounded recovery storage:** the existing Recovery retention policy now also expires database backups that were rotated into `retention-archive`; the normal default remains 30 days.
+- **Explicit category cleanup:** Recovery Settings adds independently confirmed “delete all” actions for Recovery Trash, checkpoints, and database backups. Backend deletion is scoped to validated lnwjud recovery records/artifacts rather than recursively deleting unrelated files.
+- **Faster CI without weaker gates:** redundant process/extensions test executions were removed from Desktop shards because the same suites remain covered by the all-platform native contract matrix on Windows, macOS, and Linux.
 
 ### What's new in v5.6.2
 

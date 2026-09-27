@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,5 +42,37 @@ describe('recoverable backup retention', () => {
     const row = restored.connection.prepare('SELECT value FROM retention_fixture').get() as { value?: string } | undefined;
     expect(row?.value).toBe('first');
     restored.close();
+  });
+
+  it('expires archived backups and purge-all removes only validated backup artifacts', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-retention-purge-'));
+    temporaryRoots.push(root);
+    const databaseFile = path.join(root, 'lnwjud.sqlite');
+    const backupDirectory = path.join(root, 'backups');
+    const database = new SqliteDatabase(databaseFile, { backupDirectory });
+    let now = new Date('2026-08-01T00:00:00.000Z');
+    const service = new SqliteBackupService(database, {
+      backupDirectory,
+      databaseFilename: databaseFile,
+      manualRetention: 1,
+      now: (): Date => now,
+    });
+
+    const first = await service.create('manual');
+    now = new Date('2026-08-02T00:00:00.000Z');
+    const second = await service.create('manual');
+    const unknownActive = path.join(backupDirectory, 'keep-me.txt');
+    const unknownArchive = path.join(backupDirectory, 'retention-archive', 'keep-me-too.txt');
+    await writeFile(unknownActive, 'owned by someone else');
+    await writeFile(unknownArchive, 'not a backup artifact');
+
+    await expect(service.purgeArchivedOlderThan('2026-08-15T00:00:00.000Z')).resolves.toBe(1);
+    await expect(service.scheduleRestore(first.id)).rejects.toThrow('Backup was not found');
+    await expect(service.purgeAll()).resolves.toBe(1);
+    expect(await service.list()).toEqual([]);
+    await expect(access(unknownActive)).resolves.toBeUndefined();
+    await expect(access(unknownArchive)).resolves.toBeUndefined();
+    database.close();
+    expect(second.id).not.toBe(first.id);
   });
 });

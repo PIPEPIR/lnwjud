@@ -34,6 +34,9 @@ export class PathCodexExecutableResolver implements CodexExecutableResolver {
     const pathValue = this.environment.Path ?? this.environment.PATH ?? '';
     const pathApi = this.platform === 'win32' ? path.win32 : path.posix;
     const entries = pathValue.split(this.platform === 'win32' ? ';' : ':').filter(Boolean);
+    if (this.platform === 'win32' && this.environment.LOCALAPPDATA) {
+      entries.push(path.win32.join(this.environment.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin'));
+    }
     const candidates = entries.flatMap((entry) => this.withWindowsExtensions(pathApi.join(entry, 'codex')));
     for (const candidate of candidates) {
       try {

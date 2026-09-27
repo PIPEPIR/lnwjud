@@ -20,7 +20,8 @@ export interface TunnelRuntimeReconcilerAdapter {
   capabilities(force?: boolean): Promise<TunnelRuntimeCapabilities>;
   status(): Promise<NativeTunnelRuntimeStatus>;
   connect(request: NativeRuntimeConnectRequest): Promise<NativeTunnelRuntimeStatus>;
-  stop(): Promise<NativeTunnelRuntimeStatus>;
+  stop(tunnelId?: string): Promise<NativeTunnelRuntimeStatus>;
+  ensureSingleProcess?(tunnelId: string, status: NativeTunnelRuntimeStatus): Promise<void>;
 }
 
 export interface TunnelRuntimeReconcilerOptions {
@@ -94,6 +95,12 @@ export class TunnelRuntimeReconciler {
       }
     }
 
+    try {
+      await this.options.adapter.ensureSingleProcess?.(desired.tunnelId, current);
+    } catch (error: unknown) {
+      return this.failure(desired, capabilities, error);
+    }
+
     const bindingStale = current.mcpServerUrl !== null && !sameMcpUrl(current.mcpServerUrl, desired.mcpServerUrl);
     const healthy = runtimeAcceptable(current);
     if (current.exists && current.running && !bindingStale && healthy) {
@@ -114,6 +121,7 @@ export class TunnelRuntimeReconciler {
     }
 
     try {
+      if (current.running && bindingStale) await this.options.adapter.stop(desired.tunnelId);
       const connected = await this.options.adapter.connect({ tunnelId: desired.tunnelId, mcpServerUrl: desired.mcpServerUrl });
       if (connected.tunnelId !== null && connected.tunnelId !== desired.tunnelId) {
         return this.publishFailure(desired, capabilities, 'operator', 'TUNNEL_ID_MISMATCH', 'Managed runtime returned a different tunnel ID; automatic continuation is refused', connected);
@@ -121,6 +129,9 @@ export class TunnelRuntimeReconciler {
       if (!connected.running || connected.healthy === false || connected.ready === false || connected.pollHealthy === false) {
         const detail = connected.message ?? 'Managed tunnel runtime did not become fully ready';
         return this.publishFailure(desired, capabilities, 'transient', 'RUNTIME_NOT_READY', detail, connected);
+      }
+      if (connected.mcpServerUrl !== null && !sameMcpUrl(connected.mcpServerUrl, desired.mcpServerUrl)) {
+        return this.publishFailure(desired, capabilities, 'transient', 'RUNTIME_NOT_READY', 'Managed tunnel runtime is still bound to an outdated Desktop MCP endpoint', connected);
       }
       const wasReconnect = current.exists || this.lastConnectedAt !== null;
       if (wasReconnect) this.reconnectCount += 1;
@@ -149,7 +160,7 @@ export class TunnelRuntimeReconciler {
     const capabilities = await this.options.adapter.capabilities();
     if (capabilities.managedConnect) {
       try {
-        await this.options.adapter.stop();
+        await this.options.adapter.stop(desired.tunnelId);
       } catch (error: unknown) {
         return this.failure(desired, capabilities, error);
       }

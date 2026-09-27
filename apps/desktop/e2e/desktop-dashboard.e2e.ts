@@ -236,11 +236,20 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
     await settleFirstRunAndOpenHome(page);
-    await page.setViewportSize({ width: 900, height: 650 });
+    await page.setViewportSize({ width: 1720, height: 820 });
     await page.getByRole('button', { name: 'Git', exact: true }).click();
     await expect(page.locator('.git-file-item')).toHaveCount(65, { timeout: 30_000 });
 
     const fileList = page.locator('.git-file-list');
+    const expandedList = await fileList.evaluate((element) => ({
+      height: element.clientHeight,
+      bottom: element.getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(expandedList.height).toBeGreaterThan(440);
+    expect(expandedList.viewportHeight - expandedList.bottom).toBeLessThan(80);
+    await page.screenshot({ path: testInfo.outputPath('git-list-expanded-1720x820.png'), fullPage: false });
+    await page.setViewportSize({ width: 900, height: 650 });
     const fileListMetrics = await fileList.evaluate((element) => ({
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,

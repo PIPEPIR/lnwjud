@@ -52,7 +52,7 @@ const dashboard: DashboardSnapshot = {
   appVersion: APP_VERSION,
 };
 
-function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' = 'security'): string {
+function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' | 'tunnel' = 'security'): string {
   return renderToStaticMarkup(createElement(SettingsPage, {
     locale,
     initialSection: section,

@@ -147,6 +147,25 @@ describe('LogHub', () => {
     expect(hub.snapshot().lines.find((line) => line.text === 'boom')?.level).toBe('error');
   });
 
+  it('keeps tunnel-client event times when replaying prior sessions', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-tunnel-time-'));
+    temporaryRoots.push(root);
+    const logPath = path.join(root, 'lnwjud-tunnel.log');
+    const eventTime = '2026-09-24T23:37:10.5453473+07:00';
+    await writeFile(logPath, `${JSON.stringify({
+      time: eventTime,
+      level: 'INFO',
+      msg: '🌐 WEB UI: http://127.0.0.1:49629/ui',
+    })}\n`, 'utf8');
+
+    const hub = new LogHub({ tunnelLogPath: logPath });
+    hub.start();
+    hub.stop();
+
+    expect(hub.snapshot().lines).toHaveLength(1);
+    expect(hub.snapshot().lines[0]?.timestamp).toBe(eventTime);
+  });
+
   it('replays the bounded startup tail in one sync instead of waiting through 64 KiB polling chunks', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-startup-tail-'));
     temporaryRoots.push(root);

@@ -142,7 +142,9 @@ async function syncAllVersions() {
     ['docs/INSTALL_MACOS.md', (content) => content.replace(/This guide covers the v[0-9.]+ native macOS release target/g, `This guide covers the v${version} native macOS release target`)],
     ['docs/USAGE_TH.md', (content) => content
       .replace(/^# คู่มือใช้งาน lnwjud v[0-9.]+ \(ภาษาไทย\)/m, `# คู่มือใช้งาน lnwjud v${version} (ภาษาไทย)`)
-      .replace(/^คู่มือนี้อัปเดตตาม source[^\r\n]*$/m, `คู่มือนี้อัปเดตตาม source ` + '`v' + version + '`; public release `v' + publishedVersion + '` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v' + publishedVersion + ')')
+      .replace(/^คู่มือนี้อัปเดตตาม (?:source|public release)[^\r\n]*$/m, `คู่มือนี้อัปเดตตาม source ` + '`v' + version + '`; public release `v' + publishedVersion + '` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v' + publishedVersion + ')')
+      .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${publishedVersion}.exe`)
+      .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${publishedVersion}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+ คือ:/g, `ความสามารถหลักใน v${version} คือ:`)],

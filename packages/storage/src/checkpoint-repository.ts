@@ -47,6 +47,10 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
     return Number(result.changes);
   }
 
+  public async deleteAll(): Promise<number> {
+    return Number(this.database.connection.prepare('DELETE FROM checkpoints').run().changes);
+  }
+
   private toCheckpoint(value: unknown): Checkpoint | null {
     if (!this.isCheckpointRow(value)) return null;
     let files: unknown;
