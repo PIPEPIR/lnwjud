@@ -57,9 +57,7 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         shell: bash
         run: |
-          node apps/desktop/scripts/write-stdio-launcher.mjs
           corepack pnpm@10.15.0 --filter @lnwjud/desktop typecheck
-          corepack pnpm@10.15.0 --filter @lnwjud/desktop build
           corepack pnpm@10.15.0 test:packaging
 
       - name: Open update PR against dev
