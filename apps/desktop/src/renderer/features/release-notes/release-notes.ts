@@ -21,7 +21,7 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
-    version: '5.6.4',
+    version: '5.6.5',
     categories: [
       {
         id: 'experience',
@@ -29,22 +29,22 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
         items: [
           {
             id: 'write-swarm-planner',
-            titleKey: 'whatsNew.564.writeSwarm.title',
-            descriptionKey: 'whatsNew.564.writeSwarm.description',
+            titleKey: 'whatsNew.565.writeSwarm.title',
+            descriptionKey: 'whatsNew.565.writeSwarm.description',
             badge: 'new',
             tags: ['Codex', 'parallel', 'planner', 'worktrees'],
           },
           {
             id: 'warm-worktree-pool',
-            titleKey: 'whatsNew.564.warmPool.title',
-            descriptionKey: 'whatsNew.564.warmPool.description',
+            titleKey: 'whatsNew.565.warmPool.title',
+            descriptionKey: 'whatsNew.565.warmPool.description',
             badge: 'improved',
             tags: ['Codex', 'worktree', 'performance', 'pool'],
           },
           {
             id: 'codex-observability',
-            titleKey: 'whatsNew.564.observability.title',
-            descriptionKey: 'whatsNew.564.observability.description',
+            titleKey: 'whatsNew.565.observability.title',
+            descriptionKey: 'whatsNew.565.observability.description',
             badge: 'improved',
             tags: ['Work Log', 'Codex', 'status', 'notification'],
           },

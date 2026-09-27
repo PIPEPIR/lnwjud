@@ -279,7 +279,7 @@ export class AgentSwarmService {
 }
 
 export function validateAgentSwarmStart(request: AgentSwarmStartRequest): Result<void> {
-  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v5.6.4 supports read_only access only'));
+  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v5.6.5 supports read_only access only'));
   if (!Array.isArray(request.tasks) || request.tasks.length < 1 || request.tasks.length > MAX_TASKS) return err(appError('INVALID_INPUT', 'Agent swarm requires 1 to 4 tasks'));
   if (request.executionStrategy !== undefined && !['auto', 'serial', 'parallel'].includes(request.executionStrategy)) {
     return err(appError('INVALID_INPUT', 'Agent swarm executionStrategy is invalid'));

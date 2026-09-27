@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/desktop",
-  "version": "5.6.4",
+  "version": "5.6.5",
   "private": true,
   "description": "Cross-platform local AI-agent runtime and MCP gateway with 277 total tool definitions.",
   "author": "Adisorn",
