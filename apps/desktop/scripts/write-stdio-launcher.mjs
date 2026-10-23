@@ -2,14 +2,13 @@ import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { assertSupportedNodeVersion } from './node-security-policy.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const buildDir = path.join(desktopRoot, 'build');
 const cmdPath = path.join(buildDir, 'lnwjud-mcp-stdio.cmd');
 const shellPath = path.join(buildDir, 'lnwjud-mcp-stdio.sh');
-const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
-
-if (nodeMajor !== 24) throw new Error(`lnwjud packaged stdio requires the build runtime to be Node.js 24.x; got ${process.versions.node}`);
+assertSupportedNodeVersion(process.versions.node);
 
 const windowsContents = `@echo off
 setlocal

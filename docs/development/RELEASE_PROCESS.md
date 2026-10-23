@@ -333,3 +333,31 @@ unpublished branch when the reporter needs a public binary.
 - `docs/architecture/PLATFORM_SUPPORT.md` — platform disposition source of
   truth.
 - `CONTRIBUTING.md` — contributor verification and pull-request expectations.
+
+## Node security release prerequisite
+
+Build and CI use Node.js 24.22.1 or later in the supported 24.x line. The
+packaged Desktop and STDIO services use Electron's embedded Node, so updating
+the build Node does not fix their runtime. The global electron-builder
+`afterPack` hook executes the exact packaged host with `ELECTRON_RUN_AS_NODE=1`
+and rejects Node below 24.22.1, another major, prerelease versions, malformed
+output, or an executable that cannot run on the build host. This runs before
+packaged runtime evidence is captured and applies to Windows, macOS, and Linux.
+Normal development startup and application builds do not run this package gate.
+Prepackaged input is unsupported: electron-builder skips `afterPack` for it.
+The `artifactBuildCompleted` hook rejects that mode before the artifact-created
+event used for publication, so an old app directory cannot bypass verification.
+
+As checked on 2026-10-23, the pinned Electron 45.0.0-alpha.7 embeds Node 24.21.0;
+the official release feed lists Electron 45.0.0 and 44.9.3 with Node 24.22.0.
+No release in that feed embeds Node 24.22.1. Packaging is intentionally blocked
+until a supported Electron binary contains the complete Node security release.
+Do not remove the gate or upgrade Electron solely because its version is newer.
+After a fixed Electron release is available, update its exact pin and lockfile,
+run the gate and packaging verification on every target host, and retain the
+existing signing and provenance checks. Cross-architecture packaging requires
+a host capable of executing the packaged target binary; inability to inspect
+it fails closed.
+
+Sources: [Node October 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases),
+[official Electron release feed](https://releases.electronjs.org/releases.json).

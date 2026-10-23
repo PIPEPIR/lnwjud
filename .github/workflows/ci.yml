@@ -7,7 +7,7 @@ on:
       - dev
       - 'release/v*'
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, dev, downstream-main ]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Enable Corepack & Setup pnpm
         shell: bash
@@ -126,7 +126,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Enable Corepack & Setup pnpm
         shell: bash
@@ -182,7 +182,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Install cosign for tunnel provenance verification
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -378,7 +378,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Enable Corepack & Setup pnpm
         shell: bash
@@ -579,7 +579,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Enable Corepack & Setup pnpm
         run: |
@@ -609,7 +609,7 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Install cosign for tunnel provenance verification
         id: cosign_action

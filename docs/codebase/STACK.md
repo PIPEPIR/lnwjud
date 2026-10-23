@@ -5,13 +5,13 @@ Scope: Git-tracked source and release configuration in `E:\lnwjud`. Generated/lo
 
 ## Runtime and language baseline
 
-- Node.js: `>=24.0.0 <25`.
+- Node.js: `>=24.22.1 <25` (build/CI pin: `.node-version`).
 - Package manager: `pnpm@10.15.0` through Corepack.
 - Primary language: TypeScript, target ES2022, NodeNext modules.
 - TypeScript: `6.0.2`.
 - Desktop UI: React `19.1.1` / React DOM `19.1.1`.
 - Desktop shell: Electron `45.0.0-alpha.7`.
-- Desktop bundling: esbuild `0.25.12`, Vite `7.3.6`.
+- Desktop bundling: esbuild `0.25.12`, Vite `7.3.7` (including the test-runner copy).
 - Unit/service tests: Vitest `3.2.4`.
 - Packaged desktop E2E: Playwright `1.55.0`.
 - MCP SDK: `@modelcontextprotocol/client` and `@modelcontextprotocol/server` `2.0.0`.

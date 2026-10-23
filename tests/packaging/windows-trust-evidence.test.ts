@@ -29,7 +29,7 @@ describe('Windows release trust evidence', () => {
 
     expect(packageScript).toContain('write-release-evidence.mjs');
     expect(packageScript).toContain('verify-release-evidence.mjs');
-    expect(builderConfig).toContain('afterPack: scripts/capture-packaged-runtime-evidence.mjs');
+    expect(builderConfig).toContain('afterPack: scripts/verify-packaged-node-security.mjs');
     expect(builderConfig).toContain('afterSign: scripts/capture-packaged-runtime-evidence.mjs');
     expect(evidenceWriter).toContain('SHA256SUMS.txt');
     expect(evidenceWriter).toContain('PROVENANCE.json');

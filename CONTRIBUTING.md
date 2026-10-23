@@ -15,7 +15,7 @@ Day-to-day development may happen on Windows x64, but release verification is cr
 
 Required for source development:
 
-- Node.js 24.x
+- Node.js 24.22.1 or later in the 24.x line (`.node-version` pins the CI baseline)
 - Git
 - Corepack
 - pnpm 10.15.0 (pinned by the repository)
