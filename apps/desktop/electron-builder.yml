@@ -15,8 +15,9 @@ files:
 publish:
   provider: generic
   url: https://github.com/PIPEPIR/lnwjud/releases/latest/download/
-afterPack: scripts/capture-packaged-runtime-evidence.mjs
+afterPack: scripts/verify-packaged-node-security.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
+artifactBuildCompleted: scripts/reject-prepackaged-artifact.mjs
 extraResources:
   - from: build/tunnel-client
     to: tunnel-client

@@ -380,7 +380,7 @@ launcher ใช้ packaged Electron host และไม่ต้องลง N
 เฉพาะนักพัฒนา:
 
 - Windows 10/11 x64
-- Node.js 24.x
+- Node.js 24.22.1 ขึ้นไปในสาย 24.x
 - Git
 - Corepack
 - pnpm 10.15.0 ตาม repo

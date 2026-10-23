@@ -180,7 +180,7 @@ jobs:
         if: steps.sync.outputs.needs_build == 'true'
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       - name: Setup .NET 8 SDK
         if: steps.sync.outputs.needs_build == 'true'
